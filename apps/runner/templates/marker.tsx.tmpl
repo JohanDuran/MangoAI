@@ -1,0 +1,26 @@
+import React from 'react';
+import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
+
+export default function __EXPORT_NAME__() {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const enter = spring({ frame, fps, config: { damping: 200 } });
+  const opacity = interpolate(enter, [0, 1], [0, 1]);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: 80,
+        bottom: 120,
+        opacity,
+        color: 'white',
+        fontFamily: 'Inter, Helvetica, Arial, sans-serif',
+        fontSize: 32,
+        fontWeight: 600,
+      }}
+    >
+      __PROMPT__
+    </div>
+  );
+}

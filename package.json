@@ -1,0 +1,8 @@
+{
+  "name": "mangoai",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ]
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+apps/runner/proyectos/*
+!apps/runner/proyectos/.gitkeep
+*.log
+.claude/
