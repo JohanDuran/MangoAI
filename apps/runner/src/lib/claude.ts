@@ -87,12 +87,24 @@ export function buildRegeneratePrompt(opts: {
   prompt: string;
   feedback: string;
   priorError?: string;
+  transcript?: string;
+  imageUrl?: string;
+  compositionWidth: number;
+  compositionHeight: number;
 }): string {
   const file = `03_remotion_code/marker_${opts.markerId}.tsx`;
   const sections = [
     `Update the overlay component in ${file}.`,
+    `The video canvas for this project is ${opts.compositionWidth}x${opts.compositionHeight}px — read it via ` +
+      `useVideoConfig() rather than hardcoding a different size, and keep all content within those bounds ` +
+      `(with sensible margins) so nothing renders off-screen. If you use a shared primitive's default x/y, check ` +
+      `it still lands on-screen at this canvas size and pass explicit x/y if not.`,
     `Original creative intent: ${opts.prompt}`,
     opts.feedback ? `Latest feedback: ${opts.feedback}` : null,
+    opts.transcript ? `What's being said in the video during this marker's time range: "${opts.transcript}"` : null,
+    opts.imageUrl
+      ? `An image has already been generated for this marker and is served at: ${opts.imageUrl}\nUse it directly, e.g. \`<img src="${opts.imageUrl}" />\` or via the ImagePopup primitive's src prop. You cannot generate images yourself — this URL is the only one available for this call.`
+      : null,
     `Current code:\n\`\`\`tsx\n${opts.currentCode}\n\`\`\``,
     opts.priorError
       ? `Validation error from the previous attempt — fix this specifically:\n${opts.priorError}`

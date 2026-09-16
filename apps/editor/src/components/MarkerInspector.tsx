@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getMarkerCode, type Marker } from '../api/client';
+import { getMarkerCode, type Marker, type TranscriptSegment } from '../api/client';
 import type { MarkerRunState } from '../App';
 import { displayStatus } from '../status';
 import { StatusBadge } from './StatusBadge';
@@ -8,13 +8,15 @@ interface Props {
   projectId: string;
   marker: Marker | null;
   run?: MarkerRunState;
-  onRegenerate: (markerId: string, feedback: string) => void;
+  transcript: TranscriptSegment[];
+  onRegenerate: (markerId: string, feedback: string, allowImage: boolean) => void;
 }
 
-export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, onRegenerate }) => {
+export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, transcript, onRegenerate }) => {
   const [code, setCode] = useState('');
   const [feedback, setFeedback] = useState('');
   const [showCode, setShowCode] = useState(false);
+  const [allowImage, setAllowImage] = useState(false);
 
   // Refetch the displayed code whenever generation finishes (or the selected marker
   // changes) — but NOT the feedback text below, which the user may be actively typing.
@@ -65,6 +67,15 @@ export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, onReg
         </div>
       )}
 
+      {transcript.length > 0 && (
+        <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 12 }}>
+          <span className="field-label" style={{ marginBottom: 4 }}>
+            Said in the video during this range
+          </span>
+          "{transcript.map((s) => s.text).join(' ')}"
+        </div>
+      )}
+
       <label className="field-label">{marker.status === 'draft' ? 'Prompt' : 'Feedback for the next attempt'}</label>
       <textarea
         className="field-textarea"
@@ -72,11 +83,14 @@ export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, onReg
         onChange={(e) => setFeedback(e.target.value)}
         placeholder="e.g. 'make the entrance faster and use a dark navy background'"
       />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)', margin: '8px 0' }}>
+        <input type="checkbox" checked={allowImage} onChange={(e) => setAllowImage(e.target.checked)} />
+        Needs a generated image (generates one via OpenAI before writing the code)
+      </label>
       <button
-        onClick={() => onRegenerate(marker.marker_id, feedback)}
+        onClick={() => onRegenerate(marker.marker_id, feedback, allowImage)}
         disabled={generating}
         className="btn btn-primary"
-        style={{ marginTop: 10 }}
       >
         {generating ? 'Generating…' : marker.status === 'draft' ? 'Generate' : 'Regenerate'}
       </button>

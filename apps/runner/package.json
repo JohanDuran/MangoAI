@@ -11,6 +11,7 @@
   "dependencies": {
     "@mangoai/remotion-overlay": "*",
     "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
     "express": "^4.21.1",
     "multer": "^2.4.0"
   },

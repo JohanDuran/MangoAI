@@ -33,6 +33,16 @@ these rules exactly — the Node runner validates and hot-reloads your output au
     `#a6e3a1`)
 
 ## Style guardrails
+- The instruction you're given states the project's actual video canvas size in pixels.
+  Treat that as ground truth — read it via `useVideoConfig()` in your component (never
+  hardcode a different width/height) and keep every element within those bounds with
+  sensible margins. This project's canvas is not always 1280x720 or 1920x1080 (it's synced
+  to whatever video was actually uploaded, including vertical/portrait video), so don't
+  assume a standard 16:9 frame.
+- The shared primitives' default `x`/`y` values (listed above) are tuned for a roughly
+  1280x720 canvas. If the stated canvas size differs meaningfully, pass explicit `x`/`y`
+  (ideally computed from `useVideoConfig()`'s `width`/`height`, e.g. percentages of them)
+  instead of relying on those defaults — otherwise content can land outside the frame.
 - Overlays render on a transparent background — never set an opaque full-frame background
   color on the root element.
 - Keep entrance/exit animation under ~20 frames at 30fps unless the feedback asks for
@@ -44,9 +54,11 @@ these rules exactly — the Node runner validates and hot-reloads your output au
   technical constraints.
 
 ## Assets
-If the marker needs a generated image, call `node ../../scripts/generate_image.js "<prompt>" <output-path-under-02_assets>`
-via Bash, then reference the resulting file from `02_assets/` in your JSX. Only do this if
-you were explicitly granted Bash access for this call.
+You cannot generate images yourself — you have no Bash access. If the instruction includes
+a line starting "An image has already been generated for this marker", a URL is provided;
+use it directly (`<img src="...">` or the `ImagePopup` primitive's `src` prop). If no such
+line is present and the creative intent calls for a photo/illustration, use a text- or
+shape-based primitive instead — do not attempt to work around the lack of image access.
 
 ## Self-heal mode
 If your instruction includes a "Validation error" section, a previous attempt failed to

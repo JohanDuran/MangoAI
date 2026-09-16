@@ -6,13 +6,14 @@ interface Props {
   end: number;
   onStartChange: (seconds: number) => void;
   onEndChange: (seconds: number) => void;
-  onAdd: (input: { start: number; end: number; prompt: string }) => void;
+  onAdd: (input: { start: number; end: number; prompt: string; allowImage: boolean }) => void;
 }
 
 const fmt = (seconds: number) => seconds.toFixed(1);
 
 export const AddMarkerPanel: React.FC<Props> = ({ currentTime, start, end, onStartChange, onEndChange, onAdd }) => {
   const [prompt, setPrompt] = useState('');
+  const [allowImage, setAllowImage] = useState(false);
   const canAdd = prompt.trim().length > 0 && end > start;
 
   return (
@@ -50,8 +51,9 @@ export const AddMarkerPanel: React.FC<Props> = ({ currentTime, start, end, onSta
         onSubmit={(e) => {
           e.preventDefault();
           if (!canAdd) return;
-          onAdd({ start, end, prompt });
+          onAdd({ start, end, prompt, allowImage });
           setPrompt('');
+          setAllowImage(false);
         }}
         className="add-marker-row"
       >
@@ -65,6 +67,10 @@ export const AddMarkerPanel: React.FC<Props> = ({ currentTime, start, end, onSta
           Add marker &amp; generate
         </button>
       </form>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)', marginTop: 8 }}>
+        <input type="checkbox" checked={allowImage} onChange={(e) => setAllowImage(e.target.checked)} />
+        Needs a generated image (generates one via OpenAI before writing the code)
+      </label>
       {end <= start && <div className="field-error">End must be after start.</div>}
     </div>
   );

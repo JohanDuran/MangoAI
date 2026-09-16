@@ -11,6 +11,9 @@ interface Props {
   runState: Record<string, MarkerRunState>;
   pendingStart: number;
   pendingEnd: number;
+  isPlaying: boolean;
+  onPlayPause: () => void;
+  onStop: () => void;
   onSeek: (seconds: number) => void;
   onSelect: (id: string) => void;
   onRangeSelect: (start: number, end: number) => void;
@@ -35,6 +38,9 @@ export const Timeline: React.FC<Props> = ({
   runState,
   pendingStart,
   pendingEnd,
+  isPlaying,
+  onPlayPause,
+  onStop,
   onSeek,
   onSelect,
   onRangeSelect,
@@ -139,6 +145,27 @@ export const Timeline: React.FC<Props> = ({
 
   return (
     <div className="timeline">
+      <div className="timeline-controls">
+        <button
+          type="button"
+          className="btn btn-sm timeline-transport-btn"
+          onClick={onPlayPause}
+          title={isPlaying ? 'Pause' : 'Play'}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+        >
+          {isPlaying ? '⏸' : '▶'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm timeline-transport-btn"
+          onClick={onStop}
+          title="Stop"
+          aria-label="Stop"
+        >
+          ⏹
+        </button>
+        <span className="timeline-current-time">{fmtTime(currentTime)}</span>
+      </div>
       <div className="timeline-times">
         <span>0:00</span>
         <span>{fmtTime(duration)}</span>

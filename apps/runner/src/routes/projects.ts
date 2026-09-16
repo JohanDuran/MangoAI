@@ -11,6 +11,8 @@ import { validateMarkerFile } from '../lib/validate.js';
 import { logAttempt } from '../lib/debug.js';
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
+import { transcribeProject, readTranscript, transcriptForRange } from '../lib/transcript.js';
+import { generateImage } from '../lib/images.js';
 
 export const projectsRouter = Router();
 
@@ -59,6 +61,19 @@ projectsRouter.patch('/projects/:id/markers/:markerId', (req, res) => {
   res.json(marker);
 });
 
+projectsRouter.post('/projects/:id/transcript', async (req, res) => {
+  try {
+    const segments = await transcribeProject(req.params.id);
+    res.json({ segments });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+projectsRouter.get('/projects/:id/transcript', (req, res) => {
+  res.json({ segments: readTranscript(req.params.id) });
+});
+
 projectsRouter.get('/projects/:id/markers/:markerId/code', (req, res) => {
   const file = markerFile(req.params.id, req.params.markerId);
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'not found' });
@@ -67,7 +82,7 @@ projectsRouter.get('/projects/:id/markers/:markerId/code', (req, res) => {
 
 projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, res) => {
   const { id, markerId } = req.params;
-  const { feedback } = req.body as { feedback?: string };
+  const { feedback, allowImage } = req.body as { feedback?: string; allowImage?: boolean };
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -83,6 +98,30 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
     const file = markerFile(id, markerId);
     const cwd = projectDir(id);
     const resolvedFeedback = feedback ?? marker.feedback;
+    const { width: compositionWidth, height: compositionHeight } = readCompositionConfig(id);
+    const transcript = transcriptForRange(id, marker.start, marker.end)
+      .map((s) => s.text)
+      .join(' ');
+
+    // Bash was tried and dropped: --allowedTools "Bash(...)" doesn't actually restrict to
+    // the given pattern (verified empirically — a scoped grant still permits arbitrary
+    // commands), so any Bash grant here would mean full shell access on every image
+    // request. Generating the image ourselves and handing Claude a ready URL means it
+    // never needs Bash at all — same allowedTools as every other call.
+    let imageUrl: string | undefined;
+    if (allowImage) {
+      send('progress', { attempt: 1, phase: 'generating-image' });
+      try {
+        const { file: imageFile } = await generateImage(id, resolvedFeedback || marker.prompt);
+        imageUrl = `http://localhost:${process.env.PORT || 5175}/projects/${id}/assets/${imageFile}`;
+      } catch (err) {
+        send('progress', {
+          attempt: 1,
+          phase: 'image-generation-failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     let priorError: string | undefined;
     let success = false;
@@ -97,6 +136,10 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
         prompt: marker.prompt,
         feedback: resolvedFeedback,
         priorError,
+        transcript: transcript || undefined,
+        imageUrl,
+        compositionWidth,
+        compositionHeight,
       });
 
       const result = await runClaudeHeadless({

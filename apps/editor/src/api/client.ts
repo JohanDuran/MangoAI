@@ -78,6 +78,18 @@ export const updateMarkerTiming = (id: string, markerId: string, timing: { start
 export const exportProject = (id: string) =>
   fetch(`${BASE}/projects/${id}/export`, { method: 'POST' }).then((r) => json<{ success: boolean; output?: string; log?: string }>(r));
 
+export interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export const transcribeProject = (id: string) =>
+  fetch(`${BASE}/projects/${id}/transcript`, { method: 'POST' }).then((r) => json<{ segments: TranscriptSegment[] }>(r));
+
+export const getTranscript = (id: string) =>
+  fetch(`${BASE}/projects/${id}/transcript`).then((r) => json<{ segments: TranscriptSegment[] }>(r));
+
 export interface RegenerateEvent {
   event: string;
   data: unknown;
@@ -89,12 +101,13 @@ export async function regenerateMarker(
   id: string,
   markerId: string,
   feedback: string,
+  allowImage: boolean,
   onEvent: (e: RegenerateEvent) => void
 ): Promise<void> {
   const res = await fetch(`${BASE}/projects/${id}/markers/${markerId}/regenerate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feedback }),
+    body: JSON.stringify({ feedback, allowImage }),
   });
   if (!res.body) throw new Error('No response stream');
 

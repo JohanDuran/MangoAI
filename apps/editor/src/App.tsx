@@ -9,10 +9,13 @@ import {
   updateComposition,
   updateMarkerTiming,
   regenerateMarker,
+  transcribeProject,
+  getTranscript,
   videoUrl as videoUrlFor,
   type Project,
   type Marker,
   type CompositionConfig,
+  type TranscriptSegment,
 } from './api/client';
 import { DualLayerPreview, type DualLayerPreviewHandle } from './components/DualLayerPreview';
 import { Timeline } from './components/Timeline';
@@ -39,10 +42,16 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportSucceeded, setExportSucceeded] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [runState, setRunState] = useState<Record<string, MarkerRunState>>({});
   const [pendingStart, setPendingStart] = useState(0);
   const [pendingEnd, setPendingEnd] = useState(3);
+  const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcribeError, setTranscribeError] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const previewRef = useRef<DualLayerPreviewHandle>(null);
 
   useEffect(() => {
@@ -58,20 +67,42 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (projectId) refreshProject(projectId);
-    else {
+    if (projectId) {
+      refreshProject(projectId);
+      getTranscript(projectId).then(({ segments }) => setTranscript(segments));
+    } else {
       setMarkers([]);
       setVideoUrl(null);
       setComposition(DEFAULT_COMPOSITION);
       setRunState({});
+      setTranscript([]);
     }
   }, [projectId]);
 
-  const triggerRegenerate = async (markerId: string, feedback: string) => {
+  const handleTranscribe = async () => {
     if (!projectId) return;
+    setTranscribing(true);
+    setTranscribeError(null);
+    try {
+      const { segments } = await transcribeProject(projectId);
+      setTranscript(segments);
+    } catch (err) {
+      setTranscribeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const markEdited = () => {
+    setExportSucceeded(false);
+  };
+
+  const triggerRegenerate = async (markerId: string, feedback: string, allowImage: boolean) => {
+    if (!projectId) return;
+    markEdited();
     setRunState((prev) => ({ ...prev, [markerId]: { phase: 'generating', log: [] } }));
     try {
-      await regenerateMarker(projectId, markerId, feedback, (e) => {
+      await regenerateMarker(projectId, markerId, feedback, allowImage, (e) => {
         if (e.event === 'progress') {
           const d = e.data as { attempt: number; phase: string; error?: string };
           setRunState((prev) => ({
@@ -104,18 +135,20 @@ export default function App() {
     setNewName('');
   };
 
-  const handleAddMarker = async (input: { start: number; end: number; prompt: string }) => {
+  const handleAddMarker = async (input: { start: number; end: number; prompt: string; allowImage: boolean }) => {
     if (!projectId) return;
+    markEdited();
     const marker = await addMarker(projectId, input);
     refreshProject(projectId);
     setSelectedMarkerId(marker.marker_id);
-    triggerRegenerate(marker.marker_id, input.prompt);
+    triggerRegenerate(marker.marker_id, input.prompt, input.allowImage);
     setPendingStart(input.end);
     setPendingEnd(input.end + 3);
   };
 
   const handleMarkerTimingChange = async (markerId: string, start: number, end: number) => {
     if (!projectId) return;
+    markEdited();
     await updateMarkerTiming(projectId, markerId, { start, end });
     refreshProject(projectId);
     setReloadToken((t) => t + 1);
@@ -123,6 +156,7 @@ export default function App() {
 
   const handleUploadVideo = async (file: File) => {
     if (!projectId) return;
+    markEdited();
     setUploading(true);
     try {
       await uploadVideo(projectId, file);
@@ -134,18 +168,62 @@ export default function App() {
 
   const handleDurationChange = async (durationInFrames: number) => {
     if (!projectId) return;
+    markEdited();
     const next = await updateComposition(projectId, { durationInFrames });
     setComposition(next);
   };
 
+  const handleVideoSize = async (width: number, height: number) => {
+    if (!projectId) return;
+    if (width === composition.width && height === composition.height) return;
+    markEdited();
+    const next = await updateComposition(projectId, { width, height });
+    setComposition(next);
+  };
+
+  const handlePlayPause = () => {
+    if (isPlaying) previewRef.current?.pause();
+    else previewRef.current?.play();
+  };
+
+  const handleStop = () => {
+    previewRef.current?.stop();
+    setIsPlaying(false);
+  };
+
+  // Spacebar toggles play/pause anywhere in the editor, except while the user is
+  // typing in a field (or has a button focused, where Space should activate that
+  // button as usual rather than double-firing playback).
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat || !projectId) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return;
+      if ((e.target as HTMLElement | null)?.isContentEditable) return;
+      e.preventDefault();
+      handlePlayPause();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [projectId, isPlaying]);
+
   const handleExport = async () => {
     if (!projectId) return;
-    setExportStatus('Rendering…');
+    setExporting(true);
+    setExportSucceeded(false);
+    setExportStatus('Exporting video…');
     try {
       const result = await exportProject(projectId);
-      setExportStatus(result.success ? `Exported to ${result.output}` : 'Export failed — see server logs');
+      if (result.success) {
+        setExportStatus(`Export complete — saved to ${result.output}`);
+        setExportSucceeded(true);
+      } else {
+        setExportStatus('Export failed — see server logs');
+      }
     } catch (err) {
       setExportStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -195,16 +273,31 @@ export default function App() {
                 }}
               />
             </label>
-            <button onClick={handleExport} className="btn btn-primary">
-              Export final video
+            <button onClick={handleTranscribe} disabled={transcribing} className="btn btn-sm">
+              {transcribing ? 'Transcribing…' : transcript.length > 0 ? 'Re-transcribe' : 'Transcribe video'}
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={exporting || exportSucceeded}
+              className="btn btn-primary"
+              style={{ cursor: exporting || exportSucceeded ? 'not-allowed' : 'pointer' }}
+            >
+              {exporting ? 'Exporting video…' : exportSucceeded ? 'Exported' : 'Export final video'}
             </button>
           </>
         )}
       </div>
+      {transcribeError && (
+        <div style={{ padding: '0 24px', fontSize: 13, color: 'var(--error)' }}>{transcribeError}</div>
+      )}
 
       <div className="workspace">
         <div className="stage-column">
-          {exportStatus && <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{exportStatus}</div>}
+          {exportStatus && (
+            <div style={{ fontSize: 13, color: exportSucceeded ? 'var(--ready)' : 'var(--text-muted)' }}>
+              {exportStatus}
+            </div>
+          )}
 
           {projectId ? (
             <>
@@ -218,7 +311,9 @@ export default function App() {
                 compositionHeight={composition.height}
                 initialDurationInFrames={composition.durationInFrames}
                 onDurationChange={handleDurationChange}
+                onVideoSize={handleVideoSize}
                 onTimeUpdate={setCurrentTime}
+                onPlayingChange={setIsPlaying}
               />
               <Timeline
                 markers={markers}
@@ -228,6 +323,9 @@ export default function App() {
                 runState={runState}
                 pendingStart={pendingStart}
                 pendingEnd={pendingEnd}
+                isPlaying={isPlaying}
+                onPlayPause={handlePlayPause}
+                onStop={handleStop}
                 onSeek={(seconds) => previewRef.current?.seekTo(seconds)}
                 onSelect={setSelectedMarkerId}
                 onRangeSelect={(start, end) => {
@@ -256,6 +354,11 @@ export default function App() {
               projectId={projectId}
               marker={selectedMarker}
               run={selectedMarker ? runState[selectedMarker.marker_id] : undefined}
+              transcript={
+                selectedMarker
+                  ? transcript.filter((s) => s.start < selectedMarker.end && s.end > selectedMarker.start)
+                  : []
+              }
               onRegenerate={triggerRegenerate}
             />
           )}
