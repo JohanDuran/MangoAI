@@ -13,6 +13,15 @@ export interface CompositionConfig {
   durationInFrames: number;
 }
 
+// Normalized 0-1 fractions of the composition canvas — resolution-independent. Absent on
+// a Marker means the animation covers the full screen.
+export interface MarkerRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface Marker {
   marker_id: string;
   start: number;
@@ -20,6 +29,7 @@ export interface Marker {
   prompt: string;
   feedback: string;
   status: 'draft' | 'ready' | 'error';
+  region?: MarkerRegion;
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -58,7 +68,7 @@ export const updateComposition = (id: string, patch: Partial<CompositionConfig>)
     body: JSON.stringify(patch),
   }).then((r) => json<CompositionConfig>(r));
 
-export const addMarker = (id: string, input: { start: number; end: number; prompt: string }) =>
+export const addMarker = (id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion }) =>
   fetch(`${BASE}/projects/${id}/markers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -75,8 +85,25 @@ export const updateMarkerTiming = (id: string, markerId: string, timing: { start
     body: JSON.stringify(timing),
   }).then((r) => json<Marker>(r));
 
-export const exportProject = (id: string) =>
-  fetch(`${BASE}/projects/${id}/export`, { method: 'POST' }).then((r) => json<{ success: boolean; output?: string; log?: string }>(r));
+// Pass null to reset the marker to full screen.
+export const updateMarkerRegion = (id: string, markerId: string, region: MarkerRegion | null) =>
+  fetch(`${BASE}/projects/${id}/markers/${markerId}/region`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ region }),
+  }).then((r) => json<Marker>(r));
+
+export const deleteMarker = (id: string, markerId: string) =>
+  fetch(`${BASE}/projects/${id}/markers/${markerId}`, { method: 'DELETE' }).then((r) => {
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  });
+
+export const exportProject = (id: string, includeVideo = false) =>
+  fetch(`${BASE}/projects/${id}/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ includeVideo }),
+  }).then((r) => json<{ success: boolean; output?: string; log?: string }>(r));
 
 export interface TranscriptSegment {
   start: number;
@@ -95,20 +122,10 @@ export interface RegenerateEvent {
   data: unknown;
 }
 
-// The regenerate endpoint streams Server-Sent Events over a POST response. EventSource
-// can't do POST, so we read the stream manually and split on the SSE frame delimiter.
-export async function regenerateMarker(
-  id: string,
-  markerId: string,
-  feedback: string,
-  allowImage: boolean,
-  onEvent: (e: RegenerateEvent) => void
-): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${id}/markers/${markerId}/regenerate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feedback, allowImage }),
-  });
+// Shared by every endpoint that streams Server-Sent Events over a POST response.
+// EventSource can't do POST, so the stream is read manually and split on the SSE frame
+// delimiter.
+async function readEventStream(res: Response, onEvent: (e: RegenerateEvent) => void): Promise<void> {
   if (!res.body) throw new Error('No response stream');
 
   const reader = res.body.getReader();
@@ -136,4 +153,52 @@ export async function regenerateMarker(
       boundary = buffer.indexOf('\n\n');
     }
   }
+}
+
+export async function regenerateMarker(
+  id: string,
+  markerId: string,
+  feedback: string,
+  allowImage: boolean,
+  onEvent: (e: RegenerateEvent) => void
+): Promise<void> {
+  const res = await fetch(`${BASE}/projects/${id}/markers/${markerId}/regenerate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feedback, allowImage }),
+  });
+  await readEventStream(res, onEvent);
+}
+
+export interface ProposedMarker {
+  start: number;
+  end: number;
+  prompt: string;
+  region: MarkerRegion | null;
+}
+
+export const planMarkers = (id: string) =>
+  fetch(`${BASE}/projects/${id}/markers/plan`, { method: 'POST' }).then((r) =>
+    json<{ proposals: ProposedMarker[]; droppedCount: number }>(r)
+  );
+
+export interface ApplyMarkerInput {
+  start: number;
+  end: number;
+  prompt: string;
+  region: MarkerRegion | null;
+  allowImage: boolean;
+}
+
+export async function applyMarkerPlan(
+  id: string,
+  markers: ApplyMarkerInput[],
+  onEvent: (e: RegenerateEvent) => void
+): Promise<void> {
+  const res = await fetch(`${BASE}/projects/${id}/markers/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markers }),
+  });
+  await readEventStream(res, onEvent);
 }

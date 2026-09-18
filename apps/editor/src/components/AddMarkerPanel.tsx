@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import type { MarkerRegion } from '../api/client';
+import { formatRegion } from '../format';
 
 interface Props {
   currentTime: number;
@@ -7,11 +9,28 @@ interface Props {
   onStartChange: (seconds: number) => void;
   onEndChange: (seconds: number) => void;
   onAdd: (input: { start: number; end: number; prompt: string; allowImage: boolean }) => void;
+  region: MarkerRegion | null;
+  editingRegion: boolean;
+  onStartEditRegion: () => void;
+  onDoneEditRegion: () => void;
+  onResetRegion: () => void;
 }
 
 const fmt = (seconds: number) => seconds.toFixed(1);
 
-export const AddMarkerPanel: React.FC<Props> = ({ currentTime, start, end, onStartChange, onEndChange, onAdd }) => {
+export const AddMarkerPanel: React.FC<Props> = ({
+  currentTime,
+  start,
+  end,
+  onStartChange,
+  onEndChange,
+  onAdd,
+  region,
+  editingRegion,
+  onStartEditRegion,
+  onDoneEditRegion,
+  onResetRegion,
+}) => {
   const [prompt, setPrompt] = useState('');
   const [allowImage, setAllowImage] = useState(false);
   const canAdd = prompt.trim().length > 0 && end > start;
@@ -46,6 +65,33 @@ export const AddMarkerPanel: React.FC<Props> = ({ currentTime, start, end, onSta
         <button type="button" className="btn btn-sm" onClick={() => onEndChange(Number(fmt(currentTime)))}>
           Capture end ({fmt(currentTime)}s)
         </button>
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <span className="capture-label" style={{ display: 'block', marginBottom: 6 }}>
+          Animation area
+        </span>
+        {editingRegion ? (
+          <div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 8 }}>
+              Drag on the preview above to draw, move, or resize the area this animation will be confined to.
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-sm" onClick={onResetRegion}>
+                Full screen
+              </button>
+              <button type="button" className="btn btn-primary btn-sm" onClick={onDoneEditRegion}>
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{formatRegion(region)}</span>
+            <button type="button" className="btn btn-sm" onClick={onStartEditRegion}>
+              Edit area
+            </button>
+          </div>
+        )}
       </div>
       <form
         onSubmit={(e) => {

@@ -81,6 +81,35 @@ export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResu
   });
 }
 
+export interface RunClaudeCaptureResult extends RunClaudeResult {
+  text: string;
+}
+
+// Same headless invocation as runClaudeHeadless, but also accumulates Claude's final text
+// answer — for callers that want a structured response (e.g. JSON) instead of file edits.
+// Follows the documented `claude --print --output-format stream-json` shape: a final
+// {"type":"result","result":"<text>"} line, with {"type":"assistant",...} text blocks
+// along the way as a fallback if `result` is ever missing.
+export async function runClaudeHeadlessCapturingText(opts: RunClaudeOptions): Promise<RunClaudeCaptureResult> {
+  let resultText = '';
+  let assistantBuffer = '';
+  const result = await runClaudeHeadless({
+    ...opts,
+    onEvent: (event) => {
+      opts.onEvent(event);
+      const e = event as { type?: string; result?: string; message?: { content?: { type?: string; text?: string }[] } };
+      if (e?.type === 'result' && typeof e.result === 'string') {
+        resultText = e.result;
+      } else if (e?.type === 'assistant') {
+        for (const block of e.message?.content ?? []) {
+          if (block?.type === 'text' && typeof block.text === 'string') assistantBuffer += block.text;
+        }
+      }
+    },
+  });
+  return { ...result, text: resultText || assistantBuffer };
+}
+
 export function buildRegeneratePrompt(opts: {
   markerId: string;
   currentCode: string;
@@ -91,14 +120,17 @@ export function buildRegeneratePrompt(opts: {
   imageUrl?: string;
   compositionWidth: number;
   compositionHeight: number;
+  regionWidth: number;
+  regionHeight: number;
+  isFullScreen: boolean;
 }): string {
   const file = `03_remotion_code/marker_${opts.markerId}.tsx`;
+  const regionSentence = opts.isFullScreen
+    ? `Your component receives \`regionWidth\` and \`regionHeight\` props (currently ${opts.regionWidth}x${opts.regionHeight}px, the full canvas) — read your available space from these props, not useVideoConfig()'s width/height, so the layout keeps working if this marker is later confined to a smaller on-screen area. Keep all content within regionWidth/regionHeight (with sensible margins) so nothing renders off-screen.`
+    : `This marker has been confined to a rectangle within the video canvas (the full canvas is ${opts.compositionWidth}x${opts.compositionHeight}px, but this marker only owns a ${opts.regionWidth}x${opts.regionHeight}px sub-area of it). Your component receives \`regionWidth\` and \`regionHeight\` props — this is your ENTIRE available space, and (0,0) is the top-left of YOUR rectangle, not the full canvas. Do not read useVideoConfig()'s width/height for layout — use regionWidth/regionHeight instead. Anything positioned beyond regionWidth/regionHeight is clipped and invisible, so scale text, shapes, and any shared primitive's x/y to fit inside this smaller area (percentages of regionWidth/regionHeight work well).`;
   const sections = [
     `Update the overlay component in ${file}.`,
-    `The video canvas for this project is ${opts.compositionWidth}x${opts.compositionHeight}px — read it via ` +
-      `useVideoConfig() rather than hardcoding a different size, and keep all content within those bounds ` +
-      `(with sensible margins) so nothing renders off-screen. If you use a shared primitive's default x/y, check ` +
-      `it still lands on-screen at this canvas size and pass explicit x/y if not.`,
+    regionSentence,
     `Original creative intent: ${opts.prompt}`,
     opts.feedback ? `Latest feedback: ${opts.feedback}` : null,
     opts.transcript ? `What's being said in the video during this marker's time range: "${opts.transcript}"` : null,

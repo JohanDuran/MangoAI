@@ -33,16 +33,24 @@ these rules exactly — the Node runner validates and hot-reloads your output au
     `#a6e3a1`)
 
 ## Style guardrails
-- The instruction you're given states the project's actual video canvas size in pixels.
-  Treat that as ground truth — read it via `useVideoConfig()` in your component (never
-  hardcode a different width/height) and keep every element within those bounds with
-  sensible margins. This project's canvas is not always 1280x720 or 1920x1080 (it's synced
-  to whatever video was actually uploaded, including vertical/portrait video), so don't
-  assume a standard 16:9 frame.
+- Your component is called with `regionWidth` and `regionHeight` props — these are your
+  ENTIRE available space in pixels, always. Read your layout dimensions from these props,
+  never from `useVideoConfig()`'s `width`/`height` (that's the full video canvas, which may
+  be larger than your assigned area) and never hardcoded. Keep every element within
+  `regionWidth`/`regionHeight` with sensible margins; anything positioned beyond them is
+  clipped by the runner and simply won't be visible.
+- Most markers own the full canvas (`regionWidth`/`regionHeight` equal the video's actual
+  size, which is not always 1280x720 or 1920x1080 — it's synced to whatever video was
+  uploaded, including vertical/portrait video). Some markers are confined to a smaller
+  rectangle of the screen chosen by the user (e.g. "keep this in the bottom-right corner"),
+  in which case `regionWidth`/`regionHeight` are that rectangle's size, not the full canvas
+  — the instruction you're given will say which case you're in. Either way, the same
+  `regionWidth`/`regionHeight`-relative code works correctly.
 - The shared primitives' default `x`/`y` values (listed above) are tuned for a roughly
-  1280x720 canvas. If the stated canvas size differs meaningfully, pass explicit `x`/`y`
-  (ideally computed from `useVideoConfig()`'s `width`/`height`, e.g. percentages of them)
-  instead of relying on those defaults — otherwise content can land outside the frame.
+  1280x720 area. If `regionWidth`/`regionHeight` differ meaningfully, pass explicit `x`/`y`
+  computed from them (e.g. percentages of `regionWidth`/`regionHeight`) instead of relying
+  on those defaults — otherwise content can land outside your area, especially in a small
+  confined region.
 - Overlays render on a transparent background — never set an opaque full-frame background
   color on the root element.
 - Keep entrance/exit animation under ~20 frames at 30fps unless the feedback asks for

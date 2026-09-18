@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { getMarkerCode, type Marker, type TranscriptSegment } from '../api/client';
+import { getMarkerCode, type Marker, type MarkerRegion, type TranscriptSegment } from '../api/client';
 import type { MarkerRunState } from '../App';
 import { displayStatus } from '../status';
 import { StatusBadge } from './StatusBadge';
+import { formatRegion } from '../format';
 
 interface Props {
   projectId: string;
@@ -10,13 +11,40 @@ interface Props {
   run?: MarkerRunState;
   transcript: TranscriptSegment[];
   onRegenerate: (markerId: string, feedback: string, allowImage: boolean) => void;
+  onDelete: (markerId: string) => void;
+  regionEditing: boolean;
+  regionDraft: MarkerRegion | null;
+  onStartEditRegion: (markerId: string) => void;
+  onCancelEditRegion: () => void;
+  onResetRegionDraft: () => void;
+  onSaveRegion: () => void;
 }
 
-export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, transcript, onRegenerate }) => {
+export const MarkerInspector: React.FC<Props> = ({
+  projectId,
+  marker,
+  run,
+  transcript,
+  onRegenerate,
+  onDelete,
+  regionEditing,
+  regionDraft,
+  onStartEditRegion,
+  onCancelEditRegion,
+  onResetRegionDraft,
+  onSaveRegion,
+}) => {
   const [code, setCode] = useState('');
   const [feedback, setFeedback] = useState('');
   const [showCode, setShowCode] = useState(false);
   const [allowImage, setAllowImage] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  // Switching markers (or losing the selection entirely) implicitly abandons any
+  // in-progress "are you sure?" delete confirmation for the previous one.
+  useEffect(() => {
+    setConfirmingDelete(false);
+  }, [marker?.marker_id]);
 
   // Refetch the displayed code whenever generation finishes (or the selected marker
   // changes) — but NOT the feedback text below, which the user may be actively typing.
@@ -34,7 +62,7 @@ export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, trans
   }, [projectId, marker?.marker_id]);
 
   if (!marker) {
-    return <div className="inspector-empty">Select a marker on the timeline to see its status, or add one below the video.</div>;
+    return <div className="inspector-empty">Select a marker on the timeline to see its status, or add one above.</div>;
   }
 
   const status = displayStatus(marker, run);
@@ -55,6 +83,27 @@ export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, trans
           Marker {marker.marker_id}
         </h3>
         <StatusBadge status={status} />
+        <div style={{ flex: 1 }} />
+        {confirmingDelete ? (
+          <>
+            <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Delete this animation?</span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ borderColor: 'var(--error)', color: 'var(--error)' }}
+              onClick={() => onDelete(marker.marker_id)}
+            >
+              Confirm
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingDelete(false)}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setConfirmingDelete(true)}>
+            Delete
+          </button>
+        )}
       </div>
 
       <div className={`status-line status-${status}`}>{statusLine}</div>
@@ -73,6 +122,44 @@ export const MarkerInspector: React.FC<Props> = ({ projectId, marker, run, trans
             Said in the video during this range
           </span>
           "{transcript.map((s) => s.text).join(' ')}"
+        </div>
+      )}
+
+      <label className="field-label">Animation area</label>
+      {regionEditing ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginBottom: 8 }}>
+            Drag on the preview above to draw, move, or resize the area this animation is confined to.
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} data-region-controls>
+            <button type="button" className="btn btn-sm" onClick={onResetRegionDraft}>
+              Full screen
+            </button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={onSaveRegion}>
+              Save area
+            </button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onCancelEditRegion}>
+              Cancel
+            </button>
+          </div>
+          {regionDraft && (
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 6, fontFamily: 'var(--font-mono)' }}>
+              {Math.round(regionDraft.width * 100)}% × {Math.round(regionDraft.height * 100)}% at (
+              {Math.round(regionDraft.x * 100)}%, {Math.round(regionDraft.y * 100)}%)
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{formatRegion(marker.region)}</span>
+          <button type="button" className="btn btn-sm" onClick={() => onStartEditRegion(marker.marker_id)}>
+            Edit area
+          </button>
+        </div>
+      )}
+      {!regionEditing && marker.region && marker.status === 'ready' && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: -8, marginBottom: 14 }}>
+          Tip: click Regenerate below so the animation redesigns itself to fit this area.
         </div>
       )}
 

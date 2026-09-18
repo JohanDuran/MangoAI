@@ -109,15 +109,21 @@ select {
 .workspace {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 1px;
+  display: flex;
   background: var(--border);
 }
 
 @media (max-width: 860px) {
   .workspace {
-    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .resize-handle {
+    display: none;
+  }
+
+  .inspector-column {
+    width: 100% !important;
   }
 }
 
@@ -127,9 +133,23 @@ select {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+}
+
+.resize-handle {
+  flex: 0 0 auto;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
+  position: relative;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--mango);
 }
 
 .stage-frame {
@@ -143,6 +163,10 @@ select {
 .inspector-column {
   background: var(--bg);
   padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
@@ -265,6 +289,63 @@ select {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+.region-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  z-index: 1;
+}
+
+.region-box {
+  position: absolute;
+  border: 1.5px dashed var(--mango);
+  background: var(--mango-wash);
+  cursor: move;
+}
+
+.region-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px;
+  border-radius: 50%;
+  background: var(--mango);
+  border: 2px solid var(--bg);
+}
+
+.region-handle-nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+}
+
+.region-handle-ne {
+  right: 0;
+  top: 0;
+  left: auto;
+  margin-left: 0;
+  margin-right: -6px;
+  cursor: nesw-resize;
+}
+
+.region-handle-sw {
+  left: 0;
+  bottom: 0;
+  top: auto;
+  margin-top: 0;
+  margin-bottom: -6px;
+  cursor: nesw-resize;
+}
+
+.region-handle-se {
+  right: 0;
+  bottom: 0;
+  left: auto;
+  top: auto;
+  margin: -6px;
+  cursor: nwse-resize;
 }
 
 .stage-resize-handle {
@@ -498,6 +579,18 @@ select {
   background: var(--mango);
 }
 
+/* Invisible, wider grab strip layered over the thin playhead line so it's actually
+   draggable without requiring pixel-precise clicks on the 2px line itself. */
+.timeline-playhead-hit {
+  position: absolute;
+  top: -8px;
+  bottom: -6px;
+  width: 16px;
+  margin-left: -8px;
+  cursor: ew-resize;
+  z-index: 3;
+}
+
 /* ---------- capture / add-marker panel ---------- */
 
 .panel {
@@ -551,6 +644,40 @@ select {
   font-size: 12px;
   color: var(--error);
   margin-top: 6px;
+}
+
+/* ---------- marker plan review ---------- */
+
+.plan-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.plan-review-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-review-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-review-row .capture-row {
+  margin-bottom: 0;
+}
+
+.plan-review-row .field-textarea {
+  min-height: 44px;
 }
 
 /* ---------- badges ---------- */

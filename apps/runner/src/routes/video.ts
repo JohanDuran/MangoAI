@@ -7,6 +7,7 @@ import { readProject } from '../lib/scaffold.js';
 import { findRawVideo, removeExistingRawVideo } from '../lib/video.js';
 import { updateCompositionConfig } from '../lib/composition.js';
 import { generateImage, assetFilePath } from '../lib/images.js';
+import { regenerateRegistry } from '../lib/registry.js';
 
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -69,7 +70,13 @@ videoRouter.patch('/projects/:id/composition', (req, res) => {
     return res.status(400).json({ error: 'at least one of durationInFrames, width, height is required' });
   }
 
-  res.json(updateCompositionConfig(req.params.id, patch));
+  const next = updateCompositionConfig(req.params.id, patch);
+  // Marker regions are baked into CustomOverlay.tsx as pixel rects at generation time, so
+  // a canvas resize (new video upload) invalidates them until regenerated.
+  if (patch.width !== undefined || patch.height !== undefined) {
+    regenerateRegistry(req.params.id);
+  }
+  res.json(next);
 });
 
 // Serves generated (or manually dropped-in) assets over plain HTTP so the same URL works

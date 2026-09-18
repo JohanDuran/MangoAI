@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { PROJECTS_ROOT, TEMPLATES_ROOT, projectDir, markerFile } from './paths.js';
-import { readMarkers, writeMarkers, type Marker } from './markers.js';
+import { readMarkers, writeMarkers, type Marker, type MarkerRegion } from './markers.js';
 import { regenerateRegistry } from './registry.js';
 
 export interface Project {
@@ -60,15 +60,23 @@ export function readProject(id: string): Project | null {
   return JSON.parse(fs.readFileSync(file, 'utf-8'));
 }
 
-export function addMarker(id: string, input: { start: number; end: number; prompt: string }): Marker {
+export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion }): Marker {
   const markers = readMarkers(id);
+  // Based on the highest existing numeric suffix, not the array length — deleting a
+  // marker must not free up its id for reuse (it may still be referenced in
+  // 05_debug/code_history, and reusing it would confuse "which generation is this").
+  const maxNum = markers.reduce((max, m) => {
+    const n = Number(/^m(\d+)$/.exec(m.marker_id)?.[1]);
+    return Number.isFinite(n) ? Math.max(max, n) : max;
+  }, 0);
   const marker: Marker = {
-    marker_id: `m${markers.length + 1}`,
+    marker_id: `m${maxNum + 1}`,
     start: input.start,
     end: input.end,
     prompt: input.prompt,
     feedback: '',
     status: 'draft',
+    ...(input.region ? { region: input.region } : {}),
   };
   markers.push(marker);
   writeMarkers(id, markers);

@@ -1,7 +1,12 @@
 import React from 'react';
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 
-export default function __EXPORT_NAME__() {
+interface Props {
+  regionWidth?: number;
+  regionHeight?: number;
+}
+
+export default function __EXPORT_NAME__({ regionWidth = 1920, regionHeight = 1080 }: Props) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const enter = spring({ frame, fps, config: { damping: 200 } });
@@ -11,12 +16,12 @@ export default function __EXPORT_NAME__() {
     <div
       style={{
         position: 'absolute',
-        left: 80,
-        bottom: 120,
+        left: regionWidth * 0.06,
+        bottom: regionHeight * 0.15,
         opacity,
         color: 'white',
         fontFamily: 'Inter, Helvetica, Arial, sans-serif',
-        fontSize: 32,
+        fontSize: Math.max(18, regionWidth * 0.025),
         fontWeight: 600,
       }}
     >

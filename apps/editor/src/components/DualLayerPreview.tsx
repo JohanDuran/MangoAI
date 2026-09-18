@@ -1,5 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
+import { RegionOverlay } from './RegionOverlay';
+import type { MarkerRegion } from '../api/client';
 
 interface Props {
   projectId: string;
@@ -13,6 +15,9 @@ interface Props {
   onVideoSize?: (width: number, height: number) => void;
   onTimeUpdate?: (seconds: number) => void;
   onPlayingChange?: (playing: boolean) => void;
+  regionDraft?: MarkerRegion | null;
+  onRegionDraftChange?: (region: MarkerRegion) => void;
+  onRegionCommit?: () => void;
 }
 
 export interface DualLayerPreviewHandle {
@@ -35,6 +40,9 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     onVideoSize,
     onTimeUpdate,
     onPlayingChange,
+    regionDraft,
+    onRegionDraftChange,
+    onRegionCommit,
   },
   ref
 ) {
@@ -146,14 +154,16 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
 
   const displayWidthPx = fitToScreen ? fitWidthPx : manualWidthPx ?? fitWidthPx;
 
-  // Dragging switches to a manual pixel width (extending the video), which may make the
-  // stage taller than the frame — the stage column scrolls to accommodate that instead
-  // of clipping. Double-click the handle to snap back to the auto-fit default.
+  // Dragging switches to a manual pixel width. Capped to fitWidthPx (not just
+  // frameSize.width) so the stage can never grow taller than the frame either — `.stage`
+  // is position:relative, so an oversized stage doesn't just get clipped by the column's
+  // scroll, it paints on top of the Timeline/AddMarkerPanel below it. Double-click the
+  // handle to snap back to the auto-fit default.
   const handleResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const startWidthPx = displayWidthPx;
-    const maxWidth = frameSize.width || startWidthPx;
+    const maxWidth = fitWidthPx || frameSize.width || startWidthPx;
     setFitToScreen(false);
 
     const handleMove = (ev: MouseEvent) => {
@@ -212,12 +222,17 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
               />
             </div>
           )}
-          <div
-            className="stage-resize-handle"
-            onMouseDown={handleResizeStart}
-            onDoubleClick={resetToFit}
-            title={fitToScreen ? 'Drag to resize preview' : 'Drag to resize, double-click to fit screen'}
-          />
+          {regionDraft && onRegionDraftChange && (
+            <RegionOverlay region={regionDraft} onChange={onRegionDraftChange} onCommit={onRegionCommit} />
+          )}
+          {!regionDraft && (
+            <div
+              className="stage-resize-handle"
+              onMouseDown={handleResizeStart}
+              onDoubleClick={resetToFit}
+              title={fitToScreen ? 'Drag to resize preview' : 'Drag to resize, double-click to fit screen'}
+            />
+          )}
         </div>
       </div>
     </div>

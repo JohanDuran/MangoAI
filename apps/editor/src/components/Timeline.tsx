@@ -16,8 +16,10 @@ interface Props {
   onStop: () => void;
   onSeek: (seconds: number) => void;
   onSelect: (id: string) => void;
+  onDeselectAll: () => void;
   onRangeSelect: (start: number, end: number) => void;
   onMarkerTimingChange: (markerId: string, start: number, end: number) => void;
+  onEditRegion: (markerId: string) => void;
 }
 
 const fmtTime = (s: number) => {
@@ -43,8 +45,10 @@ export const Timeline: React.FC<Props> = ({
   onStop,
   onSeek,
   onSelect,
+  onDeselectAll,
   onRangeSelect,
   onMarkerTimingChange,
+  onEditRegion,
 }) => {
   const duration = Math.max(durationSeconds, 1);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -65,8 +69,15 @@ export const Timeline: React.FC<Props> = ({
     const origEnd = marker.end;
     let latestStart = origStart;
     let latestEnd = origEnd;
+    // A plain click on the chip (select + seek, handled by the chip's own onClick) also
+    // fires this mousedown. Only treat it as an actual drag — and only then persist a
+    // timing change — once the pointer has moved past the threshold; otherwise the
+    // unconditional PATCH below triggers a project refresh that reloads the video and
+    // wipes out the seek the click just performed.
+    let moved = false;
 
     const handleMove = (ev: MouseEvent) => {
+      if (Math.abs(ev.clientX - startX) >= DRAG_THRESHOLD_PX) moved = true;
       const rect = trackRef.current!.getBoundingClientRect();
       const deltaSeconds = ((ev.clientX - startX) / rect.width) * duration;
 
@@ -93,7 +104,9 @@ export const Timeline: React.FC<Props> = ({
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
       setMovingMarker(null);
-      onMarkerTimingChange(marker.marker_id, Number(latestStart.toFixed(1)), Number(latestEnd.toFixed(1)));
+      if (moved) {
+        onMarkerTimingChange(marker.marker_id, Number(latestStart.toFixed(1)), Number(latestEnd.toFixed(1)));
+      }
     };
 
     window.addEventListener('mousemove', handleMove);
@@ -103,6 +116,21 @@ export const Timeline: React.FC<Props> = ({
   const ratioAt = (clientX: number) => {
     const rect = trackRef.current!.getBoundingClientRect();
     return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  };
+
+  const beginPlayheadDrag = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    const handleMove = (ev: MouseEvent) => {
+      onSeek(ratioAt(ev.clientX) * duration);
+    };
+    const handleUp = () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -125,6 +153,7 @@ export const Timeline: React.FC<Props> = ({
 
       if (Math.abs(ev.clientX - startX) < DRAG_THRESHOLD_PX) {
         onSeek(startRatio * duration);
+        onDeselectAll();
         return;
       }
       const endRatio = ratioAt(ev.clientX);
@@ -137,9 +166,13 @@ export const Timeline: React.FC<Props> = ({
     window.addEventListener('mouseup', handleUp);
   };
 
+  // The persisted (non-live) pending rect represents an in-progress "new marker" draft —
+  // once an existing marker is selected, that draft is no longer what's being worked on,
+  // so it shouldn't linger on the timeline. A rect actively being dragged is exempt: it
+  // still needs to render up until the mouseup that actually clears the selection.
   const pendingRect =
     liveDrag ??
-    (pendingEnd > pendingStart
+    (!selectedId && pendingEnd > pendingStart
       ? { left: (pendingStart / duration) * 100, width: ((pendingEnd - pendingStart) / duration) * 100 }
       : null);
 
@@ -189,7 +222,11 @@ export const Timeline: React.FC<Props> = ({
                 onSelect(m.marker_id);
                 onSeek(effStart);
               }}
-              title={`${m.marker_id} · ${effStart.toFixed(1)}s–${effEnd.toFixed(1)}s — ${m.prompt}`}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                onEditRegion(m.marker_id);
+              }}
+              title={`${m.marker_id} · ${effStart.toFixed(1)}s–${effEnd.toFixed(1)}s — ${m.prompt} (double-click to move its animation area)`}
             >
               <div className="timeline-chip-edge" onMouseDown={(e) => beginMarkerDrag(e, m, 'trim-start')} />
               <span className="timeline-chip-label" onMouseDown={(e) => beginMarkerDrag(e, m, 'move')}>
@@ -208,10 +245,16 @@ export const Timeline: React.FC<Props> = ({
           className="timeline-playhead"
           style={{ left: `${Math.min(100, (currentTime / duration) * 100)}%` }}
         />
+        <div
+          className="timeline-playhead-hit"
+          style={{ left: `${Math.min(100, (currentTime / duration) * 100)}%` }}
+          onMouseDown={beginPlayheadDrag}
+        />
       </div>
       <div className="panel-hint" style={{ marginTop: 6 }}>
-        Click to seek, drag empty track to create a marker, or drag an existing marker's
-        body to move it and its edges to trim it.
+        Click to seek, drag empty track to create a marker, drag an existing marker's body
+        to move it and its edges to trim it, or double-click a marker to move its animation
+        area.
       </div>
     </div>
   );
