@@ -1,23 +1,37 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 
-const activeProcesses = new Map<string, ChildProcessWithoutNullStreams>();
+// Claude runs for one project are executed one at a time. A second request waits for the first
+// instead of killing it: two generations for different markers used to kill each other's
+// process, and two runs can never race on the same project files.
+const queues = new Map<string, Promise<void>>();
 
-// Only one headless Claude run may be in flight per project — a new regenerate request
-// supersedes whatever is currently writing to the same marker file.
-export function killActive(projectId: string): void {
-  const child = activeProcesses.get(projectId);
-  if (child && !child.killed) {
-    child.kill('SIGTERM');
-  }
-  activeProcesses.delete(projectId);
+export function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = queues.get(projectId) ?? Promise.resolve();
+  const run = previous.then(fn, fn);
+  const tail = run.then(
+    () => undefined,
+    () => undefined
+  );
+  queues.set(projectId, tail);
+  void tail.then(() => {
+    if (queues.get(projectId) === tail) queues.delete(projectId);
+  });
+  return run;
 }
 
 export interface RunClaudeOptions {
-  projectId: string;
   cwd: string;
   prompt: string;
-  allowedTools: string[];
+  // Built-in tools available to Claude (--tools). Empty means no tools at all.
+  tools: string[];
+  // Pre-approved tools (--allowedTools). Use this for MCP tools only: a bare built-in name
+  // such as "Read" here grants access to every path on the machine, while a built-in that is
+  // merely available through `tools` stays confined to the project directory.
+  allowedTools?: string[];
+  mcpConfigPath?: string;
+  // Environment variables to hide from the claude process (secrets of inactive skills).
+  envExclude?: string[];
   onEvent: (event: unknown) => void;
 }
 
@@ -27,30 +41,36 @@ export interface RunClaudeResult {
 }
 
 export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResult> {
-  killActive(opts.projectId);
+  const env = { ...process.env };
+  for (const key of opts.envExclude ?? []) delete env[key];
 
   return new Promise((resolve) => {
+    const args = [
+      '--print',
+      opts.prompt,
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--tools',
+      opts.tools.join(','),
+    ];
+    if (opts.allowedTools && opts.allowedTools.length > 0) args.push('--allowedTools', opts.allowedTools.join(','));
+    if (opts.mcpConfigPath) args.push('--mcp-config', opts.mcpConfigPath);
+    // Keep runs identical across machines: ignore the user's global MCP connectors and
+    // user-level skills/plugins/settings.
+    args.push('--strict-mcp-config', '--setting-sources', 'project', '--permission-mode', 'acceptEdits');
+
     const child = spawn(
       'claude',
-      [
-        '--print',
-        opts.prompt,
-        '--output-format',
-        'stream-json',
-        '--verbose',
-        '--allowedTools',
-        opts.allowedTools.join(','),
-        '--permission-mode',
-        'acceptEdits',
-      ],
+      args,
       // Do NOT set shell: true here — claude resolves to a real .exe (confirmed via
       // `Get-Command claude`), and routing through cmd.exe on Windows silently mangles
       // multi-line prompt arguments (backticks, quotes) instead of passing them verbatim
       // the way spawn()'s argv array does by default.
-      { cwd: opts.cwd }
+      // stdin is ignored because an open, never-written pipe makes claude wait ~3s for
+      // input before starting, on every call.
+      { cwd: opts.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }
     );
-
-    activeProcesses.set(opts.projectId, child);
 
     const rl = readline.createInterface({ input: child.stdout });
     rl.on('line', (line) => {
@@ -68,13 +88,11 @@ export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResu
     });
 
     child.on('close', (code) => {
-      activeProcesses.delete(opts.projectId);
       if (code !== 0 && stderr) opts.onEvent({ type: 'stderr', message: stderr });
       resolve({ success: code === 0, exitCode: code });
     });
 
     child.on('error', (err) => {
-      activeProcesses.delete(opts.projectId);
       opts.onEvent({ type: 'spawn-error', message: err.message });
       resolve({ success: false, exitCode: null });
     });
@@ -117,7 +135,7 @@ export function buildRegeneratePrompt(opts: {
   feedback: string;
   priorError?: string;
   transcript?: string;
-  imageUrl?: string;
+  optedInSkills?: string[];
   compositionWidth: number;
   compositionHeight: number;
   regionWidth: number;
@@ -134,12 +152,13 @@ export function buildRegeneratePrompt(opts: {
     `Original creative intent: ${opts.prompt}`,
     opts.feedback ? `Latest feedback: ${opts.feedback}` : null,
     opts.transcript ? `What's being said in the video during this marker's time range: "${opts.transcript}"` : null,
-    opts.imageUrl
-      ? `An image has already been generated for this marker and is served at: ${opts.imageUrl}\nUse it directly, e.g. \`<img src="${opts.imageUrl}" />\` or via the ImagePopup primitive's src prop. You cannot generate images yourself — this URL is the only one available for this call.`
-      : null,
     `Current code:\n\`\`\`tsx\n${opts.currentCode}\n\`\`\``,
     opts.priorError
       ? `Validation error from the previous attempt — fix this specifically:\n${opts.priorError}`
+      : null,
+    'Before writing code, check the skills available to you and load any whose description matches what this animation needs.',
+    opts.optedInSkills && opts.optedInSkills.length > 0
+      ? `The user explicitly enabled these skills for this request, so use them where they fit the creative intent: ${opts.optedInSkills.join(', ')}.`
       : null,
     'Follow the conventions in CLAUDE.md. Only modify this one file.',
   ].filter((s): s is string => Boolean(s));

@@ -6,8 +6,9 @@ import { inputDir } from '../lib/paths.js';
 import { readProject } from '../lib/scaffold.js';
 import { findRawVideo, removeExistingRawVideo } from '../lib/video.js';
 import { updateCompositionConfig } from '../lib/composition.js';
-import { generateImage, assetFilePath } from '../lib/images.js';
+import { assetFilePath } from '../lib/images.js';
 import { regenerateRegistry } from '../lib/registry.js';
+import { skillPublicFile } from '../lib/skills.js';
 
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -89,13 +90,17 @@ videoRouter.get('/projects/:id/assets/:filename', (req, res) => {
   res.sendFile(file);
 });
 
-videoRouter.post('/projects/:id/images', async (req, res) => {
-  const { prompt } = req.body as { prompt?: string };
-  if (!prompt) return res.status(400).json({ error: 'prompt is required' });
-  try {
-    const { file, relativePath } = await generateImage(req.params.id, prompt);
-    res.status(201).json({ file, relativePath, url: `/projects/${req.params.id}/assets/${file}` });
-  } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
+// Static files a skill ships in its public/ folder (sound files, for example). Same reasoning as
+// the assets route: a plain HTTP URL works in both the browser preview and Remotion's headless render.
+videoRouter.get('/skills/:name/public/*', (req, res) => {
+  const file = skillPublicFile(req.params.name, (req.params as Record<string, string>)[0]);
+  if (!file) return res.status(404).json({ error: 'not found' });
+  res.sendFile(file);
+});
+
+// Marker code generated before sounds became a skill links to /sfx/<file>; keep those URLs working.
+videoRouter.get('/sfx/:filename', (req, res) => {
+  const file = skillPublicFile('sound-effects', req.params.filename);
+  if (!file) return res.status(404).json({ error: 'not found' });
+  res.sendFile(file);
 });

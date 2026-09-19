@@ -2,7 +2,7 @@ import { projectDir } from './paths.js';
 import { readMarkers, isValidRegion, type MarkerRegion } from './markers.js';
 import { readTranscript, type TranscriptSegment } from './transcript.js';
 import { readCompositionConfig } from './composition.js';
-import { runClaudeHeadlessCapturingText } from './claude.js';
+import { runClaudeHeadlessCapturingText, withProjectLock } from './claude.js';
 
 export interface ProposedMarker {
   start: number;
@@ -101,13 +101,14 @@ export async function planMarkers(id: string): Promise<PlanMarkersResult> {
     existing: markers.map((m) => ({ start: m.start, end: m.end, prompt: m.prompt })),
   });
 
-  const { text } = await runClaudeHeadlessCapturingText({
-    projectId: id,
-    cwd: projectDir(id),
-    prompt,
-    allowedTools: [],
-    onEvent: () => {},
-  });
+  const { text } = await withProjectLock(id, () =>
+    runClaudeHeadlessCapturingText({
+      cwd: projectDir(id),
+      prompt,
+      tools: [],
+      onEvent: () => {},
+    })
+  );
 
   const raw = extractJsonArray(text);
 

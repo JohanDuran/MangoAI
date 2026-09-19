@@ -1,0 +1,282 @@
+[
+  {
+    "id": "maximize_001",
+    "file": "maximize_001.ogg",
+    "category": "appear",
+    "durationSeconds": 0.26,
+    "meanVolumeDb": -13,
+    "peakVolumeDb": -1,
+    "use": "Panel or card opening/growing onto screen; general entrance",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "maximize_004",
+    "file": "maximize_004.ogg",
+    "category": "appear",
+    "durationSeconds": 0.42,
+    "meanVolumeDb": -15.2,
+    "peakVolumeDb": -0.9,
+    "use": "Longer, bigger entrance for a large element",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "maximize_005",
+    "file": "maximize_005.ogg",
+    "category": "appear",
+    "durationSeconds": 0.53,
+    "meanVolumeDb": -16.5,
+    "peakVolumeDb": -0.9,
+    "use": "Longest entrance in this family; hero element appearing",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "open_002",
+    "file": "open_002.ogg",
+    "category": "appear",
+    "durationSeconds": 0.31,
+    "meanVolumeDb": -16.4,
+    "peakVolumeDb": -0.9,
+    "use": "Element opening or unfolding",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "pluck_001",
+    "file": "pluck_001.ogg",
+    "category": "appear",
+    "durationSeconds": 0.1,
+    "meanVolumeDb": -20.4,
+    "peakVolumeDb": 0,
+    "use": "Very short light pop for small items (bullets, chips)",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "drop_002",
+    "file": "drop_002.ogg",
+    "category": "appear",
+    "durationSeconds": 0.19,
+    "meanVolumeDb": -19.8,
+    "peakVolumeDb": -1.1,
+    "use": "Small item dropping into place",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "minimize_001",
+    "file": "minimize_001.ogg",
+    "category": "disappear",
+    "durationSeconds": 0.26,
+    "meanVolumeDb": -13,
+    "peakVolumeDb": -0.9,
+    "use": "Element shrinking away; general exit",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "minimize_004",
+    "file": "minimize_004.ogg",
+    "category": "disappear",
+    "durationSeconds": 0.42,
+    "meanVolumeDb": -15.1,
+    "peakVolumeDb": -0.9,
+    "use": "Longer exit for a large element",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "close_002",
+    "file": "close_002.ogg",
+    "category": "disappear",
+    "durationSeconds": 0.31,
+    "meanVolumeDb": -16.4,
+    "peakVolumeDb": -1,
+    "use": "Element closing or folding away",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "back_002",
+    "file": "back_002.ogg",
+    "category": "disappear",
+    "durationSeconds": 0.07,
+    "meanVolumeDb": -17,
+    "peakVolumeDb": -1,
+    "use": "Very short, subtle dismissal",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "confirmation_001",
+    "file": "confirmation_001.ogg",
+    "category": "positive",
+    "durationSeconds": 0.29,
+    "meanVolumeDb": -11.3,
+    "peakVolumeDb": -0.9,
+    "use": "Short success or checkmark accent",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "confirmation_002",
+    "file": "confirmation_002.ogg",
+    "category": "positive",
+    "durationSeconds": 0.54,
+    "meanVolumeDb": -14.9,
+    "peakVolumeDb": -1,
+    "use": "Longer success accent; achievement, result reveal",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "glass_004",
+    "file": "glass_004.ogg",
+    "category": "positive",
+    "durationSeconds": 0.69,
+    "meanVolumeDb": -18,
+    "peakVolumeDb": -1.1,
+    "use": "Bright chime-like ring; highlight or key stat",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "bong_001",
+    "file": "bong_001.ogg",
+    "category": "emphasis",
+    "durationSeconds": 0.12,
+    "meanVolumeDb": -16.2,
+    "peakVolumeDb": -0.9,
+    "use": "Short tonal hit to punctuate a word or number",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "question_001",
+    "file": "question_001.ogg",
+    "category": "emphasis",
+    "durationSeconds": 0.49,
+    "meanVolumeDb": -11.8,
+    "peakVolumeDb": -0.9,
+    "use": "Inquisitive tone; questions or a teaser",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "error_003",
+    "file": "error_003.ogg",
+    "category": "alert",
+    "durationSeconds": 0.53,
+    "meanVolumeDb": -20,
+    "peakVolumeDb": -0.5,
+    "use": "Warning or negative result",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "tick_004",
+    "file": "tick_004.ogg",
+    "category": "tick",
+    "durationSeconds": 0.05,
+    "meanVolumeDb": -15.9,
+    "peakVolumeDb": -0.9,
+    "use": "Tiny tick; counters and stepped animations",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "tick_001",
+    "file": "tick_001.ogg",
+    "category": "tick",
+    "durationSeconds": 0.02,
+    "meanVolumeDb": -21.5,
+    "peakVolumeDb": -0.8,
+    "use": "Ultra-short tick for rapid repeats",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "select_001",
+    "file": "select_001.ogg",
+    "category": "tick",
+    "durationSeconds": 0.04,
+    "meanVolumeDb": -17.3,
+    "peakVolumeDb": -1.1,
+    "use": "Ultra-short select blip",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "click_001",
+    "file": "click_001.ogg",
+    "category": "tick",
+    "durationSeconds": 0.1,
+    "meanVolumeDb": -26.4,
+    "peakVolumeDb": -1.4,
+    "use": "Soft UI click; button press or item selection",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "toggle_001",
+    "file": "toggle_001.ogg",
+    "category": "tick",
+    "durationSeconds": 0.14,
+    "meanVolumeDb": -14,
+    "peakVolumeDb": -0.9,
+    "use": "Switch/toggle flip",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "scroll_001",
+    "file": "scroll_001.ogg",
+    "category": "motion",
+    "durationSeconds": 1,
+    "meanVolumeDb": -21.2,
+    "peakVolumeDb": -0.9,
+    "use": "Continuous scrolling texture; lists or text streaming",
+    "source": "Kenney Interface Sounds"
+  },
+  {
+    "id": "impactBell_heavy_000",
+    "file": "impactBell_heavy_000.ogg",
+    "category": "impact",
+    "durationSeconds": 1.48,
+    "meanVolumeDb": -26.3,
+    "peakVolumeDb": -1.1,
+    "use": "Big resonant bell hit with long tail; dramatic reveal or title",
+    "source": "Kenney Impact Sounds"
+  },
+  {
+    "id": "impactPunch_heavy_000",
+    "file": "impactPunch_heavy_000.ogg",
+    "category": "impact",
+    "durationSeconds": 0.65,
+    "meanVolumeDb": -18,
+    "peakVolumeDb": -1,
+    "use": "Heavy punchy hit; strong emphasis",
+    "source": "Kenney Impact Sounds"
+  },
+  {
+    "id": "impactPunch_medium_000",
+    "file": "impactPunch_medium_000.ogg",
+    "category": "impact",
+    "durationSeconds": 0.43,
+    "meanVolumeDb": -17.2,
+    "peakVolumeDb": -1.1,
+    "use": "Medium punchy hit",
+    "source": "Kenney Impact Sounds"
+  },
+  {
+    "id": "impactSoft_heavy_000",
+    "file": "impactSoft_heavy_000.ogg",
+    "category": "impact",
+    "durationSeconds": 0.51,
+    "meanVolumeDb": -17.4,
+    "peakVolumeDb": -0.9,
+    "use": "Soft heavy thud; low-key weight without harshness",
+    "source": "Kenney Impact Sounds"
+  },
+  {
+    "id": "impactMetal_light_000",
+    "file": "impactMetal_light_000.ogg",
+    "category": "impact",
+    "durationSeconds": 0.35,
+    "meanVolumeDb": -21.1,
+    "peakVolumeDb": -1,
+    "use": "Light metallic hit; tech or industrial feel",
+    "source": "Kenney Impact Sounds"
+  },
+  {
+    "id": "impactGlass_light_000",
+    "file": "impactGlass_light_000.ogg",
+    "category": "impact",
+    "durationSeconds": 0.21,
+    "meanVolumeDb": -21.8,
+    "peakVolumeDb": -1.6,
+    "use": "Light glassy hit; clean or delicate feel",
+    "source": "Kenney Impact Sounds"
+  }
+]

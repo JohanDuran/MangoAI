@@ -46,7 +46,12 @@ export const createProject = (name: string) =>
     body: JSON.stringify({ name }),
   }).then((r) => json<Project>(r));
 
-export const getProject = (id: string) =>
+export const deleteProject = (id: string) =>
+  fetch(`${BASE}/projects/${id}`, { method: 'DELETE' }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  });
+
+export const getProject =(id: string) =>
   fetch(`${BASE}/projects/${id}`).then((r) =>
     json<{ project: Project; markers: Marker[]; hasVideo: boolean; composition: CompositionConfig }>(r)
   );
@@ -155,6 +160,9 @@ async function readEventStream(res: Response, onEvent: (e: RegenerateEvent) => v
   }
 }
 
+// The editor's "generate an image" checkbox opts this request into the image-generation skill.
+const IMAGE_SKILLS = ['image-generation'];
+
 export async function regenerateMarker(
   id: string,
   markerId: string,
@@ -165,7 +173,7 @@ export async function regenerateMarker(
   const res = await fetch(`${BASE}/projects/${id}/markers/${markerId}/regenerate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feedback, allowImage }),
+    body: JSON.stringify({ feedback, allowSkills: allowImage ? IMAGE_SKILLS : [] }),
   });
   await readEventStream(res, onEvent);
 }
@@ -198,7 +206,7 @@ export async function applyMarkerPlan(
   const res = await fetch(`${BASE}/projects/${id}/markers/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markers }),
+    body: JSON.stringify({ markers: markers.map(({ allowImage, ...m }) => ({ ...m, allowSkills: allowImage ? IMAGE_SKILLS : [] })) }),
   });
   await readEventStream(res, onEvent);
 }

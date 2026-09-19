@@ -18,6 +18,7 @@ interface Props {
   regionDraft?: MarkerRegion | null;
   onRegionDraftChange?: (region: MarkerRegion) => void;
   onRegionCommit?: () => void;
+  overlaySoundMuted?: boolean;
 }
 
 export interface DualLayerPreviewHandle {
@@ -43,6 +44,7 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     regionDraft,
     onRegionDraftChange,
     onRegionCommit,
+    overlaySoundMuted = false,
   },
   ref
 ) {
@@ -55,6 +57,7 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
   const [fitToScreen, setFitToScreen] = useState(true);
   const [manualWidthPx, setManualWidthPx] = useState<number | null>(null);
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
+  const [playbackRate, setPlaybackRate] = useState(1);
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<PlayerRef>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -130,12 +133,52 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     }
   };
 
-  const sync = () => {
-    if (videoRef.current && playerRef.current) {
-      playerRef.current.seekTo(Math.round(videoRef.current.currentTime * fps));
-    }
-    if (videoRef.current) onTimeUpdate?.(videoRef.current.currentTime);
+  const videoFrame = () => Math.round((videoRef.current?.currentTime ?? 0) * fps);
+
+  // The <video> is the master clock. The overlay Player also plays (not just seeks) so that
+  // <Audio> in a marker is heard while editing; it is kept within DRIFT_FRAMES of the video.
+  const DRIFT_FRAMES = Math.ceil(fps * 0.2);
+
+  const startPlayer = (e?: React.SyntheticEvent) => {
+    const player = playerRef.current;
+    const video = videoRef.current;
+    if (!player || !video || video.paused) return;
+    // Playing at the very last frame would make the Player restart from 0.
+    if (videoFrame() >= durationInFrames - 1) return;
+    player.seekTo(videoFrame());
+    player.play(e);
   };
+
+  const stopPlayer = () => {
+    const player = playerRef.current;
+    if (!player) return;
+    player.pause();
+    player.seekTo(videoFrame());
+  };
+
+  const sync = () => {
+    const video = videoRef.current;
+    const player = playerRef.current;
+    if (video && player) {
+      const target = videoFrame();
+      if (video.paused) {
+        player.seekTo(target);
+      } else if (!player.isPlaying()) {
+        // The overlay finished loading mid-playback, or a seek paused it.
+        startPlayer();
+      } else if (Math.abs(player.getCurrentFrame() - target) > DRIFT_FRAMES) {
+        player.seekTo(target);
+      }
+    }
+    if (video) onTimeUpdate?.(video.currentTime);
+  };
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    if (overlaySoundMuted) player.mute();
+    else player.unmute();
+  }, [overlaySoundMuted, Overlay]);
 
   const ratio = compositionWidth / compositionHeight;
 
@@ -193,15 +236,23 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
               src={videoUrl}
               controls
               onLoadedMetadata={handleLoadedMetadata}
-              onPlay={() => {
-                sync();
+              onPlay={(e) => {
+                startPlayer(e);
+                onTimeUpdate?.(e.currentTarget.currentTime);
                 onPlayingChange?.(true);
               }}
+              onPlaying={startPlayer}
+              onWaiting={stopPlayer}
               onPause={() => {
-                sync();
+                stopPlayer();
+                onTimeUpdate?.(videoRef.current?.currentTime ?? 0);
                 onPlayingChange?.(false);
               }}
-              onEnded={() => onPlayingChange?.(false)}
+              onEnded={() => {
+                stopPlayer();
+                onPlayingChange?.(false);
+              }}
+              onRateChange={(e) => setPlaybackRate(e.currentTarget.playbackRate)}
               onSeeked={sync}
               onTimeUpdate={sync}
             />
@@ -219,6 +270,7 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
                 compositionHeight={compositionHeight}
                 style={{ width: '100%', height: '100%' }}
                 controls={false}
+                playbackRate={playbackRate}
               />
             </div>
           )}

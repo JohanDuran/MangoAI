@@ -79,9 +79,10 @@ When satisfied, the user triggers the final render to produce the transparent ov
             │
             ▼
 [ Claude Code CLI, headless: `claude --print --output-format stream-json` ]
-    ├── native Read/Write/Edit/Glob/Grep (scoped to project dir)
-    ├── native Bash (only for project init / asset generation calls)
-    └── generate_image.js (local script, called via Bash, hits OpenAI's API)
+    ├── native Read/Write/Edit/Glob/Grep (confined to the project dir)
+    ├── no Bash
+    └── skills: instructions Claude loads on demand, plus optional MCP tools
+        (image generation, sound effects, component library, ...)
             │
             ▼
 [ Node runner validates output (tsc / bundle check) ]
@@ -93,10 +94,10 @@ When satisfied, the user triggers the final render to produce the transparent ov
 [ /04_output/overlay.webm or ProRes 4444 ]
 ```
 
-No custom MCP servers are required for v1. Claude Code's built-in tools already cover
-filesystem and terminal access, scoped to the project directory via `--allowedTools` and the
-working directory of the headless process. The only external capability gap is image
-generation, which is a plain script Claude calls via Bash — not a protocol server.
+Claude Code's built-in file tools are confined to the project directory, and Claude has no
+shell. Everything beyond editing files comes from **skills** (see below): folders with
+instructions Claude loads when relevant, and optionally an MCP server that gives it tools such
+as image generation. Skills are how the tool is extended.
 
 ### Main responsibilities
 #### Frontend editor
@@ -132,6 +133,25 @@ generation, which is a plain script Claude calls via Bash — not a protocol ser
 - support transparent output formats
 
 ---
+
+## Skills
+A skill is a folder in [`skills/`](skills) that teaches Claude one more capability. Claude sees
+each enabled skill's description and loads its instructions only when the animation needs it.
+
+| Skill | What it adds |
+|---|---|
+| `image-generation` | `generate_image` tool (OpenAI). Opt-in per request, because it costs money. |
+| `sound-effects` | 28 CC0 sound effects (Kenney) with a catalog, played with Remotion's `<Audio>`. |
+| `overlay-primitives` | LowerThird, CalloutTextBox, CodeSnippetWindow, ImagePopup, KpiCard. |
+
+To add your own, follow [docs/writing-skills.md](docs/writing-skills.md). Skills that ship an MCP
+server run code on your machine, so only enable skills you trust.
+
+## Requirements
+- Node.js 20 or newer
+- The `claude` CLI (Claude Code), signed in
+- `ffmpeg` and `ffprobe` **4.4 or newer** on your PATH (audio extraction, export, and mixing)
+- `OPENAI_API_KEY` in `apps/runner/.env` for transcription and image generation (optional)
 
 ## Real-Time Preview Loop
 This is the product’s differentiator.
@@ -170,13 +190,18 @@ progress streaming and cancellation.
 Node spawns Claude Code headless for that one request:
 ```bash
 claude --print "<templated prompt>" \
-  --output-format stream-json \
-  --allowedTools "Read,Write,Edit,Glob,Grep" \
+  --output-format stream-json --verbose \
+  --tools "Read,Write,Edit,Glob,Grep,Skill" \
+  --allowedTools "mcp__image_generation__generate_image" \
+  --mcp-config <generated> --strict-mcp-config \
+  --setting-sources project \
   --permission-mode acceptEdits
 ```
-run with `cwd` set to the project directory, so file access is naturally scoped without
-needing a custom filesystem tool. Bash is only added to `--allowedTools` for project-init
-or asset-generation calls that need `generate_image.js`.
+run with `cwd` set to the project directory. `--tools` decides which built-in tools exist.
+Built-ins are deliberately **not** in `--allowedTools`: a bare `Read` or `Write` allow rule
+would let Claude touch any file on the machine (including the runner's `.env`), whereas the
+default permissions confine them to the project directory. `--allowedTools` lists only the MCP
+tools of the skills active for that call.
 
 ### Prompt construction
 The runner builds the prompt from the marker payload (id, start, end, prompt, feedback,
@@ -184,8 +209,8 @@ current code) plus a pointer to the project's CLAUDE.md conventions, and explici
 Claude not to run render or preview commands — validation and rendering are the runner's job.
 
 ### Process lifecycle
-- one active child process per project; a new regenerate request sends SIGTERM to any
-  in-flight run before spawning the next, so two edits can't race on the same TSX file
+- Claude runs are queued per project and executed one at a time, so two edits can't race on
+  the same project files and two markers never kill each other's run
 - `stream-json` lines are parsed and forwarded to the frontend over SSE/WebSocket so the
   UI can show "reading marker...", "writing update...", "done" instead of going silent
 - on exit, the runner validates the written code (type check / Remotion bundle dry-run)
@@ -241,6 +266,7 @@ Each timeline segment should be treated as a reusable creative unit.
 ├── 02_assets/
 │   ├── asset_manifest.json
 │   └── img_01.png
+├── .claude/skills/          # skills installed for Claude by the runner (regenerated per call)
 ├── 03_remotion_code/
 │   ├── CompositionConfig.json
 │   ├── CustomOverlay.tsx
@@ -360,8 +386,8 @@ Deliverables:
 
 ### AI orchestration
 - Claude Code CLI, headless (`claude --print --output-format stream-json`)
-- per-call `--allowedTools` scoping (no Bash for regen/self-heal)
-- `generate_image.js` local script for OpenAI image generation, called via Bash
+- per-call tool scoping (`--tools`, per-tool MCP allowlist, no Bash)
+- Skills (`skills/`): built-in image generation (MCP tool), sound effects, and component library
 
 ### Rendering
 - Remotion

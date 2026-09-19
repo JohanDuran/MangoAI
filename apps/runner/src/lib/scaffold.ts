@@ -4,11 +4,15 @@ import crypto from 'node:crypto';
 import { PROJECTS_ROOT, TEMPLATES_ROOT, projectDir, markerFile } from './paths.js';
 import { readMarkers, writeMarkers, type Marker, type MarkerRegion } from './markers.js';
 import { regenerateRegistry } from './registry.js';
+import { defaultSkillNames } from './skills.js';
 
 export interface Project {
   id: string;
   name: string;
   createdAt: string;
+  // Skills enabled for this project. Absent on projects created before skills existed, which
+  // get the built-in defaults.
+  skills?: string[];
 }
 
 const slugify = (name: string) =>
@@ -26,7 +30,7 @@ export function createProject(name: string): Project {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
 
-  const project: Project = { id, name, createdAt: new Date().toISOString() };
+  const project: Project = { id, name, createdAt: new Date().toISOString(), skills: defaultSkillNames() };
   fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify(project, null, 2));
   fs.copyFileSync(path.join(TEMPLATES_ROOT, 'CLAUDE.md'), path.join(dir, 'CLAUDE.md'));
 
@@ -89,4 +93,36 @@ export function addMarker(id: string, input: { start: number; end: number; promp
 
   regenerateRegistry(id);
   return marker;
+}
+
+export function enabledSkillNames(id: string): string[] {
+  return readProject(id)?.skills ?? defaultSkillNames();
+}
+
+export function setProjectSkills(id: string, skills: string[]): Project {
+  const project = readProject(id);
+  if (!project) throw new Error(`Project ${id} not found`);
+  const next: Project = { ...project, skills };
+  fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify(next, null, 2));
+  return next;
+}
+
+const CLAUDE_MD_VERSION = /^<!-- mangoai-claude-md: \d+ -->/;
+
+// The project's CLAUDE.md is a copy of templates/CLAUDE.md. When the template changes, projects
+// created earlier would keep instructions that contradict the current behavior, so an outdated
+// copy is replaced (the old one is kept in 05_debug/).
+export function refreshClaudeMd(id: string): void {
+  const template = fs.readFileSync(path.join(TEMPLATES_ROOT, 'CLAUDE.md'), 'utf-8');
+  const target = path.join(projectDir(id), 'CLAUDE.md');
+  const current = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : '';
+  const wanted = CLAUDE_MD_VERSION.exec(template)?.[0];
+  if (wanted && current.startsWith(wanted)) return;
+
+  if (current) {
+    const debugDir = path.join(projectDir(id), '05_debug');
+    fs.mkdirSync(debugDir, { recursive: true });
+    fs.writeFileSync(path.join(debugDir, `CLAUDE.md.${Date.now()}.bak`), current);
+  }
+  fs.writeFileSync(target, template);
 }

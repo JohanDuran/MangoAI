@@ -8,7 +8,7 @@ export interface ValidationResult {
 // Fast structural check — bundles the marker file with esbuild (transpile + resolve
 // imports) without full TypeScript type-checking. Catches syntax errors, unresolved
 // imports, and broken JSX, which covers the vast majority of self-heal-worthy mistakes.
-export async function validateMarkerFile(filePath: string): Promise<ValidationResult> {
+export async function validateMarkerFile(filePath: string, extraExternals: string[] = []): Promise<ValidationResult> {
   try {
     await esbuild.build({
       entryPoints: [filePath],
@@ -18,7 +18,7 @@ export async function validateMarkerFile(filePath: string): Promise<ValidationRe
       format: 'esm',
       platform: 'browser',
       logLevel: 'silent',
-      external: ['react', 'react-dom', 'remotion', '@remotion/*', '@mangoai/*'],
+      external: ['react', 'react-dom', 'remotion', '@remotion/*', ...extraExternals],
     });
     return { ok: true };
   } catch (err) {

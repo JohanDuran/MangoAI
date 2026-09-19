@@ -2,8 +2,9 @@ import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { projectDir, markerFile } from '../lib/paths.js';
-import { createProject, listProjects, readProject, addMarker } from '../lib/scaffold.js';
+import { projectDir, markerFile, PROJECTS_ROOT } from '../lib/paths.js';
+import { createProject, listProjects, readProject, addMarker, setProjectSkills, enabledSkillNames } from '../lib/scaffold.js';
+import { discoverSkills } from '../lib/skills.js';
 import {
   readMarkers,
   findMarker,
@@ -19,15 +20,27 @@ import { planMarkers } from '../lib/planner.js';
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
 import { transcribeProject, readTranscript, transcriptForRange } from '../lib/transcript.js';
-import { generateImage } from '../lib/images.js';
 
 export const projectsRouter = Router();
+
+const toNameList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 
 // A render writes to a single output file; a second concurrent export for the same
 // project would race on that file (reproduced during testing — one render silently
 // clobbers the other's output). Reject instead of queuing, since export is user-triggered
 // and rare.
 const exportsInFlight = new Set<string>();
+
+function hasAudioStream(file: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let out = '';
+    const child = spawn('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file]);
+    child.stdout.on('data', (c) => (out += c.toString()));
+    child.on('error', () => resolve(false));
+    child.on('close', () => resolve(out.trim().length > 0));
+  });
+}
 
 projectsRouter.post('/projects', (req, res) => {
   const { name } = req.body as { name?: string };
@@ -48,6 +61,62 @@ projectsRouter.get('/projects/:id', (req, res) => {
     hasVideo: findRawVideo(req.params.id) !== null,
     composition: readCompositionConfig(req.params.id),
   });
+});
+
+// Everything a project owns (source video, transcript, assets, generated code, debug
+// history, exports) lives under its own directory, so removing that directory is a
+// complete cleanup.
+projectsRouter.delete('/projects/:id', (req, res) => {
+  const { id } = req.params;
+  if (!readProject(id)) return res.status(404).json({ error: 'not found' });
+  if (exportsInFlight.has(id)) {
+    return res.status(409).json({ error: 'An export is running for this project; wait for it to finish' });
+  }
+  const dir = path.resolve(projectDir(id));
+  if (path.dirname(dir) !== path.resolve(PROJECTS_ROOT)) {
+    return res.status(400).json({ error: 'invalid project id' });
+  }
+  try {
+    // Retries cover Windows briefly holding handles on just-used media files.
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (err) {
+    return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+  res.status(204).end();
+});
+
+projectsRouter.get('/skills', (_req, res) => {
+  const { skills, problems } = discoverSkills();
+  res.json({
+    skills: skills.map((s) => ({
+      name: s.name,
+      description: s.description,
+      origin: s.origin,
+      optIn: s.manifest.optIn ?? false,
+      hasTools: !!s.manifest.mcp,
+      env: s.manifest.env ?? [],
+      missingEnv: s.missingEnv,
+    })),
+    problems,
+  });
+});
+
+projectsRouter.get('/projects/:id/skills', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  res.json({ enabled: enabledSkillNames(req.params.id) });
+});
+
+// Enabling a skill is the trust decision: external skills run local code and are never on by default.
+projectsRouter.put('/projects/:id/skills', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const enabled = (req.body as { enabled?: unknown }).enabled;
+  if (!Array.isArray(enabled) || enabled.some((n) => typeof n !== 'string')) {
+    return res.status(400).json({ error: 'enabled must be a list of skill names' });
+  }
+  const known = new Set(discoverSkills().skills.map((s) => s.name));
+  const unknown = (enabled as string[]).filter((n) => !known.has(n));
+  if (unknown.length > 0) return res.status(400).json({ error: `unknown skills: ${unknown.join(', ')}` });
+  res.json({ enabled: setProjectSkills(req.params.id, [...new Set(enabled as string[])]).skills });
 });
 
 projectsRouter.post('/projects/:id/markers', (req, res) => {
@@ -120,7 +189,7 @@ interface ApplyMarkerInput {
   end?: number;
   prompt?: string;
   region?: MarkerRegion | null;
-  allowImage?: boolean;
+  allowSkills?: string[];
 }
 
 projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
@@ -164,25 +233,6 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
       const marker = addMarker(id, { start: start!, end: end!, prompt: prompt!, region: region ?? undefined });
       send('item-created', { index, markerId: marker.marker_id });
 
-      // Same reasoning as the /regenerate route: no Bash grant, images are pre-generated
-      // and handed to Claude as a URL instead.
-      let imageUrl: string | undefined;
-      if (input.allowImage) {
-        send('progress', { index, markerId: marker.marker_id, attempt: 1, phase: 'generating-image' });
-        try {
-          const { file: imageFile } = await generateImage(id, prompt!);
-          imageUrl = `http://localhost:${process.env.PORT || 5175}/projects/${id}/assets/${imageFile}`;
-        } catch (err) {
-          send('progress', {
-            index,
-            markerId: marker.marker_id,
-            attempt: 1,
-            phase: 'image-generation-failed',
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
       const { width: compositionWidth, height: compositionHeight } = readCompositionConfig(id);
       const isFullScreen = !region;
       const effectiveRegion = region ?? { x: 0, y: 0, width: 1, height: 1 };
@@ -200,7 +250,7 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
         prompt: prompt!,
         feedback: '',
         transcript: transcript || undefined,
-        imageUrl,
+        allowSkills: toNameList(input.allowSkills),
         compositionWidth,
         compositionHeight,
         regionWidth,
@@ -236,7 +286,7 @@ projectsRouter.get('/projects/:id/markers/:markerId/code', (req, res) => {
 
 projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, res) => {
   const { id, markerId } = req.params;
-  const { feedback, allowImage } = req.body as { feedback?: string; allowImage?: boolean };
+  const { feedback, allowSkills } = req.body as { feedback?: string; allowSkills?: unknown };
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -261,26 +311,6 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
       .map((s) => s.text)
       .join(' ');
 
-    // Bash was tried and dropped: --allowedTools "Bash(...)" doesn't actually restrict to
-    // the given pattern (verified empirically — a scoped grant still permits arbitrary
-    // commands), so any Bash grant here would mean full shell access on every image
-    // request. Generating the image ourselves and handing Claude a ready URL means it
-    // never needs Bash at all — same allowedTools as every other call.
-    let imageUrl: string | undefined;
-    if (allowImage) {
-      send('progress', { attempt: 1, phase: 'generating-image' });
-      try {
-        const { file: imageFile } = await generateImage(id, resolvedFeedback || marker.prompt);
-        imageUrl = `http://localhost:${process.env.PORT || 5175}/projects/${id}/assets/${imageFile}`;
-      } catch (err) {
-        send('progress', {
-          attempt: 1,
-          phase: 'image-generation-failed',
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
     const result = await generateMarkerWithRetry({
       projectId: id,
       markerId,
@@ -289,7 +319,7 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
       prompt: marker.prompt,
       feedback: resolvedFeedback,
       transcript: transcript || undefined,
-      imageUrl,
+      allowSkills: toNameList(allowSkills),
       compositionWidth,
       compositionHeight,
       regionWidth,
@@ -355,6 +385,18 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
       return res.status(400).json({ success: false, log: 'No source video uploaded; cannot build the combined mp4' });
     }
     const finalFile = path.join(dir, '04_output', 'final.mp4');
+    // Sounds from <Audio> in the markers end up as an audio track in the overlay webm, and
+    // the source video usually has its own (speech/music). Mix both when both exist;
+    // normalize=0 keeps the source at full level instead of halving it, and alimiter guards
+    // against clipping where they overlap.
+    const [baseHasAudio, overlayHasAudio] = await Promise.all([hasAudioStream(raw), hasAudioStream(outFile)]);
+    const videoFilter =
+      '[1:v][0:v]scale2ref=w=iw:h=ih[ov][base];[base][ov]overlay=eof_action=pass:format=auto,format=yuv420p[v]';
+    const filterComplex =
+      baseHasAudio && overlayHasAudio
+        ? `${videoFilter};[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[a]`
+        : videoFilter;
+    const audioMap = baseHasAudio && overlayHasAudio ? ['-map', '[a]'] : baseHasAudio ? ['-map', '0:a'] : overlayHasAudio ? ['-map', '1:a'] : [];
     // -c:v libvpx before the overlay input forces the decoder that preserves VP8 alpha
     // (ffmpeg's native vp8 decoder drops it). The overlay is scaled to the base video size.
     const mix = await new Promise<{ code: number | null; log: string }>((resolve) => {
@@ -366,10 +408,9 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
           '-i', raw,
           '-c:v', 'libvpx',
           '-i', outFile,
-          '-filter_complex',
-          '[1:v][0:v]scale2ref=w=iw:h=ih[ov][base];[base][ov]overlay=eof_action=pass:format=auto,format=yuv420p[v]',
+          '-filter_complex', filterComplex,
           '-map', '[v]',
-          '-map', '0:a?',
+          ...audioMap,
           '-c:v', 'libx264',
           '-c:a', 'aac',
           '-movflags', '+faststart',

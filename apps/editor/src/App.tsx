@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   createProject,
+  deleteProject,
   listProjects,
   getProject,
   addMarker,
@@ -59,6 +60,7 @@ export default function App() {
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [overlaySoundMuted, setOverlaySoundMuted] = useState(false);
   const [editingRegionMarkerId, setEditingRegionMarkerId] = useState<string | null>(null);
   const [regionDraft, setRegionDraft] = useState<MarkerRegion | null>(null);
   // The area for the marker currently being composed in AddMarkerPanel, before it exists
@@ -309,6 +311,30 @@ export default function App() {
     setProjects((prev) => [...prev, project]);
     setProjectId(project.id);
     setNewName('');
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectId) return;
+    const project = projects.find((p) => p.id === projectId);
+    if (
+      !window.confirm(
+        `Delete "${project?.name ?? projectId}"? This permanently removes the video, markers, generated code and exported output.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteProject(projectId);
+    } catch (err) {
+      setExportStatus(`Delete failed — ${err instanceof Error ? err.message : String(err)}`);
+      setExportSucceeded(false);
+      return;
+    }
+    setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    setProjectId(null);
+    setSelectedMarkerId(null);
+    setExportStatus(null);
+    setExportSucceeded(false);
   };
 
   const handleAddMarker = async (input: { start: number; end: number; prompt: string; allowImage: boolean }) => {
@@ -562,6 +588,13 @@ export default function App() {
               {planning ? 'Planning…' : 'Plan markers'}
             </button>
             <button
+              onClick={() => setOverlaySoundMuted((m) => !m)}
+              className="btn btn-sm"
+              title="Mute or unmute sound effects from overlays in this preview (does not affect export)"
+            >
+              {overlaySoundMuted ? 'Overlay sounds: off' : 'Overlay sounds: on'}
+            </button>
+            <button
               onClick={() => handleExport(false)}
               disabled={exporting}
               className="btn btn-sm"
@@ -576,6 +609,15 @@ export default function App() {
               title="Base video + overlay mixed (.mp4)"
             >
               {exporting ? 'Exporting…' : 'Export MP4 (video + overlay)'}
+            </button>
+            <button
+              onClick={handleDeleteProject}
+              disabled={exporting}
+              className="btn btn-sm"
+              style={{ color: 'var(--error)' }}
+              title="Delete this project and all its files, including exported output"
+            >
+              Delete project
             </button>
           </>
         )}
@@ -608,6 +650,7 @@ export default function App() {
                 onVideoSize={handleVideoSize}
                 onTimeUpdate={setCurrentTime}
                 onPlayingChange={setIsPlaying}
+                overlaySoundMuted={overlaySoundMuted}
                 regionDraft={activeRegionDraft}
                 onRegionDraftChange={handleRegionDraftChange}
                 onRegionCommit={editingRegionMarkerId ? handleSaveRegion : undefined}

@@ -1,3 +1,4 @@
+<!-- mangoai-claude-md: 3 -->
 # MangoAI Project Skill
 
 You are editing overlay code for one marker in a MangoAI video overlay project. Follow
@@ -14,23 +15,9 @@ these rules exactly — the Node runner validates and hot-reloads your output au
 - Do not run `npx remotion render`, `npx remotion preview`, or any other render/build
   command. The runner validates and renders separately.
 - Do not install packages or edit `package.json`.
-- Do not invent new npm dependencies. Use only `react` and `remotion` (already available):
-  `useCurrentFrame`, `useVideoConfig`, `spring`, `interpolate`, `AbsoluteFill`, etc.
-- You may import shared primitives from `@mangoai/remotion-overlay` instead of writing an
-  effect from scratch when one already fits. You cannot read their source (it lives outside
-  this project directory), so use exactly the props listed below — do not guess prop names.
-
-  - `LowerThird`: `title` (string, required), `subtitle?` (string), `accentColor?` (string,
-    default `#ff7a3d`)
-  - `CalloutTextBox`: `text` (string, required), `x?` (number, default 640), `y?` (number,
-    default 200), `background?` (string CSS color)
-  - `CodeSnippetWindow`: `code` (string, required), `language?` (string, default `sql`),
-    `x?` (number, default 640), `y?` (number, default 260)
-  - `ImagePopup`: `src` (string, required — path or URL), `x?` (number, default 700), `y?`
-    (number, default 150), `width?` (number, default 420)
-  - `KpiCard`: `label` (string, required), `value` (number, required), `suffix?` (string),
-    `x?` (number, default 720), `y?` (number, default 180), `accentColor?` (string, default
-    `#a6e3a1`)
+- Do not invent new npm dependencies. Use `react` and `remotion` (already available):
+  `useCurrentFrame`, `useVideoConfig`, `spring`, `interpolate`, `AbsoluteFill`, etc. A skill
+  may allow additional packages; its instructions say so.
 
 ## Style guardrails
 - Your component is called with `regionWidth` and `regionHeight` props — these are your
@@ -46,11 +33,6 @@ these rules exactly — the Node runner validates and hot-reloads your output au
   in which case `regionWidth`/`regionHeight` are that rectangle's size, not the full canvas
   — the instruction you're given will say which case you're in. Either way, the same
   `regionWidth`/`regionHeight`-relative code works correctly.
-- The shared primitives' default `x`/`y` values (listed above) are tuned for a roughly
-  1280x720 area. If `regionWidth`/`regionHeight` differ meaningfully, pass explicit `x`/`y`
-  computed from them (e.g. percentages of `regionWidth`/`regionHeight`) instead of relying
-  on those defaults — otherwise content can land outside your area, especially in a small
-  confined region.
 - Overlays render on a transparent background — never set an opaque full-frame background
   color on the root element.
 - Keep entrance/exit animation under ~20 frames at 30fps unless the feedback asks for
@@ -61,12 +43,12 @@ these rules exactly — the Node runner validates and hot-reloads your output au
   is full creative freedom for composition, motion, and visual metaphor, within these
   technical constraints.
 
-## Assets
-You cannot generate images yourself — you have no Bash access. If the instruction includes
-a line starting "An image has already been generated for this marker", a URL is provided;
-use it directly (`<img src="...">` or the `ImagePopup` primitive's `src` prop). If no such
-line is present and the creative intent calls for a photo/illustration, use a text- or
-shape-based primitive instead — do not attempt to work around the lack of image access.
+## Skills
+This project may have skills installed (sound effects, image generation, ready-made
+components, and others). Their names and descriptions are listed to you automatically. Load
+a skill whenever its description matches what this specific animation needs, and skip the
+ones that do not apply. When you use a skill, follow its instructions exactly, including which
+URLs, tools and props it allows.
 
 ## Self-heal mode
 If your instruction includes a "Validation error" section, a previous attempt failed to

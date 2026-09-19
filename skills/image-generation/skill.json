@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "name": "image-generation",
+  "optIn": true,
+  "env": ["OPENAI_API_KEY"],
+  "mcp": {
+    "server": "server.mjs",
+    "tools": ["generate_image"]
+  }
+}

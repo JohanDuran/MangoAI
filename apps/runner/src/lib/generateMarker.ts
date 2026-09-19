@@ -1,8 +1,10 @@
 import fs from 'node:fs';
-import { runClaudeHeadless, buildRegeneratePrompt } from './claude.js';
+import { runClaudeHeadless, buildRegeneratePrompt, withProjectLock } from './claude.js';
 import { validateMarkerFile } from './validate.js';
 import { logAttempt } from './debug.js';
 import { updateMarkerStatus } from './markers.js';
+import { prepareClaudeCall } from './skills.js';
+import { enabledSkillNames, refreshClaudeMd } from './scaffold.js';
 
 export interface GenerateMarkerOptions {
   projectId: string;
@@ -12,7 +14,9 @@ export interface GenerateMarkerOptions {
   prompt: string;
   feedback: string;
   transcript?: string;
-  imageUrl?: string;
+  // Skills marked optIn in their skill.json (paid or slow tools) are only available to Claude
+  // when listed here.
+  allowSkills: string[];
   compositionWidth: number;
   compositionHeight: number;
   regionWidth: number;
@@ -34,6 +38,7 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
   let priorError: string | undefined;
   let success = false;
   let lastCode = fs.readFileSync(opts.file, 'utf-8');
+  refreshClaudeMd(opts.projectId);
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     opts.onEvent({ type: 'progress', attempt, phase: 'invoking-claude' });
@@ -45,7 +50,7 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
       feedback: opts.feedback,
       priorError,
       transcript: opts.transcript,
-      imageUrl: opts.imageUrl,
+      optedInSkills: opts.allowSkills,
       compositionWidth: opts.compositionWidth,
       compositionHeight: opts.compositionHeight,
       regionWidth: opts.regionWidth,
@@ -53,12 +58,32 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
       isFullScreen: opts.isFullScreen,
     });
 
-    const result = await runClaudeHeadless({
-      projectId: opts.projectId,
-      cwd: opts.cwd,
-      prompt,
-      allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep'],
-      onEvent: (event) => opts.onEvent({ type: 'claude', raw: event }),
+    // Installing skills and running Claude happen under the same lock, so a queued run for
+    // another marker can never change the skills folder underneath this one.
+    const { result, config } = await withProjectLock(opts.projectId, async () => {
+      const config = prepareClaudeCall({
+        projectId: opts.projectId,
+        enabled: enabledSkillNames(opts.projectId),
+        optedIn: opts.allowSkills,
+      });
+      if (attempt === 1 && config.skipped.length > 0) {
+        opts.onEvent({
+          type: 'progress',
+          attempt,
+          phase: 'skills-skipped',
+          error: config.skipped.map((s) => `${s.name} (${s.reason})`).join(', '),
+        });
+      }
+      const result = await runClaudeHeadless({
+        cwd: opts.cwd,
+        prompt,
+        tools: config.tools,
+        allowedTools: config.allowedTools,
+        mcpConfigPath: config.mcpConfigPath,
+        envExclude: config.envExclude,
+        onEvent: (event) => opts.onEvent({ type: 'claude', raw: event }),
+      });
+      return { result, config };
     });
 
     if (!result.success) {
@@ -69,7 +94,7 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
 
     lastCode = fs.readFileSync(opts.file, 'utf-8');
     opts.onEvent({ type: 'progress', attempt, phase: 'validating' });
-    const validation = await validateMarkerFile(opts.file);
+    const validation = await validateMarkerFile(opts.file, config.validatorExternals);
     logAttempt(opts.projectId, opts.markerId, attempt, lastCode, validation);
 
     if (validation.ok) {

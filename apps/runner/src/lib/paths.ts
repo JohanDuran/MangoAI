@@ -11,3 +11,4 @@ export const projectDir = (id: string) => path.join(PROJECTS_ROOT, id);
 export const inputDir = (id: string) => path.join(projectDir(id), '00_input');
 export const markerFile = (id: string, markerId: string) =>
   path.join(projectDir(id), '03_remotion_code', `marker_${markerId}.tsx`);
+export const SKILLS_ROOT = path.resolve(RUNNER_ROOT, '..', '..', 'skills');

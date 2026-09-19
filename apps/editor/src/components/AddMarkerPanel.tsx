@@ -103,8 +103,9 @@ export const AddMarkerPanel: React.FC<Props> = ({
         }}
         className="add-marker-row"
       >
-        <input
-          className="field-input"
+        <textarea
+          className="field-textarea"
+          rows={4}
           placeholder="Describe the overlay (e.g. 'animated bar chart of tax prep time')"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}

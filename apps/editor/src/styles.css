@@ -636,8 +636,18 @@ select {
   gap: 8px;
 }
 
-.add-marker-row .field-input {
-  flex: 1;
+.add-marker-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.add-marker-row .field-textarea {
+  width: 100%;
+  min-height: 96px;
+}
+
+.add-marker-row .btn {
+  align-self: flex-start;
 }
 
 .field-error {
