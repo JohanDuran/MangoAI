@@ -3,8 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { projectDir, markerFile, PROJECTS_ROOT } from '../lib/paths.js';
-import { createProject, listProjects, readProject, addMarker, setProjectSkills, enabledSkillNames } from '../lib/scaffold.js';
+import {
+  createProject,
+  listProjects,
+  readProject,
+  addMarker,
+  setProjectSkills,
+  enabledSkillNames,
+  overlayVolume,
+  setOverlayVolume,
+} from '../lib/scaffold.js';
 import { discoverSkills } from '../lib/skills.js';
+import { log as writeLog, clip } from '../lib/log.js';
 import {
   readMarkers,
   findMarker,
@@ -19,6 +29,8 @@ import { generateMarkerWithRetry } from '../lib/generateMarker.js';
 import { planMarkers } from '../lib/planner.js';
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
+import { markerFrameRanges, type FrameRange } from '../lib/ranges.js';
+import { renderOverlayJobs } from '../lib/render.js';
 import { transcribeProject, readTranscript, transcriptForRange } from '../lib/transcript.js';
 
 export const projectsRouter = Router();
@@ -32,6 +44,29 @@ const toNameList = (value: unknown): string[] =>
 // and rare.
 const exportsInFlight = new Set<string>();
 
+// Scales the audio of the rendered overlay to the project's overlay volume. The video stream
+// is copied untouched, which keeps the alpha channel. A volume of 0 drops the audio track.
+async function applyOverlayVolume(file: string, volume: number): Promise<{ ok: boolean; log: string }> {
+  if (volume >= 1 || !(await hasAudioStream(file))) return { ok: true, log: '' };
+
+  const isMov = file.endsWith('.mov');
+  const tmp = `${file}.tmp${isMov ? '.mov' : '.webm'}`;
+  const audioArgs = volume === 0 ? ['-an'] : ['-af', `volume=${volume}`, '-c:a', isMov ? 'pcm_s16le' : 'libopus'];
+  const run = await new Promise<{ code: number | null; log: string }>((resolve) => {
+    let log = '';
+    const child = spawn('ffmpeg', ['-y', '-i', file, '-c:v', 'copy', ...audioArgs, tmp]);
+    child.stderr.on('data', (c) => (log += c.toString()));
+    child.on('error', (err) => resolve({ code: -1, log: `Could not run ffmpeg: ${err.message}` }));
+    child.on('close', (code) => resolve({ code, log }));
+  });
+  if (run.code !== 0) {
+    fs.rmSync(tmp, { force: true });
+    return { ok: false, log: run.log };
+  }
+  fs.renameSync(tmp, file);
+  return { ok: true, log: '' };
+}
+
 function hasAudioStream(file: string): Promise<boolean> {
   return new Promise((resolve) => {
     let out = '';
@@ -39,6 +74,19 @@ function hasAudioStream(file: string): Promise<boolean> {
     child.stdout.on('data', (c) => (out += c.toString()));
     child.on('error', () => resolve(false));
     child.on('close', () => resolve(out.trim().length > 0));
+  });
+}
+
+function probeVideoSize(file: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    let out = '';
+    const child = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', file]);
+    child.stdout.on('data', (c) => (out += c.toString()));
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      const m = /^(\d+)x(\d+)/.exec(out.trim());
+      resolve(m ? { width: Number(m[1]), height: Number(m[2]) } : null);
+    });
   });
 }
 
@@ -83,6 +131,17 @@ projectsRouter.delete('/projects/:id', (req, res) => {
     return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
   res.status(204).end();
+});
+
+// Volume of the sounds played by overlay animations: 0 (muted) to 1. Used by the export.
+projectsRouter.put('/projects/:id/overlay-volume', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const volume = (req.body as { volume?: unknown }).volume;
+  if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1) {
+    return res.status(400).json({ error: 'volume must be a number from 0 to 1' });
+  }
+  setOverlayVolume(req.params.id, volume);
+  res.json({ volume });
 });
 
 projectsRouter.get('/skills', (_req, res) => {
@@ -168,6 +227,7 @@ projectsRouter.post('/projects/:id/transcript', async (req, res) => {
     const segments = await transcribeProject(req.params.id);
     res.json({ segments });
   } catch (err) {
+    writeLog('error', 'route.error', { route: 'transcribe', project: req.params.id, error: err });
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -180,6 +240,7 @@ projectsRouter.post('/projects/:id/markers/plan', async (req, res) => {
   try {
     res.json(await planMarkers(req.params.id));
   } catch (err) {
+    writeLog('error', 'route.error', { route: 'plan-markers', project: req.params.id, error: err });
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -272,6 +333,7 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
 
     send('done', { completed: results.length, total: inputs.length, results });
   } catch (err) {
+    writeLog('error', 'route.error', { route: 'apply-markers', project: id, error: err });
     send('done', { completed: results.length, total: inputs.length, results, error: err instanceof Error ? err.message : String(err) });
   } finally {
     res.end();
@@ -333,6 +395,7 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
 
     send('done', { success: result.success, code: result.code, error: result.error });
   } catch (err) {
+    writeLog('error', 'route.error', { route: 'regenerate', project: id, marker: markerId, error: err });
     send('done', { success: false, error: err instanceof Error ? err.message : String(err) });
   } finally {
     res.end();
@@ -345,60 +408,120 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
     return res.status(409).json({ error: 'An export is already running for this project' });
   }
   exportsInFlight.add(id);
+  writeLog('info', 'export.start', { project: id, includeVideo: !!req.body?.includeVideo, overlayVolume: overlayVolume(id) });
 
   try {
     const dir = projectDir(id);
     const entry = path.join(dir, '03_remotion_code', 'Root.tsx');
     const outFile = path.join(dir, '04_output', 'overlay.webm');
+    const includeVideo = !!req.body?.includeVideo;
 
-    const result = await new Promise<{ code: number | null; log: string }>((resolve) => {
-      let log = '';
-      const child = spawn(
-        'npx',
-        [
-          'remotion',
-          'render',
-          entry,
-          'Overlay',
-          outFile,
-          '--codec=vp8',
-          '--pixel-format=yuva420p',
-          '--image-format=png',
-        ],
-        { cwd: dir, shell: process.platform === 'win32' }
-      );
-      child.stdout.on('data', (c) => (log += c.toString()));
-      child.stderr.on('data', (c) => (log += c.toString()));
-      child.on('close', (code) => resolve({ code, log }));
-    });
-
-    fs.writeFileSync(path.join(dir, '04_output', 'render_log.txt'), result.log);
-    if (result.code !== 0) {
-      return res.status(500).json({ success: false, log: result.log });
+    const raw = includeVideo ? findRawVideo(id) : null;
+    if (includeVideo && !raw) {
+      return res.status(400).json({ success: false, log: 'No source video uploaded; cannot build the combined mp4' });
     }
-    if (!req.body?.includeVideo) {
+
+    // For the combined mp4 only the frames inside markers are rendered (one overlay clip per
+    // merged marker range) and composited at their offsets, instead of rendering a mostly
+    // empty overlay for the whole video. Overlay-only export, or a project with no markers,
+    // renders the full timeline as one clip starting at 0.
+    const gap = typeof req.body?.mergeGapSeconds === 'number' ? req.body.mergeGapSeconds : undefined;
+    const ranges = includeVideo ? markerFrameRanges(id, gap) : [];
+    const { fps } = readCompositionConfig(id);
+    const segDir = path.join(dir, '04_output', 'segments');
+    fs.rmSync(segDir, { recursive: true, force: true });
+    const segments: { file: string; startSec: number; frames?: FrameRange }[] =
+      ranges.length > 0
+        ? ranges.map((r, i) => ({ file: path.join(segDir, `seg_${i}.mov`), startSec: r.from / fps, frames: r }))
+        : [{ file: includeVideo ? path.join(dir, '04_output', 'overlay_full.mov') : outFile, startSec: 0 }];
+    if (ranges.length > 0) fs.mkdirSync(segDir, { recursive: true });
+
+    const volume = overlayVolume(id);
+    let renderLog = '';
+    let failure: string | null = null;
+    let rendered = 0;
+    await renderOverlayJobs(
+      entry,
+      segments.map((s) => ({ outputLocation: s.file, frames: s.frames, codec: (includeVideo ? 'prores' : 'vp8') as 'vp8' | 'prores' })),
+      async (i, result) => {
+        const seg = segments[i];
+        renderLog += `\n=== segment ${i + 1}/${segments.length} ===\n${result.log}`;
+        fs.writeFileSync(path.join(dir, '04_output', 'render_log.txt'), renderLog);
+        writeLog(result.ok ? 'info' : 'error', 'export.render', {
+          project: id,
+          segment: `${i + 1}/${segments.length}`,
+          frames: seg.frames ? `${seg.frames.from}-${seg.frames.to}` : 'all',
+          ok: result.ok,
+          ms: result.ms,
+          output: result.ok ? undefined : clip(result.log.slice(-800), 800),
+        });
+        if (!result.ok) {
+          failure = result.log;
+          return false;
+        }
+        rendered++;
+        const scaled = await applyOverlayVolume(seg.file, volume);
+        writeLog(scaled.ok ? 'info' : 'error', 'export.volume', { project: id, volume, ok: scaled.ok, output: scaled.ok ? undefined : clip(scaled.log.slice(-600), 600) });
+        if (!scaled.ok) {
+          failure = scaled.log;
+          return false;
+        }
+        return true;
+      }
+    );
+    if (failure || rendered !== segments.length) {
+      return res.status(500).json({ success: false, log: failure ?? 'Render did not complete' });
+    }
+    if (!includeVideo || !raw) {
+      writeLog('info', 'export.done', { project: id, output: outFile });
       return res.json({ success: true, output: outFile });
     }
 
-    const raw = findRawVideo(id);
-    if (!raw) {
-      return res.status(400).json({ success: false, log: 'No source video uploaded; cannot build the combined mp4' });
-    }
     const finalFile = path.join(dir, '04_output', 'final.mp4');
-    // Sounds from <Audio> in the markers end up as an audio track in the overlay webm, and
-    // the source video usually has its own (speech/music). Mix both when both exist;
-    // normalize=0 keeps the source at full level instead of halving it, and alimiter guards
-    // against clipping where they overlap.
-    const [baseHasAudio, overlayHasAudio] = await Promise.all([hasAudioStream(raw), hasAudioStream(outFile)]);
-    const videoFilter =
-      '[1:v][0:v]scale2ref=w=iw:h=ih[ov][base];[base][ov]overlay=eof_action=pass:format=auto,format=yuv420p[v]';
-    const filterComplex =
-      baseHasAudio && overlayHasAudio
-        ? `${videoFilter};[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[a]`
-        : videoFilter;
-    const audioMap = baseHasAudio && overlayHasAudio ? ['-map', '[a]'] : baseHasAudio ? ['-map', '0:a'] : overlayHasAudio ? ['-map', '1:a'] : [];
-    // -c:v libvpx before the overlay input forces the decoder that preserves VP8 alpha
-    // (ffmpeg's native vp8 decoder drops it). The overlay is scaled to the base video size.
+    const [baseHasAudio, segmentHasAudio, size] = await Promise.all([
+      hasAudioStream(raw),
+      Promise.all(segments.map((s) => hasAudioStream(s.file))),
+      probeVideoSize(raw),
+    ]);
+    if (!size) {
+      return res.status(500).json({ success: false, log: 'Could not read the source video dimensions with ffprobe' });
+    }
+
+    // Each overlay clip is shifted to its start offset with setpts and overlaid in turn;
+    // eof_action=pass shows the base video untouched before a clip starts and after it ends.
+    const videoParts: string[] = [];
+    let current = '0:v';
+    segments.forEach((s, i) => {
+      const input = i + 1;
+      videoParts.push(`[${input}:v]scale=${size.width}:${size.height},setpts=PTS+${s.startSec}/TB[ov${i}]`);
+      const last = i === segments.length - 1;
+      videoParts.push(`[${current}][ov${i}]overlay=eof_action=pass:format=auto${last ? ',format=yuv420p' : ''}[${last ? 'v' : `c${i}`}]`);
+      current = `c${i}`;
+    });
+
+    // Sounds from <Audio> in the markers end up as an audio track in each overlay clip, and the
+    // source video usually has its own (speech/music). Delay each clip's audio to its offset and
+    // mix everything; normalize=0 keeps the source at full level instead of halving it, and
+    // alimiter guards against clipping where they overlap.
+    const audioLabels: string[] = baseHasAudio ? ['[0:a]'] : [];
+    const audioParts: string[] = [];
+    segments.forEach((s, i) => {
+      if (!segmentHasAudio[i]) return;
+      audioParts.push(`[${i + 1}:a]adelay=${Math.round(s.startSec * 1000)}:all=1[a${i}]`);
+      audioLabels.push(`[a${i}]`);
+    });
+    let audioMap: string[] = [];
+    if (audioLabels.length === 1) {
+      audioMap = ['-map', audioLabels[0] === '[0:a]' ? '0:a' : audioLabels[0]];
+    } else if (audioLabels.length > 1) {
+      audioParts.push(
+        `${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=${baseHasAudio ? 'first' : 'longest'}:dropout_transition=0:normalize=0,alimiter=limit=0.95[a]`
+      );
+      audioMap = ['-map', '[a]'];
+    }
+
+    // Overlay clips are ProRes 4444 (alpha decodes natively; the VP8 alpha encoder was the
+    // render bottleneck) and are scaled to the base video size.
     const mix = await new Promise<{ code: number | null; log: string }>((resolve) => {
       let log = '';
       const child = spawn(
@@ -406,9 +529,8 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
         [
           '-y',
           '-i', raw,
-          '-c:v', 'libvpx',
-          '-i', outFile,
-          '-filter_complex', filterComplex,
+          ...segments.flatMap((s) => ['-i', s.file]),
+          '-filter_complex', [...videoParts, ...audioParts].join(';'),
           '-map', '[v]',
           ...audioMap,
           '-c:v', 'libx264',
@@ -424,7 +546,17 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
       child.on('close', (code) => resolve({ code, log }));
     });
     fs.writeFileSync(path.join(dir, '04_output', 'mix_log.txt'), mix.log);
+    writeLog(mix.code === 0 ? 'info' : 'error', 'export.mix', {
+      project: id,
+      code: mix.code,
+      segments: segments.length,
+      baseHasAudio,
+      overlayHasAudio: segmentHasAudio.some(Boolean),
+      output: mix.code === 0 ? undefined : clip(mix.log.slice(-800), 800),
+    });
     if (mix.code === 0) {
+      fs.rmSync(segDir, { recursive: true, force: true });
+      writeLog('info', 'export.done', { project: id, output: finalFile });
       res.json({ success: true, output: finalFile });
     } else {
       res.status(500).json({ success: false, log: mix.log });
