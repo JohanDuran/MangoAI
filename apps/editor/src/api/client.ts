@@ -5,6 +5,7 @@ export interface Project {
   name: string;
   createdAt: string;
   overlayVolume?: number;
+  autoDescribeImages?: boolean;
 }
 
 export interface CompositionConfig {
@@ -204,6 +205,7 @@ export interface ProposedMarker {
   end: number;
   prompt: string;
   region: MarkerRegion | null;
+  assets?: string[];
 }
 
 export const planMarkers = (id: string) =>
@@ -217,6 +219,7 @@ export interface ApplyMarkerInput {
   prompt: string;
   region: MarkerRegion | null;
   allowImage: boolean;
+  assets?: string[];
 }
 
 export async function applyMarkerPlan(
@@ -287,3 +290,20 @@ export const setMarkerAssets = (id: string, markerId: string, assets: string[]) 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ assets }),
   }).then((r) => json<Marker>(r));
+
+// Has Claude write the image's description (replacing an existing one only when overwrite is set).
+export const describeAsset = (id: string, assetId: string, overwrite = false) =>
+  fetch(`${BASE}/projects/${id}/assets/${assetId}/describe${overwrite ? '?overwrite=1' : ''}`, { method: 'POST' }).then(async (r) => {
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      throw new Error(body?.error ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<Asset>;
+  });
+
+export const saveAutoDescribe = (id: string, autoDescribe: boolean) =>
+  fetch(`${BASE}/projects/${id}/asset-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ autoDescribe }),
+  }).then((r) => json<{ autoDescribe: boolean }>(r));

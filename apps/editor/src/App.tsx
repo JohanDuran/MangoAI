@@ -18,6 +18,8 @@ import {
   listAssets,
   uploadAsset,
   setMarkerAssets,
+  describeAsset,
+  saveAutoDescribe,
   planMarkers,
   applyMarkerPlan,
   videoUrl as videoUrlFor,
@@ -97,6 +99,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [overlayVolume, setOverlayVolume] = useState(1);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [autoDescribe, setAutoDescribe] = useState(false);
+  const [describingIds, setDescribingIds] = useState<string[]>([]);
   // The volume last loaded from or saved to the server, so loading a project does not write it back.
   const savedVolumeRef = useRef<{ projectId: string; volume: number } | null>(null);
   const [editingRegionMarkerId, setEditingRegionMarkerId] = useState<string | null>(null);
@@ -180,7 +184,20 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const refreshAssets = (id: string) => listAssets(id).then(setAssets).catch(() => {});
 
+  // Has Claude describe an image. Rejects with the error so a card can show it.
+  const handleDescribeAsset = async (assetId: string, overwrite = false) => {
+    if (!projectId) return;
+    setDescribingIds((prev) => [...prev, assetId]);
+    try {
+      await describeAsset(projectId, assetId, overwrite);
+      await refreshAssets(projectId);
+    } finally {
+      setDescribingIds((prev) => prev.filter((id) => id !== assetId));
+    }
+  };
+
   // Uploads run one at a time; resolves with the assets that were added so a picker can select them.
+  // With auto-describe on, each new image is described in the background afterwards.
   const handleUploadAssets = async (files: File[]): Promise<Asset[]> => {
     if (!projectId) return [];
     const added: Asset[] = [];
@@ -189,7 +206,14 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     } finally {
       await refreshAssets(projectId);
     }
+    if (autoDescribe) for (const asset of added) handleDescribeAsset(asset.id).catch(() => {});
     return added;
+  };
+
+  const handleToggleAutoDescribe = (value: boolean) => {
+    if (!projectId) return;
+    setAutoDescribe(value);
+    saveAutoDescribe(projectId, value).catch(() => setAutoDescribe(!value));
   };
 
   const handleSetMarkerAssets = async (markerId: string, ids: string[]) => {
@@ -208,6 +232,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         const volume = project.overlayVolume ?? 1;
         savedVolumeRef.current = { projectId, volume };
         setOverlayVolume(volume);
+        setAutoDescribe(!!project.autoDescribeImages);
       });
       setNewMarkerPanelVisible(true);
     } else {
@@ -219,6 +244,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       setTranscript([]);
       setAssets([]);
       setLibraryOpen(false);
+      setAutoDescribe(false);
+      setDescribingIds([]);
     }
   }, [projectId]);
 
@@ -305,6 +332,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           prompt: p.prompt,
           region: p.region,
           allowImage: false,
+          assets: p.assets ?? [],
         }))
       );
       setDroppedCount(droppedCount);
@@ -346,7 +374,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     try {
       await applyMarkerPlan(
         projectId,
-        approved.map((i) => ({ start: i.start, end: i.end, prompt: i.prompt, region: i.region, allowImage: i.allowImage })),
+        approved.map((i) => ({ start: i.start, end: i.end, prompt: i.prompt, region: i.region, allowImage: i.allowImage, assets: i.assets })),
         (e) => {
           const d = e.data as {
             index: number;
@@ -814,6 +842,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               panel blank. */}
           {projectId && planReviewOpen && (
             <MarkerPlanReview
+              projectId={projectId}
+              assets={assets}
+              onUploadAssets={handleUploadAssets}
               items={reviewItems}
               droppedCount={droppedCount}
               applying={applyingPlan}
@@ -872,6 +903,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           projectId={projectId}
           assets={assets}
           onUpload={handleUploadAssets}
+          autoDescribe={autoDescribe}
+          onToggleAutoDescribe={handleToggleAutoDescribe}
+          describingIds={describingIds}
+          onDescribe={handleDescribeAsset}
           onChanged={() => {
             refreshAssets(projectId);
             refreshProject(projectId);

@@ -15,6 +15,8 @@ export interface Project {
   skills?: string[];
   // Volume of sounds played by the overlay animations, 0 (muted) to 1. Absent means 1.
   overlayVolume?: number;
+  // Describe newly uploaded images with Claude automatically (costs a small Claude call each).
+  autoDescribeImages?: boolean;
 }
 
 const slugify = (name: string) =>
@@ -106,6 +108,14 @@ export function setProjectSkills(id: string, skills: string[]): Project {
   const project = readProject(id);
   if (!project) throw new Error(`Project ${id} not found`);
   const next: Project = { ...project, skills };
+  fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify(next, null, 2));
+  return next;
+}
+
+export function setAutoDescribeImages(id: string, value: boolean): Project {
+  const project = readProject(id);
+  if (!project) throw new Error(`Project ${id} not found`);
+  const next: Project = { ...project, autoDescribeImages: value };
   fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify(next, null, 2));
   return next;
 }

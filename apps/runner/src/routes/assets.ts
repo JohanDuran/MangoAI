@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { readProject } from '../lib/scaffold.js';
+import { readProject, setAutoDescribeImages } from '../lib/scaffold.js';
 import {
   MAX_ASSET_BYTES,
   addUploadedAsset,
   deleteAsset,
+  describeAsset,
   findAsset,
   markersUsingAsset,
   readAssets,
@@ -58,4 +59,24 @@ assetsRouter.delete('/projects/:id/assets/:assetId', (req, res) => {
   deleteAsset(id, assetId);
   log('info', 'asset.delete', { project: id, asset: assetId, detachedFrom: used });
   res.status(204).end();
+});
+
+// Has Claude write the image's description. Replaces an existing description only with ?overwrite=1.
+assetsRouter.post('/projects/:id/assets/:assetId/describe', async (req, res) => {
+  const { id, assetId } = req.params;
+  if (!findAsset(id, assetId)) return res.status(404).json({ error: 'not found' });
+  try {
+    res.json(await describeAsset(id, assetId, { overwrite: req.query.overwrite === '1' }));
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+assetsRouter.put('/projects/:id/asset-settings', (req, res) => {
+  const { id } = req.params;
+  if (!readProject(id)) return res.status(404).json({ error: 'not found' });
+  const { autoDescribe } = req.body as { autoDescribe?: unknown };
+  if (typeof autoDescribe !== 'boolean') return res.status(400).json({ error: 'autoDescribe must be true or false' });
+  setAutoDescribeImages(id, autoDescribe);
+  res.json({ autoDescribe });
 });

@@ -32,6 +32,8 @@ export interface RunClaudeOptions {
   // merely available through `tools` stays confined to the project directory.
   allowedTools?: string[];
   mcpConfigPath?: string;
+  // Model alias or id passed as --model; omitted means the CLI default.
+  model?: string;
   // Environment variables to hide from the claude process (secrets of inactive skills).
   envExclude?: string[];
   // Extra fields added to every log line of this run (project, marker, attempt, ...).
@@ -115,6 +117,7 @@ export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResu
       '--tools',
       opts.tools.join(','),
     ];
+    if (opts.model) args.push('--model', opts.model);
     if (opts.allowedTools && opts.allowedTools.length > 0) args.push('--allowedTools', opts.allowedTools.join(','));
     if (opts.mcpConfigPath) args.push('--mcp-config', opts.mcpConfigPath);
     // Keep runs identical across machines: ignore the user's global MCP connectors and

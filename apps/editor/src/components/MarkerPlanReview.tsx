@@ -1,5 +1,6 @@
 import React from 'react';
-import type { MarkerRegion } from '../api/client';
+import type { Asset, MarkerRegion } from '../api/client';
+import { AssetPicker } from './AssetPicker';
 import type { MarkerRunState } from '../App';
 import type { DisplayStatus } from '../status';
 import { StatusBadge } from './StatusBadge';
@@ -13,6 +14,8 @@ export interface ReviewItem {
   prompt: string;
   region: MarkerRegion | null;
   allowImage: boolean;
+  // Ids of library images attached to this proposed marker.
+  assets: string[];
   markerId?: string;
   // Set when the server rejected this item before it could even be created (e.g. an
   // edited time range now overlaps another marker) — distinct from a generation failure,
@@ -21,6 +24,9 @@ export interface ReviewItem {
 }
 
 interface Props {
+  projectId: string;
+  assets: Asset[];
+  onUploadAssets: (files: File[]) => Promise<Asset[]>;
   items: ReviewItem[];
   droppedCount: number;
   applying: boolean;
@@ -39,6 +45,9 @@ const rowStatus = (item: ReviewItem, run?: MarkerRunState): DisplayStatus | null
 };
 
 export const MarkerPlanReview: React.FC<Props> = ({
+  projectId,
+  assets,
+  onUploadAssets,
   items,
   droppedCount,
   applying,
@@ -114,6 +123,21 @@ export const MarkerPlanReview: React.FC<Props> = ({
                   disabled={locked}
                   onChange={(e) => onChange(item.key, { prompt: e.target.value })}
                 />
+                {(assets.length > 0 || item.assets.length > 0) && (
+                  <div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 4 }}>
+                      Images{item.assets.length > 0 ? ' (suggested by Claude, change if you like)' : ''}
+                    </div>
+                    <AssetPicker
+                      projectId={projectId}
+                      assets={assets}
+                      selected={item.assets}
+                      onChange={(ids) => onChange(item.key, { assets: ids })}
+                      onUpload={onUploadAssets}
+                      disabled={locked}
+                    />
+                  </div>
+                )}
                 <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{formatRegion(item.region)}</div>
                 {item.error && <div className="field-error">{item.error}</div>}
                 {run && run.log.length > 0 && (
