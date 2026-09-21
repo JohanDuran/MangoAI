@@ -4,6 +4,7 @@ import { validateMarkerFile } from './validate.js';
 import { logAttempt } from './debug.js';
 import { updateMarkerStatus, readMarkers } from './markers.js';
 import { assetsForPrompt } from './assets.js';
+import { syncAssetModule } from './assetModule.js';
 import { prepareClaudeCall } from './skills.js';
 import { log, clip } from './log.js';
 import { enabledSkillNames, refreshClaudeMd } from './scaffold.js';
@@ -41,6 +42,7 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
   let success = false;
   let lastCode = fs.readFileSync(opts.file, 'utf-8');
   refreshClaudeMd(opts.projectId);
+  syncAssetModule(opts.projectId);
   const ctx = { project: opts.projectId, marker: opts.markerId };
   log('info', 'marker.generate', { ...ctx, prompt: clip(opts.prompt, 200), feedback: opts.feedback ? clip(opts.feedback, 200) : undefined, allowSkills: opts.allowSkills });
 

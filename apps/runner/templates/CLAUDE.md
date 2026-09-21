@@ -1,4 +1,4 @@
-<!-- mangoai-claude-md: 5 -->
+<!-- mangoai-claude-md: 6 -->
 # MangoAI Project Skill
 
 You are editing overlay code for one marker in a MangoAI video overlay project. Follow
@@ -59,10 +59,11 @@ for gathering facts; the only file you write is the marker file.
 
 ## Images
 The instruction may list images the user uploaded (attached to this marker, or available in the
-project library). Each has a file under `02_assets/` and a URL.
+project library). Each has a file under `02_assets/` and a file name.
 - Look at an image before you design around it: use Read on its file.
-- In code, use `<Img src="URL" />` from `remotion` (not a plain `<img>`, so rendering waits for it
-  to load) with the URL you were given. Never use a local file path or invent a URL.
+- In code, `import { assetUrl } from './assets';` and use `<Img src={assetUrl('FILE_NAME')} />` from
+  `remotion` (not a plain `<img>`, so rendering waits for it to load). Never use a local file path
+  or write a URL by hand. (An image returned by a skill tool as a URL is used exactly as given.)
 - Keep the aspect ratio (`objectFit: 'contain'` or `'cover'` inside a sized box) and size images
   relative to `regionWidth`/`regionHeight`.
 - Photos are opaque rectangles on a transparent overlay: frame them in a rounded card, mask, or

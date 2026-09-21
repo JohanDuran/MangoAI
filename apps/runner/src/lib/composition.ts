@@ -7,6 +7,8 @@ export interface CompositionConfig {
   width: number;
   height: number;
   durationInFrames: number;
+  // Address of the runner serving this project's images; kept in sync by syncAssetModule.
+  runnerUrl?: string;
 }
 
 const configFile = (id: string) => path.join(projectDir(id), '03_remotion_code', 'CompositionConfig.json');

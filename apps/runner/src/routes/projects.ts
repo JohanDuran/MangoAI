@@ -26,6 +26,7 @@ import {
   type MarkerRegion,
 } from '../lib/markers.js';
 import { validAssetIds } from '../lib/assets.js';
+import { syncAssetModule } from '../lib/assetModule.js';
 import { regenerateRegistry } from '../lib/registry.js';
 import { generateMarkerWithRetry } from '../lib/generateMarker.js';
 import { planMarkers } from '../lib/planner.js';
@@ -119,6 +120,7 @@ projectsRouter.get('/projects', (_req, res) => {
 projectsRouter.get('/projects/:id', (req, res) => {
   const project = readProject(req.params.id);
   if (!project) return res.status(404).json({ error: 'not found' });
+  syncAssetModule(req.params.id);
   res.json({
     project,
     markers: readMarkers(req.params.id),
@@ -440,6 +442,7 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
   writeLog('info', 'export.start', { project: id, includeVideo: !!req.body?.includeVideo, overlayVolume: overlayVolume(id) });
 
   try {
+    syncAssetModule(id);
     const dir = projectDir(id);
     const entry = path.join(dir, '03_remotion_code', 'Root.tsx');
     const outFile = path.join(dir, '04_output', 'overlay.webm');

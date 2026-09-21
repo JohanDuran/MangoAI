@@ -3,6 +3,7 @@ import path from 'node:path';
 import { projectDir } from './paths.js';
 import { readMarkers } from './markers.js';
 import { readCompositionConfig } from './composition.js';
+import { syncAssetModule } from './assetModule.js';
 
 const FULL_SCREEN_REGION = { x: 0, y: 0, width: 1, height: 1 };
 
@@ -82,4 +83,5 @@ registerRoot(Root);
 `;
 
   fs.writeFileSync(path.join(dir, 'Root.tsx'), root);
+  syncAssetModule(id);
 }
