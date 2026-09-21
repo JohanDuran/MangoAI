@@ -4,6 +4,7 @@ import {
   deleteProject,
   listProjects,
   getProject,
+  saveOverlayVolume,
   addMarker,
   deleteMarker,
   exportProject,
@@ -14,9 +15,13 @@ import {
   regenerateMarker,
   transcribeProject,
   getTranscript,
+  listAssets,
+  uploadAsset,
+  setMarkerAssets,
   planMarkers,
   applyMarkerPlan,
   videoUrl as videoUrlFor,
+  type Asset,
   type Project,
   type Marker,
   type MarkerRegion,
@@ -27,6 +32,7 @@ import { DualLayerPreview, type DualLayerPreviewHandle } from './components/Dual
 import { Timeline } from './components/Timeline';
 import { AddMarkerPanel } from './components/AddMarkerPanel';
 import { MarkerInspector } from './components/MarkerInspector';
+import { AssetLibrary } from './components/AssetLibrary';
 import { MarkerPlanReview, type ReviewItem } from './components/MarkerPlanReview';
 
 const DEFAULT_COMPOSITION: CompositionConfig = { fps: 30, width: 1920, height: 1080, durationInFrames: 1800 };
@@ -39,9 +45,37 @@ export interface MarkerRunState {
   error?: string;
 }
 
+// Owns only what outlives a project: the list of projects and which one is open. Everything else
+// lives in Workspace, which is keyed by project id: switching projects unmounts the old workspace
+// completely (state, player, video, listeners, open streams) and mounts a fresh one, so nothing
+// from the previous project can leak into the next.
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    listProjects().then(setProjects);
+  }, []);
+
+  return (
+    <Workspace
+      key={projectId ?? 'no-project'}
+      projectId={projectId}
+      projects={projects}
+      setProjects={setProjects}
+      onProjectChange={setProjectId}
+    />
+  );
+}
+
+interface WorkspaceProps {
+  projectId: string | null;
+  projects: Project[];
+  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
+  onProjectChange: (id: string | null) => void;
+}
+
+function Workspace({ projectId, projects, setProjects, onProjectChange }: WorkspaceProps) {
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -60,7 +94,11 @@ export default function App() {
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [overlaySoundMuted, setOverlaySoundMuted] = useState(false);
+  const [overlayVolume, setOverlayVolume] = useState(1);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  // The volume last loaded from or saved to the server, so loading a project does not write it back.
+  const savedVolumeRef = useRef<{ projectId: string; volume: number } | null>(null);
   const [editingRegionMarkerId, setEditingRegionMarkerId] = useState<string | null>(null);
   const [regionDraft, setRegionDraft] = useState<MarkerRegion | null>(null);
   // The area for the marker currently being composed in AddMarkerPanel, before it exists
@@ -119,8 +157,13 @@ export default function App() {
   const isFullScreenRegion = (r: MarkerRegion) =>
     Math.abs(r.x) < 0.001 && Math.abs(r.y) < 0.001 && Math.abs(r.width - 1) < 0.001 && Math.abs(r.height - 1) < 0.001;
 
+  // Aborted when this workspace unmounts (the user switched project), which closes any generation
+  // streams it still has open. Created in an effect so StrictMode's simulated unmount cannot leave
+  // an already-aborted controller behind.
+  const abortRef = useRef(new AbortController());
   useEffect(() => {
-    listProjects().then(setProjects);
+    abortRef.current = new AbortController();
+    return () => abortRef.current.abort();
   }, []);
 
   const refreshProject = (id: string) => {
@@ -135,19 +178,64 @@ export default function App() {
     });
   };
 
+  const refreshAssets = (id: string) => listAssets(id).then(setAssets).catch(() => {});
+
+  // Uploads run one at a time; resolves with the assets that were added so a picker can select them.
+  const handleUploadAssets = async (files: File[]): Promise<Asset[]> => {
+    if (!projectId) return [];
+    const added: Asset[] = [];
+    try {
+      for (const file of files) added.push(await uploadAsset(projectId, file));
+    } finally {
+      await refreshAssets(projectId);
+    }
+    return added;
+  };
+
+  const handleSetMarkerAssets = async (markerId: string, ids: string[]) => {
+    if (!projectId) return;
+    markEdited();
+    await setMarkerAssets(projectId, markerId, ids);
+    refreshProject(projectId);
+  };
+
   useEffect(() => {
     if (projectId) {
       refreshProject(projectId);
+      refreshAssets(projectId);
       getTranscript(projectId).then(({ segments }) => setTranscript(segments));
+      getProject(projectId).then(({ project }) => {
+        const volume = project.overlayVolume ?? 1;
+        savedVolumeRef.current = { projectId, volume };
+        setOverlayVolume(volume);
+      });
       setNewMarkerPanelVisible(true);
     } else {
+      savedVolumeRef.current = null;
       setMarkers([]);
       setVideoUrl(null);
       setComposition(DEFAULT_COMPOSITION);
       setRunState({});
       setTranscript([]);
+      setAssets([]);
+      setLibraryOpen(false);
     }
   }, [projectId]);
+
+  // Persist the overlay volume shortly after the slider stops moving, so the export uses it.
+  useEffect(() => {
+    const saved = savedVolumeRef.current;
+    if (!projectId || !saved || saved.projectId !== projectId || saved.volume === overlayVolume) return;
+    const timer = setTimeout(() => {
+      markEdited();
+      saveOverlayVolume(projectId, overlayVolume)
+        .then(() => {
+          savedVolumeRef.current = { projectId, volume: overlayVolume };
+        })
+        .catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [overlayVolume, projectId]);
 
   const handleTranscribe = async () => {
     if (!projectId) return;
@@ -189,10 +277,12 @@ export default function App() {
             [markerId]: { phase: 'done', log: prev[markerId]?.log ?? [], success: d.success, error: d.error },
           }));
         }
-      });
+      }, abortRef.current.signal);
     } finally {
-      refreshProject(projectId);
-      setReloadToken((t) => t + 1);
+      if (!abortRef.current.signal.aborted) {
+        refreshProject(projectId);
+        setReloadToken((t) => t + 1);
+      }
     }
   };
 
@@ -294,13 +384,16 @@ export default function App() {
               setReviewItems((prev) => prev.map((it) => (it.key === target.key ? { ...it, error: d.error } : it)));
             }
           }
-        }
+        },
+        abortRef.current.signal
       );
     } finally {
-      refreshProject(projectId);
-      setReloadToken((t) => t + 1);
-      setApplyingPlan(false);
-      setPlanReviewOpen(false);
+      if (!abortRef.current.signal.aborted) {
+        refreshProject(projectId);
+        setReloadToken((t) => t + 1);
+        setApplyingPlan(false);
+        setPlanReviewOpen(false);
+      }
     }
   };
 
@@ -309,7 +402,7 @@ export default function App() {
     if (!newName) return;
     const project = await createProject(newName);
     setProjects((prev) => [...prev, project]);
-    setProjectId(project.id);
+    onProjectChange(project.id);
     setNewName('');
   };
 
@@ -331,13 +424,13 @@ export default function App() {
       return;
     }
     setProjects((prev) => prev.filter((p) => p.id !== projectId));
-    setProjectId(null);
+    onProjectChange(null);
     setSelectedMarkerId(null);
     setExportStatus(null);
     setExportSucceeded(false);
   };
 
-  const handleAddMarker = async (input: { start: number; end: number; prompt: string; allowImage: boolean }) => {
+  const handleAddMarker = async (input: { start: number; end: number; prompt: string; allowImage: boolean; assets: string[] }) => {
     if (!projectId) return;
     markEdited();
     const region = newMarkerRegion && !isFullScreenRegion(newMarkerRegion) ? newMarkerRegion : undefined;
@@ -540,7 +633,7 @@ export default function App() {
           <span className="brand-mark">🥭</span>
           MangoAI
         </div>
-        <select className="field-select" style={{ width: 200 }} value={projectId ?? ''} onChange={(e) => setProjectId(e.target.value || null)}>
+        <select className="field-select" style={{ width: 200 }} value={projectId ?? ''} onChange={(e) => onProjectChange(e.target.value || null)}>
           <option value="">Select a project…</option>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
@@ -576,6 +669,13 @@ export default function App() {
                 }}
               />
             </label>
+            <button
+              onClick={() => setLibraryOpen(true)}
+              className="btn btn-sm"
+              title="Upload images and attach them to markers as context for the animations"
+            >
+              Images{assets.length > 0 ? ` (${assets.length})` : ''}
+            </button>
             <button onClick={handleTranscribe} disabled={transcribing} className="btn btn-sm">
               {transcribing ? 'Transcribing…' : transcript.length > 0 ? 'Re-transcribe' : 'Transcribe video'}
             </button>
@@ -587,13 +687,21 @@ export default function App() {
             >
               {planning ? 'Planning…' : 'Plan markers'}
             </button>
-            <button
-              onClick={() => setOverlaySoundMuted((m) => !m)}
-              className="btn btn-sm"
-              title="Mute or unmute sound effects from overlays in this preview (does not affect export)"
+            <label
+              className="volume-control"
+              title="Volume of the sounds played by overlay animations. Drag to 0 to mute them. Applies to the preview and to the export."
             >
-              {overlaySoundMuted ? 'Overlay sounds: off' : 'Overlay sounds: on'}
-            </button>
+              <span>Animation sound</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={Math.round(overlayVolume * 100)}
+                onChange={(e) => setOverlayVolume(Number(e.target.value) / 100)}
+              />
+              <span className="volume-value">{overlayVolume === 0 ? 'Muted' : `${Math.round(overlayVolume * 100)}%`}</span>
+            </label>
             <button
               onClick={() => handleExport(false)}
               disabled={exporting}
@@ -650,7 +758,7 @@ export default function App() {
                 onVideoSize={handleVideoSize}
                 onTimeUpdate={setCurrentTime}
                 onPlayingChange={setIsPlaying}
-                overlaySoundMuted={overlaySoundMuted}
+                overlayVolume={overlayVolume}
                 regionDraft={activeRegionDraft}
                 onRegionDraftChange={handleRegionDraftChange}
                 onRegionCommit={editingRegionMarkerId ? handleSaveRegion : undefined}
@@ -663,10 +771,14 @@ export default function App() {
                 runState={runState}
                 pendingStart={pendingStart}
                 pendingEnd={pendingEnd}
+                pendingVisible={newMarkerPanelVisible}
                 isPlaying={isPlaying}
                 onPlayPause={handlePlayPause}
                 onStop={handleStop}
-                onSeek={(seconds) => previewRef.current?.seekTo(seconds)}
+                onSeek={(seconds) => {
+                  previewRef.current?.pause();
+                  previewRef.current?.seekTo(seconds);
+                }}
                 onSelect={selectMarker}
                 onDeselectAll={handleTimelineDeselect}
                 onRangeSelect={(start, end) => {
@@ -714,6 +826,9 @@ export default function App() {
           )}
           {projectId && !planReviewOpen && !selectedMarker && newMarkerPanelVisible && (
             <AddMarkerPanel
+              projectId={projectId}
+              assets={assets}
+              onUploadAssets={handleUploadAssets}
               currentTime={currentTime}
               start={pendingStart}
               end={pendingEnd}
@@ -730,6 +845,9 @@ export default function App() {
           {projectId && !planReviewOpen && selectedMarker && (
             <MarkerInspector
               projectId={projectId}
+              assets={assets}
+              onUploadAssets={handleUploadAssets}
+              onSetAssets={handleSetMarkerAssets}
               marker={selectedMarker}
               run={selectedMarker ? runState[selectedMarker.marker_id] : undefined}
               transcript={
@@ -749,6 +867,18 @@ export default function App() {
           )}
         </div>
       </div>
+      {libraryOpen && projectId && (
+        <AssetLibrary
+          projectId={projectId}
+          assets={assets}
+          onUpload={handleUploadAssets}
+          onChanged={() => {
+            refreshAssets(projectId);
+            refreshProject(projectId);
+          }}
+          onClose={() => setLibraryOpen(false)}
+        />
+      )}
     </div>
   );
 }

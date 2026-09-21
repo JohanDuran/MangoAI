@@ -22,8 +22,10 @@ import {
   updateMarkerRegion,
   deleteMarker,
   isValidRegion,
+  setMarkerAssets,
   type MarkerRegion,
 } from '../lib/markers.js';
+import { validAssetIds } from '../lib/assets.js';
 import { regenerateRegistry } from '../lib/registry.js';
 import { generateMarkerWithRetry } from '../lib/generateMarker.js';
 import { planMarkers } from '../lib/planner.js';
@@ -75,6 +77,20 @@ function hasAudioStream(file: string): Promise<boolean> {
     child.on('error', () => resolve(false));
     child.on('close', () => resolve(out.trim().length > 0));
   });
+}
+
+// Uses the GPU encoder when a tiny test encode actually works (an encoder can be listed by
+// ffmpeg without a usable GPU); MANGO_VIDEO_ENCODER=libx264 forces the CPU encoder.
+let videoEncoderArgs: Promise<string[]> | null = null;
+function videoEncoder(): Promise<string[]> {
+  videoEncoderArgs ??= new Promise((resolve) => {
+    const cpu = ['-c:v', 'libx264'];
+    if (process.env.MANGO_VIDEO_ENCODER === 'libx264') return resolve(cpu);
+    const child = spawn('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=0.2', '-c:v', 'h264_nvenc', '-f', 'null', '-']);
+    child.on('error', () => resolve(cpu));
+    child.on('close', (code) => resolve(code === 0 ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', '23', '-b:v', '0'] : cpu));
+  });
+  return videoEncoderArgs;
 }
 
 function probeVideoSize(file: string): Promise<{ width: number; height: number } | null> {
@@ -179,14 +195,16 @@ projectsRouter.put('/projects/:id/skills', (req, res) => {
 });
 
 projectsRouter.post('/projects/:id/markers', (req, res) => {
-  const { start, end, prompt, region } = req.body as { start?: number; end?: number; prompt?: string; region?: unknown };
+  const { start, end, prompt, region, assets } = req.body as { start?: number; end?: number; prompt?: string; region?: unknown; assets?: unknown };
   if (start === undefined || end === undefined || !prompt) {
     return res.status(400).json({ error: 'start, end, and prompt are required' });
   }
   if (region !== undefined && region !== null && !isValidRegion(region)) {
     return res.status(400).json({ error: 'region must be null or {x,y,width,height} normalized within 0-1 of the canvas' });
   }
-  res.status(201).json(addMarker(req.params.id, { start, end, prompt, region: (region ?? undefined) as MarkerRegion | undefined }));
+  res.status(201).json(
+    addMarker(req.params.id, { start, end, prompt, region: (region ?? undefined) as MarkerRegion | undefined, assets: validAssetIds(req.params.id, assets) })
+  );
 });
 
 projectsRouter.patch('/projects/:id/markers/:markerId', (req, res) => {
@@ -210,6 +228,16 @@ projectsRouter.delete('/projects/:id/markers/:markerId', (req, res) => {
   if (fs.existsSync(file)) fs.unlinkSync(file);
   regenerateRegistry(id);
   res.status(204).end();
+});
+
+// Replaces the set of library images attached to a marker. Takes effect the next time the
+// marker is generated; the marker's existing code is left as is.
+projectsRouter.put('/projects/:id/markers/:markerId/assets', (req, res) => {
+  const { id, markerId } = req.params;
+  if (!readMarkers(id).some((m) => m.marker_id === markerId)) return res.status(404).json({ error: 'not found' });
+  const assets = (req.body as { assets?: unknown }).assets;
+  if (!Array.isArray(assets)) return res.status(400).json({ error: 'assets must be a list of asset ids' });
+  res.json(setMarkerAssets(id, markerId, validAssetIds(id, assets)));
 });
 
 projectsRouter.patch('/projects/:id/markers/:markerId/region', (req, res) => {
@@ -251,6 +279,7 @@ interface ApplyMarkerInput {
   prompt?: string;
   region?: MarkerRegion | null;
   allowSkills?: string[];
+  assets?: string[];
 }
 
 projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
@@ -291,7 +320,7 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
         continue;
       }
 
-      const marker = addMarker(id, { start: start!, end: end!, prompt: prompt!, region: region ?? undefined });
+      const marker = addMarker(id, { start: start!, end: end!, prompt: prompt!, region: region ?? undefined, assets: validAssetIds(id, input.assets) });
       send('item-created', { index, markerId: marker.marker_id });
 
       const { width: compositionWidth, height: compositionHeight } = readCompositionConfig(id);
@@ -522,6 +551,8 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
 
     // Overlay clips are ProRes 4444 (alpha decodes natively; the VP8 alpha encoder was the
     // render bottleneck) and are scaled to the base video size.
+    const encoderArgs = await videoEncoder();
+    const mixStarted = Date.now();
     const mix = await new Promise<{ code: number | null; log: string }>((resolve) => {
       let log = '';
       const child = spawn(
@@ -533,7 +564,7 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
           '-filter_complex', [...videoParts, ...audioParts].join(';'),
           '-map', '[v]',
           ...audioMap,
-          '-c:v', 'libx264',
+          ...encoderArgs,
           '-c:a', 'aac',
           '-movflags', '+faststart',
           finalFile,
@@ -550,6 +581,8 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
       project: id,
       code: mix.code,
       segments: segments.length,
+      encoder: encoderArgs[1],
+      ms: Date.now() - mixStarted,
       baseHasAudio,
       overlayHasAudio: segmentHasAudio.some(Boolean),
       output: mix.code === 0 ? undefined : clip(mix.log.slice(-800), 800),

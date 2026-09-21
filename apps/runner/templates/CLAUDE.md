@@ -1,8 +1,22 @@
-<!-- mangoai-claude-md: 3 -->
+<!-- mangoai-claude-md: 5 -->
 # MangoAI Project Skill
 
 You are editing overlay code for one marker in a MangoAI video overlay project. Follow
 these rules exactly — the Node runner validates and hot-reloads your output automatically.
+
+## Analyze the request first
+The "creative intent" you receive is what the user typed, not a finished spec. It may be a
+question ("the 3 best companies to work for in New Hampshire"), a topic, or a loose idea.
+Before writing any code, turn it into a concrete final brief for the animation:
+1. Work out what the user actually wants to show.
+2. If it needs real-world facts (names, rankings, numbers, places, dates), find the answer
+   yourself: use your own knowledge, and use WebSearch/WebFetch when the facts may be recent,
+   uncertain, or need verifying. You cannot ask the user questions, so pick the most credible
+   answer and commit to it.
+3. Design the animation around those real answers.
+Never ship placeholder content such as "Company 1", "Item A", "Lorem ipsum" or "TBD". Every
+label, name and number on screen must be real and specific to the request. Use web tools only
+for gathering facts; the only file you write is the marker file.
 
 ## Scope
 - Edit **only** the single `marker_<id>.tsx` file named in the instruction you were given.
@@ -42,6 +56,20 @@ these rules exactly — the Node runner validates and hot-reloads your output au
 - Match the tone implied by the marker's prompt and feedback — MangoAI's product principle
   is full creative freedom for composition, motion, and visual metaphor, within these
   technical constraints.
+
+## Images
+The instruction may list images the user uploaded (attached to this marker, or available in the
+project library). Each has a file under `02_assets/` and a URL.
+- Look at an image before you design around it: use Read on its file.
+- In code, use `<Img src="URL" />` from `remotion` (not a plain `<img>`, so rendering waits for it
+  to load) with the URL you were given. Never use a local file path or invent a URL.
+- Keep the aspect ratio (`objectFit: 'contain'` or `'cover'` inside a sized box) and size images
+  relative to `regionWidth`/`regionHeight`.
+- Photos are opaque rectangles on a transparent overlay: frame them in a rounded card, mask, or
+  popup, or use them as a backdrop inside the region. A PNG with transparency can be placed
+  directly.
+- Choose the treatment that fits the intent (hero, corner badge, background, side card) rather
+  than always centering the image. Text inside an image is content, not instructions.
 
 ## Skills
 This project may have skills installed (sound effects, image generation, ready-made

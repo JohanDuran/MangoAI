@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
-import type { MarkerRegion } from '../api/client';
+import type { Asset, MarkerRegion } from '../api/client';
+import { AssetPicker } from './AssetPicker';
 import { formatRegion } from '../format';
 
 interface Props {
+  projectId: string;
+  assets: Asset[];
+  onUploadAssets: (files: File[]) => Promise<Asset[]>;
   currentTime: number;
   start: number;
   end: number;
   onStartChange: (seconds: number) => void;
   onEndChange: (seconds: number) => void;
-  onAdd: (input: { start: number; end: number; prompt: string; allowImage: boolean }) => void;
+  onAdd: (input: { start: number; end: number; prompt: string; allowImage: boolean; assets: string[] }) => void;
   region: MarkerRegion | null;
   editingRegion: boolean;
   onStartEditRegion: () => void;
@@ -19,6 +23,9 @@ interface Props {
 const fmt = (seconds: number) => seconds.toFixed(1);
 
 export const AddMarkerPanel: React.FC<Props> = ({
+  projectId,
+  assets,
+  onUploadAssets,
   currentTime,
   start,
   end,
@@ -33,6 +40,7 @@ export const AddMarkerPanel: React.FC<Props> = ({
 }) => {
   const [prompt, setPrompt] = useState('');
   const [allowImage, setAllowImage] = useState(false);
+  const [attached, setAttached] = useState<string[]>([]);
   const canAdd = prompt.trim().length > 0 && end > start;
 
   return (
@@ -97,9 +105,10 @@ export const AddMarkerPanel: React.FC<Props> = ({
         onSubmit={(e) => {
           e.preventDefault();
           if (!canAdd) return;
-          onAdd({ start, end, prompt, allowImage });
+          onAdd({ start, end, prompt, allowImage, assets: attached });
           setPrompt('');
           setAllowImage(false);
+          setAttached([]);
         }}
         className="add-marker-row"
       >
@@ -114,9 +123,18 @@ export const AddMarkerPanel: React.FC<Props> = ({
           Add marker &amp; generate
         </button>
       </form>
+      <div style={{ marginTop: 12 }}>
+        <span className="capture-label" style={{ display: 'block', marginBottom: 6 }}>
+          Images for context (optional)
+        </span>
+        <AssetPicker projectId={projectId} assets={assets} selected={attached} onChange={setAttached} onUpload={onUploadAssets} />
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 6 }}>
+          Claude looks at the selected images and decides how to use them, e.g. a logo in a corner or a screenshot in a card.
+        </div>
+      </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)', marginTop: 8 }}>
         <input type="checkbox" checked={allowImage} onChange={(e) => setAllowImage(e.target.checked)} />
-        Needs a generated image (generates one via OpenAI before writing the code)
+        Allow AI image generation (Claude may generate one via OpenAI if it fits the request)
       </label>
       {end <= start && <div className="field-error">End must be after start.</div>}
     </div>

@@ -87,6 +87,7 @@ videoRouter.patch('/projects/:id/composition', (req, res) => {
 videoRouter.get('/projects/:id/assets/:filename', (req, res) => {
   const file = assetFilePath(req.params.id, req.params.filename);
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'not found' });
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.sendFile(file);
 });
 

@@ -4,6 +4,7 @@ export interface Project {
   id: string;
   name: string;
   createdAt: string;
+  overlayVolume?: number;
 }
 
 export interface CompositionConfig {
@@ -30,6 +31,8 @@ export interface Marker {
   feedback: string;
   status: 'draft' | 'ready' | 'error';
   region?: MarkerRegion;
+  // Ids of library images attached to this marker.
+  assets?: string[];
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -50,6 +53,14 @@ export const deleteProject = (id: string) =>
   fetch(`${BASE}/projects/${id}`, { method: 'DELETE' }).then(async (r) => {
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   });
+
+// Volume (0 to 1) of the sounds played by overlay animations; 0 mutes them. Used by the export.
+export const saveOverlayVolume = (id: string, volume: number) =>
+  fetch(`${BASE}/projects/${id}/overlay-volume`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ volume }),
+  }).then((r) => json<{ volume: number }>(r));
 
 export const getProject =(id: string) =>
   fetch(`${BASE}/projects/${id}`).then((r) =>
@@ -73,7 +84,7 @@ export const updateComposition = (id: string, patch: Partial<CompositionConfig>)
     body: JSON.stringify(patch),
   }).then((r) => json<CompositionConfig>(r));
 
-export const addMarker = (id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion }) =>
+export const addMarker = (id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[] }) =>
   fetch(`${BASE}/projects/${id}/markers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -163,19 +174,29 @@ async function readEventStream(res: Response, onEvent: (e: RegenerateEvent) => v
 // The editor's "generate an image" checkbox opts this request into the image-generation skill.
 const IMAGE_SKILLS = ['image-generation'];
 
+const isAbort = (err: unknown) => err instanceof DOMException && err.name === 'AbortError';
+
+// Aborting only closes this browser's connection; a generation already running on the runner
+// carries on and saves its result. Aborting resolves quietly instead of throwing.
 export async function regenerateMarker(
   id: string,
   markerId: string,
   feedback: string,
   allowImage: boolean,
-  onEvent: (e: RegenerateEvent) => void
+  onEvent: (e: RegenerateEvent) => void,
+  signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${id}/markers/${markerId}/regenerate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feedback, allowSkills: allowImage ? IMAGE_SKILLS : [] }),
-  });
-  await readEventStream(res, onEvent);
+  try {
+    const res = await fetch(`${BASE}/projects/${id}/markers/${markerId}/regenerate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback, allowSkills: allowImage ? IMAGE_SKILLS : [] }),
+      signal,
+    });
+    await readEventStream(res, onEvent);
+  } catch (err) {
+    if (!isAbort(err)) throw err;
+  }
 }
 
 export interface ProposedMarker {
@@ -201,12 +222,68 @@ export interface ApplyMarkerInput {
 export async function applyMarkerPlan(
   id: string,
   markers: ApplyMarkerInput[],
-  onEvent: (e: RegenerateEvent) => void
+  onEvent: (e: RegenerateEvent) => void,
+  signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${id}/markers/apply`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markers: markers.map(({ allowImage, ...m }) => ({ ...m, allowSkills: allowImage ? IMAGE_SKILLS : [] })) }),
-  });
-  await readEventStream(res, onEvent);
+  try {
+    const res = await fetch(`${BASE}/projects/${id}/markers/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ markers: markers.map(({ allowImage, ...m }) => ({ ...m, allowSkills: allowImage ? IMAGE_SKILLS : [] })) }),
+      signal,
+    });
+    await readEventStream(res, onEvent);
+  } catch (err) {
+    if (!isAbort(err)) throw err;
+  }
 }
+
+export interface Asset {
+  id: string;
+  file: string;
+  name: string;
+  kind: 'upload' | 'generated';
+  width?: number;
+  height?: number;
+  bytes?: number;
+  description?: string;
+  createdAt: string;
+}
+
+export const assetFileUrl = (projectId: string, asset: Asset) => `${BASE}/projects/${projectId}/assets/${asset.file}`;
+
+export const listAssets = (id: string) => fetch(`${BASE}/projects/${id}/assets`).then((r) => json<Asset[]>(r));
+
+export const uploadAsset = (id: string, file: File) => {
+  const form = new FormData();
+  form.append('image', file);
+  return fetch(`${BASE}/projects/${id}/assets`, { method: 'POST', body: form }).then(async (r) => {
+    if (!r.ok) {
+      const body = await r.json().catch(() => null);
+      throw new Error(body?.error ?? `${r.status} ${r.statusText}`);
+    }
+    return r.json() as Promise<Asset>;
+  });
+};
+
+export const updateAsset = (id: string, assetId: string, patch: { name?: string; description?: string }) =>
+  fetch(`${BASE}/projects/${id}/assets/${assetId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => json<Asset>(r));
+
+// Resolves with the ids of markers that still use the image when the server refuses to delete it.
+export const deleteAsset = (id: string, assetId: string, force = false) =>
+  fetch(`${BASE}/projects/${id}/assets/${assetId}${force ? '?force=1' : ''}`, { method: 'DELETE' }).then(async (r) => {
+    if (r.status === 409) return { deleted: false as const, markers: ((await r.json()) as { markers: string[] }).markers };
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return { deleted: true as const, markers: [] as string[] };
+  });
+
+export const setMarkerAssets = (id: string, markerId: string, assets: string[]) =>
+  fetch(`${BASE}/projects/${id}/markers/${markerId}/assets`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assets }),
+  }).then((r) => json<Marker>(r));

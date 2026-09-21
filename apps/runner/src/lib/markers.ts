@@ -20,6 +20,8 @@ export interface Marker {
   feedback: string;
   status: 'draft' | 'ready' | 'error';
   region?: MarkerRegion;
+  // Ids of library images (see assets.ts) the user attached to this marker.
+  assets?: string[];
 }
 
 // Normalized 0-1 fractions of the canvas — null resets a marker to full screen.
@@ -93,6 +95,16 @@ export function updateMarkerRegion(id: string, markerId: string, region: MarkerR
   if (!marker) throw new Error(`Marker ${markerId} not found in project ${id}`);
   if (region) marker.region = region;
   else delete marker.region;
+  writeMarkers(id, markers);
+  return marker;
+}
+
+export function setMarkerAssets(id: string, markerId: string, assets: string[]): Marker {
+  const markers = readMarkers(id);
+  const marker = markers.find((m) => m.marker_id === markerId);
+  if (!marker) throw new Error(`Marker ${markerId} not found in project ${id}`);
+  if (assets.length > 0) marker.assets = assets;
+  else delete marker.assets;
   writeMarkers(id, markers);
   return marker;
 }

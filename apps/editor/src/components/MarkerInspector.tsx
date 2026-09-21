@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getMarkerCode, type Marker, type MarkerRegion, type TranscriptSegment } from '../api/client';
+import { getMarkerCode, type Asset, type Marker, type MarkerRegion, type TranscriptSegment } from '../api/client';
+import { AssetPicker } from './AssetPicker';
 import type { MarkerRunState } from '../App';
 import { displayStatus } from '../status';
 import { StatusBadge } from './StatusBadge';
@@ -7,6 +8,9 @@ import { formatRegion } from '../format';
 
 interface Props {
   projectId: string;
+  assets: Asset[];
+  onUploadAssets: (files: File[]) => Promise<Asset[]>;
+  onSetAssets: (markerId: string, ids: string[]) => Promise<void>;
   marker: Marker | null;
   run?: MarkerRunState;
   transcript: TranscriptSegment[];
@@ -22,6 +26,9 @@ interface Props {
 
 export const MarkerInspector: React.FC<Props> = ({
   projectId,
+  assets,
+  onUploadAssets,
+  onSetAssets,
   marker,
   run,
   transcript,
@@ -163,6 +170,21 @@ export const MarkerInspector: React.FC<Props> = ({
         </div>
       )}
 
+      <label className="field-label">Images for context</label>
+      <div style={{ marginBottom: 14 }}>
+        <AssetPicker
+          projectId={projectId}
+          assets={assets}
+          selected={marker.assets ?? []}
+          onChange={(ids) => onSetAssets(marker.marker_id, ids).catch(() => {})}
+          onUpload={onUploadAssets}
+          disabled={generating}
+        />
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 6 }}>
+          Changes to the attached images apply the next time you {marker.status === 'draft' ? 'generate' : 'regenerate'}.
+        </div>
+      </div>
+
       <label className="field-label">{marker.status === 'draft' ? 'Prompt' : 'Feedback for the next attempt'}</label>
       <textarea
         className="field-textarea"
@@ -172,7 +194,7 @@ export const MarkerInspector: React.FC<Props> = ({
       />
       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)', margin: '8px 0' }}>
         <input type="checkbox" checked={allowImage} onChange={(e) => setAllowImage(e.target.checked)} />
-        Needs a generated image (generates one via OpenAI before writing the code)
+        Allow AI image generation (Claude may generate one via OpenAI if it fits the request)
       </label>
       <button
         onClick={() => onRegenerate(marker.marker_id, feedback, allowImage)}

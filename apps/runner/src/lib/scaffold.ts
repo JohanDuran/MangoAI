@@ -13,6 +13,8 @@ export interface Project {
   // Skills enabled for this project. Absent on projects created before skills existed, which
   // get the built-in defaults.
   skills?: string[];
+  // Volume of sounds played by the overlay animations, 0 (muted) to 1. Absent means 1.
+  overlayVolume?: number;
 }
 
 const slugify = (name: string) =>
@@ -64,7 +66,7 @@ export function readProject(id: string): Project | null {
   return JSON.parse(fs.readFileSync(file, 'utf-8'));
 }
 
-export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion }): Marker {
+export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[] }): Marker {
   const markers = readMarkers(id);
   // Based on the highest existing numeric suffix, not the array length — deleting a
   // marker must not free up its id for reuse (it may still be referenced in
@@ -81,6 +83,7 @@ export function addMarker(id: string, input: { start: number; end: number; promp
     feedback: '',
     status: 'draft',
     ...(input.region ? { region: input.region } : {}),
+    ...(input.assets && input.assets.length > 0 ? { assets: input.assets } : {}),
   };
   markers.push(marker);
   writeMarkers(id, markers);
@@ -105,6 +108,16 @@ export function setProjectSkills(id: string, skills: string[]): Project {
   const next: Project = { ...project, skills };
   fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify(next, null, 2));
   return next;
+}
+
+export function overlayVolume(id: string): number {
+  return readProject(id)?.overlayVolume ?? 1;
+}
+
+export function setOverlayVolume(id: string, volume: number): void {
+  const project = readProject(id);
+  if (!project) throw new Error(`Project ${id} not found`);
+  fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify({ ...project, overlayVolume: volume }, null, 2));
 }
 
 const CLAUDE_MD_VERSION = /^<!-- mangoai-claude-md: \d+ -->/;
