@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { projectDir } from './paths.js';
 import { findRawVideo } from './video.js';
+import { log } from './log.js';
 
 export interface TranscriptSegment {
   start: number;
@@ -55,10 +56,13 @@ export async function transcribeProject(id: string): Promise<TranscriptSegment[]
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set on the server');
 
   const audioPath = path.join(projectDir(id), '01_transcript', 'audio.mp3');
+  const started = Date.now();
+  log('info', 'transcribe.start', { project: id });
   await extractAudio(videoPath, audioPath);
 
   try {
     const audioSize = fs.statSync(audioPath).size;
+    log('info', 'transcribe.audio', { project: id, audioMB: Math.round((audioSize / 1024 / 1024) * 10) / 10 });
     if (audioSize > MAX_WHISPER_BYTES) {
       throw new Error(
         `Audio track is ${(audioSize / 1024 / 1024).toFixed(1)}MB even after compression — Whisper's limit is 25MB. Trim the video to a shorter clip and try again.`
@@ -89,6 +93,7 @@ export async function transcribeProject(id: string): Promise<TranscriptSegment[]
     }));
 
     fs.writeFileSync(transcriptFile(id), JSON.stringify({ segments }, null, 2));
+    log('info', 'transcribe.done', { project: id, segments: segments.length, ms: Date.now() - started });
     return segments;
   } finally {
     fs.unlinkSync(audioPath);

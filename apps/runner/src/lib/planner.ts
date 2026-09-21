@@ -3,6 +3,7 @@ import { readMarkers, isValidRegion, type MarkerRegion } from './markers.js';
 import { readTranscript, type TranscriptSegment } from './transcript.js';
 import { readCompositionConfig } from './composition.js';
 import { runClaudeHeadlessCapturingText, withProjectLock } from './claude.js';
+import { log } from './log.js';
 
 export interface ProposedMarker {
   start: number;
@@ -106,6 +107,7 @@ export async function planMarkers(id: string): Promise<PlanMarkersResult> {
       cwd: projectDir(id),
       prompt,
       tools: [],
+      logContext: { project: id, purpose: 'plan-markers' },
       onEvent: () => {},
     })
   );
@@ -128,5 +130,6 @@ export async function planMarkers(id: string): Promise<PlanMarkersResult> {
     }
   }
 
+  log('info', 'plan.done', { project: id, proposed: proposals.length, dropped: droppedCount });
   return { proposals, droppedCount };
 }

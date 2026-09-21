@@ -11,6 +11,7 @@ interface Props {
   runState: Record<string, MarkerRunState>;
   pendingStart: number;
   pendingEnd: number;
+  pendingVisible: boolean;
   isPlaying: boolean;
   onPlayPause: () => void;
   onStop: () => void;
@@ -40,6 +41,7 @@ export const Timeline: React.FC<Props> = ({
   runState,
   pendingStart,
   pendingEnd,
+  pendingVisible,
   isPlaying,
   onPlayPause,
   onStop,
@@ -172,7 +174,7 @@ export const Timeline: React.FC<Props> = ({
   // still needs to render up until the mouseup that actually clears the selection.
   const pendingRect =
     liveDrag ??
-    (!selectedId && pendingEnd > pendingStart
+    (pendingVisible && !selectedId && pendingEnd > pendingStart
       ? { left: (pendingStart / duration) * 100, width: ((pendingEnd - pendingStart) / duration) * 100 }
       : null);
 

@@ -38,6 +38,9 @@ const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const ENV_RE = /^[A-Z][A-Z0-9_]*$/;
 const TOOL_RE = /^[A-Za-z0-9_]+$/;
 const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
+// Lets Claude research the facts a prompt asks about. Pre-approved (headless runs cannot
+// prompt), which is safe because neither tool can touch local files.
+const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 const MANAGED_MARKER = '.mangoai-managed';
 
 export const runnerUrl = () => `http://localhost:${process.env.PORT || 5175}`;
@@ -219,9 +222,9 @@ export function prepareClaudeCall(opts: { projectId: string; enabled: string[]; 
 
   installSkills(opts.projectId, active);
 
-  const tools = [...BASE_TOOLS];
+  const tools = [...BASE_TOOLS, ...WEB_TOOLS];
   if (active.length > 0) tools.push('Skill');
-  const allowedTools: string[] = [];
+  const allowedTools: string[] = [...WEB_TOOLS];
 
   const servers: Record<string, unknown> = {};
   for (const skill of active) {

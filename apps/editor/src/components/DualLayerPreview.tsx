@@ -18,7 +18,7 @@ interface Props {
   regionDraft?: MarkerRegion | null;
   onRegionDraftChange?: (region: MarkerRegion) => void;
   onRegionCommit?: () => void;
-  overlaySoundMuted?: boolean;
+  overlayVolume?: number;
 }
 
 export interface DualLayerPreviewHandle {
@@ -44,7 +44,7 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     regionDraft,
     onRegionDraftChange,
     onRegionCommit,
-    overlaySoundMuted = false,
+    overlayVolume = 1,
   },
   ref
 ) {
@@ -58,7 +58,10 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
   const [manualWidthPx, setManualWidthPx] = useState<number | null>(null);
   const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
   const [playbackRate, setPlaybackRate] = useState(1);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // The last <video> element that existed. By the time an unmount cleanup runs, React has already
+  // detached videoRef, so the cleanup below needs its own reference.
+  const lastVideoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<PlayerRef>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -173,12 +176,25 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     if (video) onTimeUpdate?.(video.currentTime);
   };
 
+  // On unmount (the user switched project) stop the video and drop its source, so the browser stops
+  // buffering and decoding media nobody is watching. Deliberately unmount-only: running this when
+  // videoUrl changes would blank the new video right after React sets it.
+  useEffect(
+    () => () => {
+      const video = lastVideoRef.current;
+      if (!video) return;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    },
+    []
+  );
+
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
-    if (overlaySoundMuted) player.mute();
-    else player.unmute();
-  }, [overlaySoundMuted, Overlay]);
+    player.setVolume(overlayVolume);
+  }, [overlayVolume, Overlay]);
 
   const ratio = compositionWidth / compositionHeight;
 
@@ -232,7 +248,10 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
         <div className="stage" style={{ aspectRatio: `${compositionWidth} / ${compositionHeight}` }}>
           {videoUrl ? (
             <video
-              ref={videoRef}
+              ref={(el) => {
+                videoRef.current = el;
+                if (el) lastVideoRef.current = el;
+              }}
               src={videoUrl}
               controls
               onLoadedMetadata={handleLoadedMetadata}
