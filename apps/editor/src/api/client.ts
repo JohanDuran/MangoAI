@@ -250,10 +250,16 @@ export interface Asset {
   height?: number;
   bytes?: number;
   description?: string;
+  // Filename of a small static preview; absent on assets uploaded before thumbnails existed.
+  thumb?: string;
   createdAt: string;
 }
 
 export const assetFileUrl = (projectId: string, asset: Asset) => `${BASE}/projects/${projectId}/assets/${asset.file}`;
+
+// The small preview used in grids (falls back to the full file for assets with no thumbnail).
+export const assetThumbUrl = (projectId: string, asset: Asset) =>
+  asset.thumb ? `${BASE}/projects/${projectId}/assets/${asset.thumb}` : assetFileUrl(projectId, asset);
 
 export const listAssets = (id: string) => fetch(`${BASE}/projects/${id}/assets`).then((r) => json<Asset[]>(r));
 

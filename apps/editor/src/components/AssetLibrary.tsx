@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { assetFileUrl, deleteAsset, updateAsset, type Asset } from '../api/client';
+import { assetThumbUrl, deleteAsset, updateAsset, type Asset } from '../api/client';
 
 interface Props {
   projectId: string;
@@ -48,7 +48,7 @@ const AssetCard: React.FC<{
 
   return (
     <div className="asset-card">
-      <img src={assetFileUrl(projectId, asset)} alt={asset.name} />
+      <img src={assetThumbUrl(projectId, asset)} alt={asset.name} />
       <div className="asset-card-body">
         <input
           className="field-input"

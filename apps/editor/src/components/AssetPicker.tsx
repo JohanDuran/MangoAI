@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { assetFileUrl, type Asset } from '../api/client';
+import { assetThumbUrl, type Asset } from '../api/client';
 
 interface Props {
   projectId: string;
@@ -54,7 +54,7 @@ export const AssetPicker: React.FC<Props> = ({ projectId, assets, selected, onCh
               aria-pressed={on}
               onClick={() => toggle(a.id)}
             >
-              <img src={assetFileUrl(projectId, a)} alt={a.name} />
+              <img src={assetThumbUrl(projectId, a)} alt={a.name} />
               {on && <span className="asset-thumb-check">✓</span>}
             </button>
           );
