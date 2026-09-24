@@ -302,6 +302,8 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
               }}
               src={videoUrl ?? ''}
               controls
+              controlsList="nofullscreen"
+              disablePictureInPicture
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={(e) => {
                 startPlayer(e);

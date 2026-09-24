@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { Marker } from '../api/client';
 import type { MarkerRunState } from '../App';
 import { displayStatus } from '../status';
@@ -33,6 +33,35 @@ const DRAG_THRESHOLD_PX = 4;
 const MIN_MARKER_DURATION = 0.2;
 type DragMode = 'move' | 'trim-start' | 'trim-end';
 
+// Markers' time ranges are allowed to overlap (Remotion just stacks them), but a single
+// row can't show two overlapping chips without one covering the other's click target.
+// Lanes solve that by stacking overlapping markers into separate rows, greedy
+// interval-partitioning style: earliest-starting marker claims the first lane whose
+// previous occupant has already ended, else it gets a brand new lane.
+const CHIP_HEIGHT = 32;
+const LANE_GAP = 8;
+const TRACK_PAD = 8;
+
+const assignLanes = (markers: Marker[]): { laneOf: Map<string, number>; laneCount: number } => {
+  const sorted = [...markers].sort((a, b) => a.start - b.start);
+  const laneEnds: number[] = [];
+  const laneOf = new Map<string, number>();
+  for (const m of sorted) {
+    let lane = laneEnds.findIndex((end) => end <= m.start);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(m.end);
+    } else {
+      laneEnds[lane] = m.end;
+    }
+    laneOf.set(m.marker_id, lane);
+  }
+  // Always leave one lane's worth of empty row beyond what's occupied, so there's always
+  // blank track to drag out a new marker on — even one whose time range fully overlaps an
+  // existing marker — without that marker's chip capturing the click first.
+  return { laneOf, laneCount: laneEnds.length + 1 };
+};
+
 export const Timeline: React.FC<Props> = ({
   markers,
   durationSeconds,
@@ -62,6 +91,12 @@ export const Timeline: React.FC<Props> = ({
   // Live start/end for whichever existing marker is currently being moved or trimmed, so
   // the chip follows the cursor before the PATCH round-trip confirms the new values.
   const [movingMarker, setMovingMarker] = useState<{ id: string; start: number; end: number } | null>(null);
+
+  // Lanes are computed from each marker's saved start/end, not the live-dragged position —
+  // recomputing mid-drag would make chips hop rows while the user is still moving one.
+  // Whatever lane a marker settles into after a move/trim is picked up on the next render.
+  const { laneOf, laneCount } = useMemo(() => assignLanes(markers), [markers]);
+  const trackHeight = TRACK_PAD * 2 + laneCount * CHIP_HEIGHT + (laneCount - 1) * LANE_GAP;
 
   const beginMarkerDrag = (e: React.MouseEvent, marker: Marker, mode: DragMode) => {
     e.stopPropagation();
@@ -205,7 +240,7 @@ export const Timeline: React.FC<Props> = ({
         <span>0:00</span>
         <span>{fmtTime(duration)}</span>
       </div>
-      <div className="timeline-track" ref={trackRef} onMouseDown={handleMouseDown}>
+      <div className="timeline-track" ref={trackRef} onMouseDown={handleMouseDown} style={{ height: trackHeight }}>
         <div className="timeline-rail" />
         {markers.map((m) => {
           const isMoving = movingMarker?.id === m.marker_id;
@@ -214,11 +249,13 @@ export const Timeline: React.FC<Props> = ({
           const left = (effStart / duration) * 100;
           const width = Math.max(((effEnd - effStart) / duration) * 100, 1.2);
           const status = displayStatus(m, runState[m.marker_id]);
+          const lane = laneOf.get(m.marker_id) ?? 0;
+          const top = TRACK_PAD + lane * (CHIP_HEIGHT + LANE_GAP);
           return (
             <div
               key={m.marker_id}
               className={`timeline-chip status-${status}${m.marker_id === selectedId ? ' selected' : ''}${isMoving ? ' dragging' : ''}`}
-              style={{ left: `${left}%`, width: `${width}%` }}
+              style={{ left: `${left}%`, width: `${width}%`, top, height: CHIP_HEIGHT }}
               onClick={(e) => {
                 e.stopPropagation();
                 onSelect(m.marker_id);
@@ -256,7 +293,8 @@ export const Timeline: React.FC<Props> = ({
       <div className="panel-hint" style={{ marginTop: 6 }}>
         Click to seek, drag empty track to create a marker, drag an existing marker's body
         to move it and its edges to trim it, or double-click a marker to move its animation
-        area.
+        area. Markers can overlap in time — an empty row is always left below existing
+        markers so you can drag out a new one even where another already covers that time.
       </div>
     </div>
   );

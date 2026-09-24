@@ -357,3 +357,34 @@ export const saveAutoDescribe = (id: string, autoDescribe: boolean) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ autoDescribe }),
   }).then((r) => json<{ autoDescribe: boolean }>(r));
+
+export type CheckState = 'ok' | 'warn' | 'error';
+
+export interface StatusCheck {
+  id: string;
+  label: string;
+  state: CheckState;
+  summary: string;
+  details?: string[];
+  ms?: number;
+}
+
+export interface StatusSkill {
+  name: string;
+  origin: 'builtin' | 'external';
+  description: string;
+  optIn: boolean;
+  hasTools: boolean;
+  env: string[];
+  missingEnv: string[];
+}
+
+export interface StatusReport {
+  checkedAt: string;
+  overall: CheckState;
+  checks: StatusCheck[];
+  skills: StatusSkill[];
+  skillProblems: { folder: string; error: string }[];
+}
+
+export const getStatus = () => fetch(`${BASE}/status`).then((r) => json<StatusReport>(r));

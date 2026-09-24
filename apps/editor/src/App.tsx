@@ -44,6 +44,7 @@ import { MarkerPlanReview, type ReviewItem } from './components/MarkerPlanReview
 import { PlanMarkersPanel } from './components/PlanMarkersPanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { CreateProjectModal } from './components/CreateProjectModal';
+import { StatusButton, StatusDashboard, useStatus } from './components/StatusDashboard';
 
 const DEFAULT_COMPOSITION: CompositionConfig = { fps: 30, width: 1920, height: 1080, durationInFrames: 1800 };
 const DEFAULT_BASE_LAYER: BaseLayer = { type: 'video' };
@@ -90,6 +91,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const status = useStatus();
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [composition, setComposition] = useState<CompositionConfig>(DEFAULT_COMPOSITION);
   const [baseLayer, setBaseLayer] = useState<BaseLayer>(DEFAULT_BASE_LAYER);
@@ -116,6 +119,11 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const savedVolumeRef = useRef<{ projectId: string; volume: number } | null>(null);
   const [editingRegionMarkerId, setEditingRegionMarkerId] = useState<string | null>(null);
   const [regionDraft, setRegionDraft] = useState<MarkerRegion | null>(null);
+  // Markers whose animation area was resized (not just moved) after it was already
+  // generated — the existing code was designed for the old regionWidth/regionHeight and
+  // may no longer fit, so the inspector nudges the user to regenerate. Cleared once a
+  // regenerate attempt runs for that marker.
+  const [staleRegionMarkers, setStaleRegionMarkers] = useState<Set<string>>(new Set());
   // The area for the marker currently being composed in AddMarkerPanel, before it exists
   // server-side. null means "full screen" (not yet customized).
   const [newMarkerRegion, setNewMarkerRegion] = useState<MarkerRegion | null>(null);
@@ -317,6 +325,12 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const triggerRegenerate = async (markerId: string, feedback: string, allowImage: boolean) => {
     if (!projectId) return;
     markEdited();
+    setStaleRegionMarkers((prev) => {
+      if (!prev.has(markerId)) return prev;
+      const next = new Set(prev);
+      next.delete(markerId);
+      return next;
+    });
     setRunState((prev) => ({ ...prev, [markerId]: { phase: 'generating', log: [] } }));
     try {
       await regenerateMarker(projectId, markerId, feedback, allowImage, (e) => {
@@ -572,6 +586,12 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       const { [markerId]: _removed, ...rest } = prev;
       return rest;
     });
+    setStaleRegionMarkers((prev) => {
+      if (!prev.has(markerId)) return prev;
+      const next = new Set(prev);
+      next.delete(markerId);
+      return next;
+    });
     refreshProject(projectId);
     setReloadToken((t) => t + 1);
   };
@@ -613,6 +633,15 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const handleSaveRegion = async () => {
     if (!projectId || !editingRegionMarkerId || !regionDraft) return;
     markEdited();
+    const marker = markers.find((m) => m.marker_id === editingRegionMarkerId);
+    const before = marker?.region ?? FULL_SCREEN_REGION;
+    // Only a size change (not a plain move) can break a layout designed for the old
+    // regionWidth/regionHeight, so a reposition alone doesn't need to flag anything.
+    const resized =
+      Math.abs(before.width - regionDraft.width) > 0.002 || Math.abs(before.height - regionDraft.height) > 0.002;
+    if (resized && marker?.status === 'ready') {
+      setStaleRegionMarkers((prev) => new Set(prev).add(editingRegionMarkerId));
+    }
     await updateMarkerRegion(projectId, editingRegionMarkerId, isFullScreenRegion(regionDraft) ? null : regionDraft);
     setEditingRegionMarkerId(null);
     setRegionDraft(null);
@@ -765,6 +794,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           New project
         </button>
         <div className="topbar-spacer" />
+        <StatusButton state={status.state} onClick={() => setStatusOpen(true)} />
         {projectId && (
           <>
             {baseLayer.type === 'video' && (
@@ -897,6 +927,15 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       </div>
       {createModalOpen && (
         <CreateProjectModal onClose={() => setCreateModalOpen(false)} onCreate={handleCreateProject} />
+      )}
+      {statusOpen && (
+        <StatusDashboard
+          report={status.report}
+          error={status.error}
+          loading={status.loading}
+          onRefresh={status.refresh}
+          onClose={() => setStatusOpen(false)}
+        />
       )}
       {transcribeError && (
         <div style={{ padding: '0 24px', fontSize: 13, color: 'var(--error)' }}>{transcribeError}</div>
@@ -1054,6 +1093,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               }
               onRegenerate={triggerRegenerate}
               onDelete={handleDeleteMarker}
+              regionStale={staleRegionMarkers.has(selectedMarker.marker_id)}
               regionEditing={editingRegionMarkerId === selectedMarker?.marker_id}
               regionDraft={editingRegionMarkerId === selectedMarker?.marker_id ? regionDraft : null}
               onStartEditRegion={handleStartEditRegion}

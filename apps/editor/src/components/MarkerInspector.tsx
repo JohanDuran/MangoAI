@@ -16,6 +16,7 @@ interface Props {
   transcript: TranscriptSegment[];
   onRegenerate: (markerId: string, feedback: string, allowImage: boolean) => void;
   onDelete: (markerId: string) => void;
+  regionStale: boolean;
   regionEditing: boolean;
   regionDraft: MarkerRegion | null;
   onStartEditRegion: (markerId: string) => void;
@@ -34,6 +35,7 @@ export const MarkerInspector: React.FC<Props> = ({
   transcript,
   onRegenerate,
   onDelete,
+  regionStale,
   regionEditing,
   regionDraft,
   onStartEditRegion,
@@ -164,7 +166,25 @@ export const MarkerInspector: React.FC<Props> = ({
           </button>
         </div>
       )}
-      {!regionEditing && marker.region && marker.status === 'ready' && (
+      {!regionEditing && regionStale && (
+        <div
+          className="status-line status-error"
+          style={{ marginTop: -8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}
+        >
+          <span style={{ flex: '1 1 auto' }}>
+            The area was resized — the current animation was designed for the old size and may no longer fit.
+          </span>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={generating}
+            onClick={() => onRegenerate(marker.marker_id, feedback, allowImage)}
+          >
+            Regenerate to fit
+          </button>
+        </div>
+      )}
+      {!regionEditing && !regionStale && marker.region && marker.status === 'ready' && (
         <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: -8, marginBottom: 14 }}>
           Tip: click Regenerate below so the animation redesigns itself to fit this area.
         </div>

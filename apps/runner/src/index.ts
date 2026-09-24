@@ -5,6 +5,7 @@ import { projectsRouter } from './routes/projects.js';
 import { videoRouter } from './routes/video.js';
 import { assetsRouter } from './routes/assets.js';
 import { discoverSkills } from './lib/skills.js';
+import { collectStatus } from './lib/status.js';
 import { log, LOG_FILE } from './lib/log.js';
 
 const app = express();
@@ -35,6 +36,13 @@ app.use((req, res, next) => {
 });
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/status', async (_req, res, next) => {
+  try {
+    res.json(await collectStatus());
+  } catch (err) {
+    next(err);
+  }
+});
 app.use(videoRouter);
 app.use(assetsRouter);
 app.use(projectsRouter);
