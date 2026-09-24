@@ -1,11 +1,12 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { RegionOverlay } from './RegionOverlay';
-import type { MarkerRegion } from '../api/client';
+import type { BaseLayer, MarkerRegion } from '../api/client';
 
 interface Props {
   projectId: string;
   videoUrl: string | null;
+  baseLayer: BaseLayer;
   reloadToken: number;
   fps: number;
   compositionWidth: number;
@@ -32,6 +33,7 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
   {
     projectId,
     videoUrl,
+    baseLayer,
     reloadToken,
     fps,
     compositionWidth,
@@ -66,20 +68,34 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
   const wrapperRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
 
+  // With no video, there's nothing to be a master clock — the Remotion Player drives itself.
+  const hasVideo = videoUrl !== null && baseLayer.type === 'video';
+
   useImperativeHandle(ref, () => ({
     seekTo: (seconds: number) => {
-      if (videoRef.current) videoRef.current.currentTime = seconds;
+      if (hasVideo) {
+        if (videoRef.current) videoRef.current.currentTime = seconds;
+      } else {
+        playerRef.current?.seekTo(Math.round(seconds * fps));
+      }
     },
     play: () => {
-      videoRef.current?.play();
+      if (hasVideo) videoRef.current?.play();
+      else playerRef.current?.play();
     },
     pause: () => {
-      videoRef.current?.pause();
+      if (hasVideo) videoRef.current?.pause();
+      else playerRef.current?.pause();
     },
     stop: () => {
-      if (videoRef.current) {
-        videoRef.current.pause();
-        videoRef.current.currentTime = 0;
+      if (hasVideo) {
+        if (videoRef.current) {
+          videoRef.current.pause();
+          videoRef.current.currentTime = 0;
+        }
+      } else {
+        playerRef.current?.pause();
+        playerRef.current?.seekTo(0);
       }
     },
   }));
@@ -176,6 +192,28 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     if (video) onTimeUpdate?.(video.currentTime);
   };
 
+  // With no video, the Remotion Player is its own master clock — wire its events straight to the
+  // same callbacks the <video> element drives in the normal path.
+  useEffect(() => {
+    if (hasVideo || !Overlay) return;
+    const player = playerRef.current;
+    if (!player) return;
+    const handleFrameUpdate = (e: { detail: { frame: number } }) => onTimeUpdate?.(e.detail.frame / fps);
+    const handlePlay = () => onPlayingChange?.(true);
+    const handlePause = () => onPlayingChange?.(false);
+    const handleEnded = () => onPlayingChange?.(false);
+    player.addEventListener('frameupdate', handleFrameUpdate);
+    player.addEventListener('play', handlePlay);
+    player.addEventListener('pause', handlePause);
+    player.addEventListener('ended', handleEnded);
+    return () => {
+      player.removeEventListener('frameupdate', handleFrameUpdate);
+      player.removeEventListener('play', handlePlay);
+      player.removeEventListener('pause', handlePause);
+      player.removeEventListener('ended', handleEnded);
+    };
+  }, [hasVideo, Overlay, fps, onTimeUpdate, onPlayingChange]);
+
   // On unmount (the user switched project) stop the video and drop its source, so the browser stops
   // buffering and decoding media nobody is watching. Deliberately unmount-only: running this when
   // videoUrl changes would blank the new video right after React sets it.
@@ -242,17 +280,27 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     setManualWidthPx(null);
   };
 
+  // Solid/gradient stand in for the <video> element; transparent needs nothing extra — the
+  // stage's own checkerboard background already shows through.
+  const backgroundStyle: React.CSSProperties | null =
+    baseLayer.type === 'color'
+      ? { background: baseLayer.color }
+      : baseLayer.type === 'gradient'
+      ? { background: `linear-gradient(${baseLayer.angle}deg, ${baseLayer.from}, ${baseLayer.to})` }
+      : null;
+
   return (
     <div className="stage-frame" ref={frameRef}>
       <div ref={wrapperRef} style={{ width: displayWidthPx ? `${displayWidthPx}px` : '100%' }}>
         <div className="stage" style={{ aspectRatio: `${compositionWidth} / ${compositionHeight}` }}>
-          {videoUrl ? (
+          {!hasVideo && backgroundStyle && <div className="stage-background" style={backgroundStyle} />}
+          {hasVideo ? (
             <video
               ref={(el) => {
                 videoRef.current = el;
                 if (el) lastVideoRef.current = el;
               }}
-              src={videoUrl}
+              src={videoUrl ?? ''}
               controls
               onLoadedMetadata={handleLoadedMetadata}
               onPlay={(e) => {
@@ -275,9 +323,9 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
               onSeeked={sync}
               onTimeUpdate={sync}
             />
-          ) : (
+          ) : baseLayer.type === 'video' ? (
             <div className="stage-empty">Upload a video above to start previewing overlays here.</div>
-          )}
+          ) : null}
           {Overlay && (
             <div className="stage-overlay-layer">
               <Player

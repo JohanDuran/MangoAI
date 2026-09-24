@@ -29,6 +29,8 @@ import {
   type MarkerRegion,
   type CompositionConfig,
   type TranscriptSegment,
+  type BaseLayer,
+  type CreateProjectOptions,
 } from './api/client';
 import { DualLayerPreview, type DualLayerPreviewHandle } from './components/DualLayerPreview';
 import { Timeline } from './components/Timeline';
@@ -36,8 +38,10 @@ import { AddMarkerPanel } from './components/AddMarkerPanel';
 import { MarkerInspector } from './components/MarkerInspector';
 import { AssetLibrary } from './components/AssetLibrary';
 import { MarkerPlanReview, type ReviewItem } from './components/MarkerPlanReview';
+import { CreateProjectModal } from './components/CreateProjectModal';
 
 const DEFAULT_COMPOSITION: CompositionConfig = { fps: 30, width: 1920, height: 1080, durationInFrames: 1800 };
+const DEFAULT_BASE_LAYER: BaseLayer = { type: 'video' };
 const FULL_SCREEN_REGION: MarkerRegion = { x: 0, y: 0, width: 1, height: 1 };
 
 export interface MarkerRunState {
@@ -80,14 +84,16 @@ interface WorkspaceProps {
 function Workspace({ projectId, projects, setProjects, onProjectChange }: WorkspaceProps) {
   const [markers, setMarkers] = useState<Marker[]>([]);
   const [selectedMarkerId, setSelectedMarkerId] = useState<string | null>(null);
-  const [newName, setNewName] = useState('');
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [composition, setComposition] = useState<CompositionConfig>(DEFAULT_COMPOSITION);
+  const [baseLayer, setBaseLayer] = useState<BaseLayer>(DEFAULT_BASE_LAYER);
   const [uploading, setUploading] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportSucceeded, setExportSucceeded] = useState(false);
+  const [splitByMarker, setSplitByMarker] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [runState, setRunState] = useState<Record<string, MarkerRunState>>({});
   const [pendingStart, setPendingStart] = useState(0);
@@ -228,11 +234,12 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       refreshProject(projectId);
       refreshAssets(projectId);
       getTranscript(projectId).then(({ segments }) => setTranscript(segments));
-      getProject(projectId).then(({ project }) => {
+      getProject(projectId).then(({ project, baseLayer }) => {
         const volume = project.overlayVolume ?? 1;
         savedVolumeRef.current = { projectId, volume };
         setOverlayVolume(volume);
         setAutoDescribe(!!project.autoDescribeImages);
+        setBaseLayer(baseLayer);
       });
       setNewMarkerPanelVisible(true);
     } else {
@@ -240,6 +247,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       setMarkers([]);
       setVideoUrl(null);
       setComposition(DEFAULT_COMPOSITION);
+      setBaseLayer(DEFAULT_BASE_LAYER);
       setRunState({});
       setTranscript([]);
       setAssets([]);
@@ -425,13 +433,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     }
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newName) return;
-    const project = await createProject(newName);
+  const handleCreateProject = async (name: string, opts: CreateProjectOptions) => {
+    const project = await createProject(name, opts);
     setProjects((prev) => [...prev, project]);
     onProjectChange(project.id);
-    setNewName('');
   };
 
   const handleDeleteProject = async () => {
@@ -620,13 +625,19 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const handleExport = async (includeVideo: boolean) => {
     if (!projectId) return;
+    const perMarker = !includeVideo && splitByMarker;
     setExporting(true);
     setExportSucceeded(false);
-    setExportStatus(includeVideo ? 'Exporting MP4 with video…' : 'Exporting overlay…');
+    setExportStatus(includeVideo ? 'Exporting MP4 with video…' : perMarker ? 'Exporting one clip per marker…' : 'Exporting overlay…');
     try {
-      const result = await exportProject(projectId, includeVideo);
+      const result = await exportProject(projectId, includeVideo, perMarker);
       if (result.success) {
-        setExportStatus(`Export complete — saved to ${result.output}`);
+        if (result.outputs) {
+          const n = result.outputs.length;
+          setExportStatus(`Export complete — ${n} marker clip${n === 1 ? '' : 's'} saved to ${result.outputDir}`);
+        } else {
+          setExportStatus(`Export complete — saved to ${result.output}`);
+        }
         setExportSucceeded(true);
       } else {
         setExportStatus('Export failed — see server logs');
@@ -669,34 +680,27 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             </option>
           ))}
         </select>
-        <form onSubmit={handleCreate} style={{ display: 'flex', gap: 8 }}>
-          <input
-            className="field-input"
-            style={{ width: 160 }}
-            placeholder="New project name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
-          <button type="submit" className="btn">
-            Create
-          </button>
-        </form>
+        <button type="button" className="btn" onClick={() => setCreateModalOpen(true)}>
+          New project
+        </button>
         <div className="topbar-spacer" />
         {projectId && (
           <>
-            <label className="btn btn-sm" style={{ cursor: uploading ? 'not-allowed' : 'pointer' }}>
-              {uploading ? 'Uploading…' : 'Upload video'}
-              <input
-                type="file"
-                accept="video/*"
-                disabled={uploading}
-                style={{ display: 'none' }}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleUploadVideo(file);
-                }}
-              />
-            </label>
+            {baseLayer.type === 'video' && (
+              <label className="btn btn-sm" style={{ cursor: uploading ? 'not-allowed' : 'pointer' }}>
+                {uploading ? 'Uploading…' : 'Upload video'}
+                <input
+                  type="file"
+                  accept="video/*"
+                  disabled={uploading}
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleUploadVideo(file);
+                  }}
+                />
+              </label>
+            )}
             <button
               onClick={() => setLibraryOpen(true)}
               className="btn btn-sm"
@@ -730,22 +734,31 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               />
               <span className="volume-value">{overlayVolume === 0 ? 'Muted' : `${Math.round(overlayVolume * 100)}%`}</span>
             </label>
+            <label
+              className="volume-control"
+              title="Export each marker's animation as its own file instead of one file spanning the whole timeline — lighter, and easier to drop individual clips into another editor."
+            >
+              <input type="checkbox" checked={splitByMarker} onChange={(e) => setSplitByMarker(e.target.checked)} />
+              <span>Split by marker</span>
+            </label>
             <button
               onClick={() => handleExport(false)}
               disabled={exporting}
               className="btn btn-sm"
-              title="Transparent overlay only (.webm)"
+              title={splitByMarker ? 'One transparent .webm per marker' : 'Transparent overlay only (.webm)'}
             >
-              Export overlay
+              {splitByMarker ? 'Export overlay (by marker)' : 'Export overlay'}
             </button>
-            <button
-              onClick={() => handleExport(true)}
-              disabled={exporting}
-              className="btn btn-primary"
-              title="Base video + overlay mixed (.mp4)"
-            >
-              {exporting ? 'Exporting…' : 'Export MP4 (video + overlay)'}
-            </button>
+            {baseLayer.type !== 'transparent' && (
+              <button
+                onClick={() => handleExport(true)}
+                disabled={exporting}
+                className="btn btn-primary"
+                title="Base + overlay mixed (.mp4)"
+              >
+                {exporting ? 'Exporting…' : 'Export MP4 (video + overlay)'}
+              </button>
+            )}
             <button
               onClick={handleDeleteProject}
               disabled={exporting}
@@ -758,6 +771,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           </>
         )}
       </div>
+      {createModalOpen && (
+        <CreateProjectModal onClose={() => setCreateModalOpen(false)} onCreate={handleCreateProject} />
+      )}
       {transcribeError && (
         <div style={{ padding: '0 24px', fontSize: 13, color: 'var(--error)' }}>{transcribeError}</div>
       )}
@@ -777,6 +793,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 ref={previewRef}
                 projectId={projectId}
                 videoUrl={videoUrl}
+                baseLayer={baseLayer}
                 reloadToken={reloadToken}
                 fps={composition.fps}
                 compositionWidth={composition.width}

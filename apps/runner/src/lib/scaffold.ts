@@ -5,6 +5,7 @@ import { PROJECTS_ROOT, TEMPLATES_ROOT, projectDir, markerFile } from './paths.j
 import { readMarkers, writeMarkers, type Marker, type MarkerRegion } from './markers.js';
 import { regenerateRegistry } from './registry.js';
 import { defaultSkillNames } from './skills.js';
+import { DEFAULT_BASE_LAYER, type BaseLayer } from './baseLayer.js';
 
 export interface Project {
   id: string;
@@ -17,6 +18,9 @@ export interface Project {
   overlayVolume?: number;
   // Describe newly uploaded images with Claude automatically (costs a small Claude call each).
   autoDescribeImages?: boolean;
+  // What the timeline is built on top of. Absent means 'video' (projects created before this
+  // existed always expect an uploaded raw video).
+  baseLayer?: BaseLayer;
 }
 
 const slugify = (name: string) =>
@@ -26,7 +30,15 @@ const slugify = (name: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '') || 'project';
 
-export function createProject(name: string): Project {
+export interface CreateProjectOptions {
+  baseLayer?: BaseLayer;
+  fps?: number;
+  width?: number;
+  height?: number;
+  durationInFrames?: number;
+}
+
+export function createProject(name: string, opts: CreateProjectOptions = {}): Project {
   const id = `${slugify(name)}-${crypto.randomBytes(3).toString('hex')}`;
   const dir = projectDir(id);
 
@@ -34,7 +46,14 @@ export function createProject(name: string): Project {
     fs.mkdirSync(path.join(dir, sub), { recursive: true });
   }
 
-  const project: Project = { id, name, createdAt: new Date().toISOString(), skills: defaultSkillNames() };
+  const baseLayer = opts.baseLayer ?? DEFAULT_BASE_LAYER;
+  const project: Project = {
+    id,
+    name,
+    createdAt: new Date().toISOString(),
+    skills: defaultSkillNames(),
+    ...(baseLayer.type !== 'video' ? { baseLayer } : {}),
+  };
   fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify(project, null, 2));
   fs.copyFileSync(path.join(TEMPLATES_ROOT, 'CLAUDE.md'), path.join(dir, 'CLAUDE.md'));
 
@@ -44,7 +63,16 @@ export function createProject(name: string): Project {
   fs.writeFileSync(path.join(dir, '02_assets', 'asset_manifest.json'), '[]\n');
   fs.writeFileSync(
     path.join(dir, '03_remotion_code', 'CompositionConfig.json'),
-    JSON.stringify({ fps: 30, width: 1920, height: 1080, durationInFrames: 1800 }, null, 2)
+    JSON.stringify(
+      {
+        fps: opts.fps ?? 30,
+        width: opts.width ?? 1920,
+        height: opts.height ?? 1080,
+        durationInFrames: opts.durationInFrames ?? 1800,
+      },
+      null,
+      2
+    )
   );
   fs.writeFileSync(path.join(dir, '05_debug', 'errors.json'), '[]\n');
   fs.writeFileSync(path.join(dir, '05_debug', 'failed_attempts.log'), '');
@@ -122,6 +150,10 @@ export function setAutoDescribeImages(id: string, value: boolean): Project {
 
 export function overlayVolume(id: string): number {
   return readProject(id)?.overlayVolume ?? 1;
+}
+
+export function baseLayerOf(id: string): BaseLayer {
+  return readProject(id)?.baseLayer ?? DEFAULT_BASE_LAYER;
 }
 
 export function setOverlayVolume(id: string, volume: number): void {

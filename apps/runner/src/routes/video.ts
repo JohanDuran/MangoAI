@@ -3,7 +3,7 @@ import multer from 'multer';
 import fs from 'node:fs';
 import path from 'node:path';
 import { inputDir } from '../lib/paths.js';
-import { readProject } from '../lib/scaffold.js';
+import { readProject, baseLayerOf } from '../lib/scaffold.js';
 import { findRawVideo, removeExistingRawVideo } from '../lib/video.js';
 import { updateCompositionConfig } from '../lib/composition.js';
 import { assetFilePath } from '../lib/images.js';
@@ -15,6 +15,10 @@ const storage = multer.diskStorage({
     const id = req.params.id;
     if (!readProject(id)) {
       cb(new Error('Project not found'), '');
+      return;
+    }
+    if (baseLayerOf(id).type !== 'video') {
+      cb(new Error('This project was started without a video and cannot accept a video upload'), '');
       return;
     }
     removeExistingRawVideo(id);

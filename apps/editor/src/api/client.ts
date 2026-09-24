@@ -1,11 +1,20 @@
 export const BASE = 'http://localhost:5175';
 
+// What the timeline is built on top of. Absent (or 'video') means the classic flow: an uploaded
+// raw video drives preview/export. The others let a project exist with no uploaded video.
+export type BaseLayer =
+  | { type: 'video' }
+  | { type: 'color'; color: string }
+  | { type: 'gradient'; from: string; to: string; angle: number }
+  | { type: 'transparent' };
+
 export interface Project {
   id: string;
   name: string;
   createdAt: string;
   overlayVolume?: number;
   autoDescribeImages?: boolean;
+  baseLayer?: BaseLayer;
 }
 
 export interface CompositionConfig {
@@ -43,11 +52,19 @@ async function json<T>(res: Response): Promise<T> {
 
 export const listProjects = () => fetch(`${BASE}/projects`).then((r) => json<Project[]>(r));
 
-export const createProject = (name: string) =>
+export interface CreateProjectOptions {
+  baseLayer?: BaseLayer;
+  fps?: number;
+  width?: number;
+  height?: number;
+  durationInFrames?: number;
+}
+
+export const createProject = (name: string, opts: CreateProjectOptions = {}) =>
   fetch(`${BASE}/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, ...opts }),
   }).then((r) => json<Project>(r));
 
 export const deleteProject = (id: string) =>
@@ -65,7 +82,7 @@ export const saveOverlayVolume = (id: string, volume: number) =>
 
 export const getProject =(id: string) =>
   fetch(`${BASE}/projects/${id}`).then((r) =>
-    json<{ project: Project; markers: Marker[]; hasVideo: boolean; composition: CompositionConfig }>(r)
+    json<{ project: Project; markers: Marker[]; hasVideo: boolean; composition: CompositionConfig; baseLayer: BaseLayer }>(r)
   );
 
 export const videoUrl = (id: string) => `${BASE}/projects/${id}/video?t=${Date.now()}`;
@@ -115,12 +132,20 @@ export const deleteMarker = (id: string, markerId: string) =>
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   });
 
-export const exportProject = (id: string, includeVideo = false) =>
+export const exportProject = (id: string, includeVideo = false, perMarker = false) =>
   fetch(`${BASE}/projects/${id}/export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ includeVideo }),
-  }).then((r) => json<{ success: boolean; output?: string; log?: string }>(r));
+    body: JSON.stringify({ includeVideo, perMarker }),
+  }).then((r) =>
+    json<{
+      success: boolean;
+      output?: string;
+      outputDir?: string;
+      outputs?: { markerId: string; file: string }[];
+      log?: string;
+    }>(r)
+  );
 
 export interface TranscriptSegment {
   start: number;

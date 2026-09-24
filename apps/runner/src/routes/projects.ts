@@ -12,7 +12,10 @@ import {
   enabledSkillNames,
   overlayVolume,
   setOverlayVolume,
+  baseLayerOf,
 } from '../lib/scaffold.js';
+import { isValidBaseLayer } from '../lib/baseLayer.js';
+import { synthesizeBaseClip } from '../lib/baseClip.js';
 import { discoverSkills } from '../lib/skills.js';
 import { log as writeLog, clip } from '../lib/log.js';
 import {
@@ -32,7 +35,7 @@ import { generateMarkerWithRetry } from '../lib/generateMarker.js';
 import { planMarkers } from '../lib/planner.js';
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
-import { markerFrameRanges, type FrameRange } from '../lib/ranges.js';
+import { markerFrameRanges, perMarkerFrameRanges, type FrameRange } from '../lib/ranges.js';
 import { renderOverlayJobs } from '../lib/render.js';
 import { transcribeProject, readTranscript, transcriptForRange } from '../lib/transcript.js';
 
@@ -108,9 +111,19 @@ function probeVideoSize(file: string): Promise<{ width: number; height: number }
 }
 
 projectsRouter.post('/projects', (req, res) => {
-  const { name } = req.body as { name?: string };
+  const { name, baseLayer, fps, width, height, durationInFrames } = req.body as {
+    name?: string;
+    baseLayer?: unknown;
+    fps?: number;
+    width?: number;
+    height?: number;
+    durationInFrames?: number;
+  };
   if (!name) return res.status(400).json({ error: 'name is required' });
-  res.status(201).json(createProject(name));
+  if (baseLayer !== undefined && !isValidBaseLayer(baseLayer)) {
+    return res.status(400).json({ error: 'invalid baseLayer' });
+  }
+  res.status(201).json(createProject(name, { baseLayer, fps, width, height, durationInFrames }));
 });
 
 projectsRouter.get('/projects', (_req, res) => {
@@ -126,6 +139,7 @@ projectsRouter.get('/projects/:id', (req, res) => {
     markers: readMarkers(req.params.id),
     hasVideo: findRawVideo(req.params.id) !== null,
     composition: readCompositionConfig(req.params.id),
+    baseLayer: baseLayerOf(req.params.id),
   });
 });
 
@@ -439,18 +453,88 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
     return res.status(409).json({ error: 'An export is already running for this project' });
   }
   exportsInFlight.add(id);
-  writeLog('info', 'export.start', { project: id, includeVideo: !!req.body?.includeVideo, overlayVolume: overlayVolume(id) });
+  writeLog('info', 'export.start', {
+    project: id,
+    includeVideo: !!req.body?.includeVideo,
+    perMarker: !!req.body?.perMarker,
+    overlayVolume: overlayVolume(id),
+  });
 
   try {
     syncAssetModule(id);
     const dir = projectDir(id);
     const entry = path.join(dir, '03_remotion_code', 'Root.tsx');
     const outFile = path.join(dir, '04_output', 'overlay.webm');
-    const includeVideo = !!req.body?.includeVideo;
+    const baseLayer = baseLayerOf(id);
+    // Exporting per marker only ever makes sense for the overlay alone (there's no useful way to
+    // composite N separate marker clips onto one base video in a single file), so it overrides includeVideo.
+    const perMarker = !!req.body?.perMarker;
+    // A transparent base has no video to composite onto — the overlay-only alpha render below is
+    // already the correct deliverable for it, so a "combined" export request degrades to that.
+    const includeVideo = !!req.body?.includeVideo && baseLayer.type !== 'transparent' && !perMarker;
 
-    const raw = includeVideo ? findRawVideo(id) : null;
-    if (includeVideo && !raw) {
-      return res.status(400).json({ success: false, log: 'No source video uploaded; cannot build the combined mp4' });
+    if (perMarker) {
+      const markerDir = path.join(dir, '04_output', 'by_marker');
+      fs.rmSync(markerDir, { recursive: true, force: true });
+      fs.mkdirSync(markerDir, { recursive: true });
+      const jobRanges = perMarkerFrameRanges(id);
+      if (jobRanges.length === 0) {
+        return res.status(400).json({ success: false, log: 'No markers to export' });
+      }
+      const volume = overlayVolume(id);
+      const outputs: { markerId: string; file: string }[] = [];
+      let renderLog = '';
+      let failure: string | null = null;
+      await renderOverlayJobs(
+        entry,
+        jobRanges.map((r) => ({ outputLocation: path.join(markerDir, `${r.markerId}.webm`), frames: r, codec: 'vp8' as const })),
+        async (i, result) => {
+          const job = jobRanges[i];
+          renderLog += `\n=== marker ${job.markerId} ===\n${result.log}`;
+          fs.writeFileSync(path.join(dir, '04_output', 'render_log.txt'), renderLog);
+          writeLog(result.ok ? 'info' : 'error', 'export.render', {
+            project: id,
+            marker: job.markerId,
+            ok: result.ok,
+            ms: result.ms,
+            output: result.ok ? undefined : clip(result.log.slice(-800), 800),
+          });
+          if (!result.ok) {
+            failure = result.log;
+            return false;
+          }
+          const file = path.join(markerDir, `${job.markerId}.webm`);
+          const scaled = await applyOverlayVolume(file, volume);
+          if (!scaled.ok) {
+            failure = scaled.log;
+            return false;
+          }
+          outputs.push({ markerId: job.markerId, file });
+          return true;
+        }
+      );
+      if (failure) {
+        return res.status(500).json({ success: false, log: failure });
+      }
+      writeLog('info', 'export.done', { project: id, output: markerDir, count: outputs.length });
+      return res.json({ success: true, outputDir: markerDir, outputs });
+    }
+
+    let raw: string | null = null;
+    if (includeVideo) {
+      if (baseLayer.type === 'video') {
+        raw = findRawVideo(id);
+        if (!raw) {
+          return res.status(400).json({ success: false, log: 'No source video uploaded; cannot build the combined mp4' });
+        }
+      } else {
+        const { width, height, durationInFrames, fps } = readCompositionConfig(id);
+        raw = path.join(dir, '04_output', 'base_clip.mp4');
+        const synth = await synthesizeBaseClip(baseLayer, { width, height, durationInFrames, fps }, raw);
+        if (!synth.ok) {
+          return res.status(500).json({ success: false, log: synth.log || 'Could not synthesize the color/gradient base clip' });
+        }
+      }
     }
 
     // For the combined mp4 only the frames inside markers are rendered (one overlay clip per
