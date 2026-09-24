@@ -4,6 +4,7 @@ import { log, clip, type LogFields } from './log.js';
 import type { PromptAsset } from './assets.js';
 import { findClaude, quoteForCmd } from './bin.js';
 import { spawnHidden, killTree } from './proc.js';
+import { recordClaudeRun } from './usage.js';
 
 // Claude runs for one project are executed one at a time. A second request waits for the first
 // instead of killing it: two generations for different markers used to kill each other's
@@ -235,6 +236,7 @@ export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResu
         if (event?.type === 'result') {
           resultIsError = !!event.is_error;
           if (typeof event.result === 'string') resultText = event.result;
+          recordClaudeRun(event.total_cost_usd);
         }
         logClaudeEvent(ctx, event);
         opts.onEvent(event);

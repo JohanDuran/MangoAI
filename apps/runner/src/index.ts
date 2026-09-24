@@ -7,13 +7,14 @@ import { projectsRouter } from './routes/projects.js';
 import { videoRouter } from './routes/video.js';
 import { assetsRouter } from './routes/assets.js';
 import { settingsRouter } from './routes/settings.js';
+import { exportRouter, abortAllExports } from './routes/exportJob.js';
 import { discoverSkills } from './lib/skills.js';
 import { collectStatus } from './lib/status.js';
 import { log, LOG_FILE } from './lib/log.js';
 import { PACKAGED, EDITOR_DIST, InvalidIdError } from './lib/paths.js';
 import { killAllClaude } from './lib/claude.js';
 import { migrateProjects } from './lib/migrate.js';
-import { cleanupLeftovers } from './lib/cleanup.js';
+import { cleanupLeftovers, trimRenderCache } from './lib/cleanup.js';
 import { APP_VERSION } from './lib/version.js';
 
 const app = express();
@@ -96,6 +97,7 @@ app.use(settingsRouter);
 app.use(videoRouter);
 app.use(assetsRouter);
 app.use(projectsRouter);
+app.use(exportRouter);
 
 // The installed app serves the built editor from here; in development Vite serves it instead.
 if (fs.existsSync(path.join(EDITOR_DIST, 'index.html'))) {
@@ -123,6 +125,7 @@ const server = app.listen(requestedPort, host, () => {
 
   migrateProjects();
   cleanupLeftovers();
+  trimRenderCache();
 
   const { skills, problems } = discoverSkills();
   log('info', 'runner.start', {
@@ -149,6 +152,7 @@ function shutdown(reason: string): void {
   shuttingDown = true;
   log('info', 'runner.stop', { reason });
   killAllClaude();
+  abortAllExports();
   server.close();
   setTimeout(() => process.exit(0), 1500).unref();
 }

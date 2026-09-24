@@ -154,6 +154,8 @@ function pruneNodeModules() {
     }
   };
   walk(nm);
+  // A build or a test run on this machine may have left a webpack cache behind; it must never ship.
+  rm(path.join(nm, '.cache'));
   log(`pruned ${removed} files`);
 }
 
@@ -197,6 +199,56 @@ async function fetchFfmpeg() {
   rm(tmp);
 }
 
+
+// Lists every shipped package with its license, plus the notes that need to travel with the installer.
+function writeNotices() {
+  log('writing third-party notices');
+  const nm = path.join(out, 'node_modules');
+  const seen = new Map();
+  const visit = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === '.bin' || entry.name === '.remotion' || entry.name === '.cache') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.name.startsWith('@')) {
+        visit(full);
+        continue;
+      }
+      const pkgFile = path.join(full, 'package.json');
+      if (fs.existsSync(pkgFile)) {
+        const pkg = readJson(pkgFile);
+        const license = typeof pkg.license === 'string' ? pkg.license : pkg.license?.type ?? (pkg.licenses ? pkg.licenses.map((l) => l.type).join(' OR ') : 'see package');
+        seen.set(`${pkg.name}@${pkg.version}`, { name: pkg.name, version: pkg.version, license, homepage: pkg.homepage ?? pkg.repository?.url ?? '' });
+      }
+      const nested = path.join(full, 'node_modules');
+      if (fs.existsSync(nested)) visit(nested);
+    }
+  };
+  visit(nm);
+  const lines = [...seen.values()].sort((a, b) => a.name.localeCompare(b.name)).map((p) => `${p.name} ${p.version}  -  ${p.license}${p.homepage ? `  -  ${String(p.homepage).replace(/^git\+/, '')}` : ''}`);
+  const text = [
+    'MangoAI third-party notices',
+    '===========================',
+    '',
+    'REMOTION',
+    'MangoAI renders its animations with Remotion (https://www.remotion.dev). Remotion is not open source in the OSI sense: it is free for',
+    'individuals, non-profits and companies of up to three people, and other companies need a Remotion company license.',
+    'Read https://www.remotion.dev/license before using MangoAI commercially inside a larger company.',
+    '',
+    'FFMPEG',
+    `MangoAI includes FFmpeg ${FFMPEG.version} (GPL v3 build, see bin/FFMPEG-NOTICE.txt and bin/FFMPEG-LICENSE.txt).`,
+    'It runs as a separate program. Source: https://ffmpeg.org/download.html',
+    '',
+    'ELECTRON AND CHROMIUM',
+    'The application shell is Electron (MIT) built on Chromium. Licenses of Chromium components are in LICENSES.chromium.html in the install folder.',
+    'Remotion also downloads Chrome Headless Shell (Chromium, BSD-style and other licenses; see https://chromium.googlesource.com/chromium/src/+/main/LICENSE).',
+    '',
+    'NPM PACKAGES INCLUDED IN THIS INSTALLER',
+    ...lines,
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(out, 'THIRD-PARTY-NOTICES.txt'), text);
+}
+
 async function main() {
   if (!args.has('--skip-clean') && !args.has('--runner-only')) {
     for (const entry of fs.existsSync(out) ? fs.readdirSync(out) : []) {
@@ -214,6 +266,7 @@ async function main() {
   pruneNodeModules();
   if (!fs.existsSync(path.join(out, 'node_modules', '.remotion'))) fetchChromeShell();
   await fetchFfmpeg();
+  writeNotices();
   log('done');
 }
 

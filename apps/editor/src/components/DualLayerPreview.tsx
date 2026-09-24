@@ -340,6 +340,9 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
                 style={{ width: '100%', height: '100%' }}
                 controls={false}
                 playbackRate={playbackRate}
+                errorFallback={({ error }) => (
+                  <div className="overlay-error">The animation overlay crashed: {error.message.slice(0, 200)}</div>
+                )}
               />
             </div>
           )}

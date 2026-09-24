@@ -1,0 +1,24 @@
+{
+  "name": "@mangoai/desktop",
+  "productName": "MangoAI",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MangoAI - AI video overlay studio",
+  "author": "MangoAI",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node ../../scripts/build-desktop.mjs",
+    "runtime": "node ../../scripts/build-runtime.mjs",
+    "dev": "npm run build && electron .",
+    "dist": "npm run runtime && npm run build && electron-builder --win --x64",
+    "dist:dir": "npm run runtime && npm run build && electron-builder --win --x64 --dir",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "electron": "44.4.5",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  }
+}

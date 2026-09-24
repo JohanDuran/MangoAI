@@ -1,0 +1,42 @@
+appId: com.mangoai.app
+productName: MangoAI
+copyright: Copyright (c) MangoAI
+directories:
+  output: ../../release
+  buildResources: build
+asar: true
+afterPack: build/afterPack.cjs
+files:
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+extraResources:
+  # The runner, editor, node_modules (with Chrome Headless Shell) and ffmpeg. Built by scripts/build-runtime.mjs.
+  - from: ../../build/runtime
+    to: runtime
+    filter:
+      - "**/*"
+  - from: assets/icon.png
+    to: icon.png
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/icon.png
+  artifactName: MangoAI-Setup-${version}.${ext}
+  # No code-signing certificate for the free preview; SmartScreen will show an "unknown publisher" notice.
+  forceCodeSigning: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: MangoAI
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  license: build/license.txt
+  include: build/installer.nsh
+  uninstallDisplayName: MangoAI

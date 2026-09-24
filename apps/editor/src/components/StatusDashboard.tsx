@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { getStatus, type CheckState, type StatusReport } from '../api/client';
+import { desktop, type DesktopInfo } from '../desktop';
+import { notify } from '../notify';
 
 const STALE_MS = 60_000;
 
@@ -47,6 +49,120 @@ export const StatusButton: React.FC<{ state: CheckState | 'loading'; onClick: ()
   </button>
 );
 
+
+const CLAUDE_INSTALL_URL = 'https://docs.claude.com/en/docs/claude-code/setup';
+
+// Only shown inside the desktop app: the settings and shortcuts that need the operating system.
+const DesktopSettings: React.FC<{ report: StatusReport | null; onChanged: () => void }> = ({ report, onChanged }) => {
+  const api = desktop();
+  const [info, setInfo] = useState<DesktopInfo | null>(null);
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    void api?.info().then(setInfo);
+  }, [api, report]);
+
+  if (!api) return null;
+  const claude = report?.checks.find((c) => c.id === 'claude');
+  const openai = report?.checks.find((c) => c.id === 'openai');
+
+  const saveKey = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await api.setOpenAIKey(key);
+      if (result.ok) {
+        setKey('');
+        setMessage({ ok: true, text: result.validated ? 'Key saved and accepted by OpenAI.' : 'Key saved. OpenAI could not be reached to check it right now.' });
+        onChanged();
+      } else {
+        setMessage({ ok: false, text: result.error ?? 'The key was not saved.' });
+      }
+    } catch (err) {
+      setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeKey = async () => {
+    await api.clearOpenAIKey();
+    setMessage({ ok: true, text: 'Key removed.' });
+    onChanged();
+  };
+
+  const saveDiagnostics = async () => {
+    const result = await api.exportDiagnostics();
+    if (result.saved) notify('info', `Diagnostics saved to ${result.file}`);
+  };
+
+  return (
+    <>
+      {claude && claude.state !== 'ok' && (
+        <div className="desktop-card">
+          <h3>Set up Claude Code</h3>
+          <div className="desktop-hint">
+            MangoAI designs animations with the Claude Code CLI, which you install and sign in to yourself. Install it, open a terminal, run <b>claude</b> once and sign in, then press Re-check.
+          </div>
+          <div className="desktop-row">
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => void api.openExternal(CLAUDE_INSTALL_URL)}>
+              Open installation instructions
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="desktop-card">
+        <h3>OpenAI API key {openai && <span className={`status-dot ${openai.state}`} style={{ marginLeft: 6 }} />}</h3>
+        <div className="desktop-hint">
+          Used for transcribing your video (Whisper) and for optional AI image generation. {info?.hasOpenAIKey ? 'A key is stored on this PC.' : 'No key stored yet.'} It is saved encrypted for your Windows account and never written to a project or log file.
+        </div>
+        <div className="desktop-row">
+          <input
+            type="password"
+            className="field-input"
+            placeholder={info?.hasOpenAIKey ? 'Paste a new key to replace the stored one' : 'sk-...'}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <button type="button" className="btn btn-sm btn-primary" onClick={saveKey} disabled={busy || key.trim().length < 8}>
+            {busy ? 'Checking…' : 'Save key'}
+          </button>
+          {info?.hasOpenAIKey && (
+            <button type="button" className="btn btn-sm" onClick={removeKey} disabled={busy}>
+              Remove
+            </button>
+          )}
+        </div>
+        {info && !info.secureStorage && <div className="desktop-hint" style={{ color: 'var(--error)' }}>Secure storage is not available on this system, so a key cannot be saved.</div>}
+        {message && <div className="desktop-hint" style={{ color: message.ok ? 'var(--ready)' : 'var(--error)' }}>{message.text}</div>}
+      </div>
+
+      <div className="desktop-card">
+        <h3>Help and files</h3>
+        <div className="desktop-hint">
+          MangoAI {info?.version ?? ''}. Projects: {info?.projectsDir ?? '…'}
+        </div>
+        <div className="desktop-row">
+          <button type="button" className="btn btn-sm" onClick={() => void api.openFolder('projects')}>
+            Open projects folder
+          </button>
+          <button type="button" className="btn btn-sm" onClick={() => void api.openFolder('logs')}>
+            Open log folder
+          </button>
+          <button type="button" className="btn btn-sm" onClick={saveDiagnostics} title="A text file with versions, status and the recent log, safe to send when reporting a problem">
+            Save diagnostics file
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
+
 interface Props {
   report: StatusReport | null;
   error: string | null;
@@ -84,11 +200,13 @@ export const StatusDashboard: React.FC<Props> = ({ report, error, loading, onRef
             </div>
             <div className="status-summary">Can't reach the runner.</div>
             <ul className="status-details">
-              <li>Start it from apps/runner, then re-check.</li>
+              <li>{desktop() ? 'The MangoAI engine is not responding. Close and reopen MangoAI, and use Help → Save diagnostics if it keeps happening.' : 'Start it from apps/runner, then re-check.'}</li>
               <li>{error}</li>
             </ul>
           </div>
         )}
+
+        <DesktopSettings report={report} onChanged={onRefresh} />
 
         {report && (
           <>

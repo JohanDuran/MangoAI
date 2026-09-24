@@ -8,6 +8,7 @@ import * as JsxDevRuntimeNs from 'react/jsx-dev-runtime';
 import * as RemotionNs from 'remotion';
 import * as OverlayNs from '@mangoai/remotion-overlay';
 import App from './App';
+import { describeError, notify } from './notify';
 import './styles.css';
 
 // AI-generated overlay code is bundled by the runner and imports these packages from here, so it
@@ -21,6 +22,11 @@ window.__MANGO_SHARED__ = {
   remotion: RemotionNs,
   '@mangoai/remotion-overlay': OverlayNs,
 };
+
+// Anything that fails without its own handler still tells the user instead of failing silently.
+window.addEventListener('unhandledrejection', (event) => {
+  notify('error', describeError(event.reason));
+});
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

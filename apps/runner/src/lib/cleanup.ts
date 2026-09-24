@@ -6,7 +6,7 @@ import { log } from './log.js';
 
 // Leftovers of an interrupted run: atomic-write temp files, half-made resized images, the audio
 // extracted for a transcription that never finished, and partially mixed exports.
-const STALE = /(\.tmp(\.[a-z0-9]+)?|\.resize\.tmp\.[a-z0-9]+)$/i;
+const STALE = /(\.tmp(\.[a-z0-9]+)?|\.resize\.tmp\.[a-z0-9]+|\.part)$/i;
 const SUBDIRS = ['', '00_input', '01_transcript', '02_assets', '03_remotion_code', '04_output', '04_output/by_marker'];
 
 export function cleanupLeftovers(): void {
@@ -36,4 +36,27 @@ export function cleanupLeftovers(): void {
     }
   }
   if (removed > 0) log('info', 'cleanup.done', { removed });
+}
+
+function directorySize(dir: string): number {
+  let total = 0;
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      total += entry.isDirectory() ? directorySize(full) : fs.statSync(full).size;
+    }
+  } catch {
+    // unreadable entries do not count
+  }
+  return total;
+}
+
+// The render cache only saves time; when it gets large it is simply thrown away and rebuilt.
+export function trimRenderCache(maxBytes = 1.5 * 1024 ** 3): void {
+  const cache = process.env.MANGO_CACHE_DIR;
+  if (!cache || !fs.existsSync(cache)) return;
+  const size = directorySize(cache);
+  if (size <= maxBytes) return;
+  fs.rmSync(path.join(cache, 'node_modules'), { recursive: true, force: true });
+  log('info', 'cleanup.cache_cleared', { mb: Math.round(size / 1024 ** 2) });
 }

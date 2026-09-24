@@ -45,6 +45,10 @@ import { PlanMarkersPanel } from './components/PlanMarkersPanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { StatusButton, StatusDashboard, useStatus } from './components/StatusDashboard';
+import { ConnectionBanner } from './components/ConnectionBanner';
+import { NoticeStack, notify, describeError } from './notify';
+import { desktop } from './desktop';
+import { cancelExport, getExportStatus, type ExportStatus } from './api/client';
 
 const DEFAULT_COMPOSITION: CompositionConfig = { fps: 30, width: 1920, height: 1080, durationInFrames: 1800 };
 const DEFAULT_BASE_LAYER: BaseLayer = { type: 'video' };
@@ -469,6 +473,14 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     if (!projectId) return;
     const approved = reviewItems.filter((i) => i.included);
     if (approved.length === 0) return;
+    if (
+      approved.length >= 5 &&
+      !window.confirm(
+        `Generate ${approved.length} animations? Each one is a separate Claude run (up to 3 attempts each) and takes a minute or two. On pay-as-you-go API billing a run typically costs roughly $0.05–0.20; subscription plans draw on your plan's allowance.`
+      )
+    ) {
+      return;
+    }
     markEdited();
     setEditingPlanItemKey(null);
     setApplyingPlan(true);
@@ -672,8 +684,11 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     markEdited();
     setUploading(true);
     try {
-      await uploadVideo(projectId, file);
+      const uploaded = await uploadVideo(projectId, file);
       setVideoUrl(videoUrlFor(projectId));
+      for (const warning of uploaded.warnings ?? []) notify('warn', warning);
+    } catch (err) {
+      notify('error', `The video could not be added. ${describeError(err)}`);
     } finally {
       setUploading(false);
     }
@@ -731,31 +746,79 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [projectId, isPlaying, composition.fps, composition.durationInFrames]);
 
-  const handleExport = async (includeVideo: boolean) => {
+  const [exportProgress, setExportProgress] = useState<ExportStatus | null>(null);
+  const [exportedPath, setExportedPath] = useState<string | null>(null);
+
+  const finishExport = (final: ExportStatus) => {
+    if (final.state === 'done' && final.result) {
+      const r = final.result;
+      if (r.outputs) {
+        const n = r.outputs.length;
+        setExportStatus(`Export complete — ${n} marker clip${n === 1 ? '' : 's'} saved to ${r.outputDir}`);
+        setExportedPath(r.outputs[0]?.file ?? r.outputDir ?? null);
+      } else {
+        setExportStatus(`Export complete — saved to ${r.output}`);
+        setExportedPath(r.output ?? null);
+      }
+      setExportSucceeded(true);
+    } else if (final.state === 'cancelled') {
+      setExportStatus('Export cancelled');
+    } else {
+      setExportStatus(`Export failed — ${final.message}`);
+      if (final.error) console.error('Export failed:', final.error);
+    }
+  };
+
+  const handleExport = async (includeVideo: boolean, resume = false) => {
     if (!projectId) return;
     const perMarker = !includeVideo && splitByMarker;
     setExporting(true);
     setExportSucceeded(false);
+    setExportedPath(null);
     setExportStatus(includeVideo ? 'Exporting MP4 with video…' : perMarker ? 'Exporting one clip per marker…' : 'Exporting overlay…');
     try {
-      const result = await exportProject(projectId, includeVideo, perMarker);
-      if (result.success) {
-        if (result.outputs) {
-          const n = result.outputs.length;
-          setExportStatus(`Export complete — ${n} marker clip${n === 1 ? '' : 's'} saved to ${result.outputDir}`);
-        } else {
-          setExportStatus(`Export complete — saved to ${result.output}`);
-        }
-        setExportSucceeded(true);
-      } else {
-        setExportStatus('Export failed — see server logs');
-      }
+      const final = await exportProject(projectId, includeVideo, perMarker, setExportProgress, resume);
+      finishExport(final);
     } catch (err) {
-      setExportStatus(err instanceof Error ? err.message : String(err));
+      setExportStatus(describeError(err));
     } finally {
       setExporting(false);
+      setExportProgress(null);
     }
   };
+
+  const handleCancelExport = () => {
+    if (projectId) void cancelExport(projectId);
+  };
+
+  // An export keeps running in the engine if the editor reloads; pick it back up.
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    getExportStatus(projectId)
+      .then((s) => {
+        if (!cancelled && s.state === 'running') void handleExport(false, true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  // The desktop app's Help menu can open the requirements panel.
+  useEffect(() => desktop()?.onOpenStatus(() => setStatusOpen(true)), []);
+
+  // First launch of the desktop app: show what is missing (Claude CLI, OpenAI key) right away.
+  useEffect(() => {
+    if (!desktop() || !status.report) return;
+    try {
+      if (localStorage.getItem('mango.onboarded')) return;
+      localStorage.setItem('mango.onboarded', '1');
+    } catch {
+      return;
+    }
+    if (status.report.overall !== 'ok') setStatusOpen(true);
+  }, [status.report]);
 
   const selectedMarker = markers.find((m) => m.marker_id === selectedMarkerId) ?? null;
   const durationSeconds = composition.durationInFrames / composition.fps;
@@ -778,6 +841,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   return (
     <div className="app">
+      <ConnectionBanner />
+      <NoticeStack />
       <div className="topbar">
         <div className="brand">
           <span className="brand-mark">🥭</span>
@@ -945,9 +1010,27 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
       <div className="workspace">
         <div className="stage-column">
-          {exportStatus && (
-            <div style={{ fontSize: 13, color: exportSucceeded ? 'var(--ready)' : 'var(--text-muted)' }}>
-              {exportStatus}
+          {exporting && exportProgress && (
+            <div className="export-progress">
+              <div className="export-progress-bar">
+                <div className="export-progress-fill" style={{ width: `${exportProgress.percent}%` }} />
+              </div>
+              <span>
+                {exportProgress.message || 'Exporting'} — {exportProgress.percent}%
+              </span>
+              <button type="button" className="btn btn-sm" onClick={handleCancelExport}>
+                Cancel export
+              </button>
+            </div>
+          )}
+          {exportStatus && !(exporting && exportProgress) && (
+            <div style={{ fontSize: 13, color: exportSucceeded ? 'var(--ready)' : 'var(--text-muted)', display: 'flex', gap: 10, alignItems: 'center' }}>
+              <span>{exportStatus}</span>
+              {exportSucceeded && exportedPath && desktop() && (
+                <button type="button" className="btn btn-sm" onClick={() => void desktop()?.showInFolder(exportedPath)}>
+                  Show in folder
+                </button>
+              )}
             </div>
           )}
 

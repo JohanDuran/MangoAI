@@ -1,7 +1,8 @@
 import os from 'node:os';
 import path from 'node:path';
 import { bundle } from '@remotion/bundler';
-import { makeCancelSignal, openBrowser, renderMedia, selectComposition } from '@remotion/renderer';
+import { makeCancelSignal, openBrowser, renderMedia, renderStill, selectComposition } from '@remotion/renderer';
+import fs from 'node:fs';
 import type { FrameRange } from './ranges.js';
 import { NODE_MODULES_DIR, PACKAGED } from './paths.js';
 
@@ -26,6 +27,17 @@ export interface RenderOptions {
   onProgress?: (jobIndex: number, fraction: number) => void;
   // Called once the bundle is built and the browser is up, before the first job.
   onPhase?: (phase: 'bundling' | 'rendering') => void;
+}
+
+// Remotion keeps its webpack cache under <rootDir>/node_modules/.cache. That must not be the install
+// folder (it grows by hundreds of MB), so the desktop app gives it a folder in the user's data directory.
+function remotionRootDir(): string | undefined {
+  const cache = process.env.MANGO_CACHE_DIR;
+  if (!cache) return PACKAGED ? path.dirname(NODE_MODULES_DIR) : undefined;
+  fs.mkdirSync(path.join(cache, 'node_modules'), { recursive: true });
+  const marker = path.join(cache, 'package.json');
+  if (!fs.existsSync(marker)) fs.writeFileSync(marker, '{"name":"mangoai-cache","private":true}');
+  return cache;
 }
 
 // A render page with too many parallel tabs can exhaust the memory of a small machine, so the
@@ -60,7 +72,7 @@ export async function renderOverlayJobs(
         ...config,
         resolve: { ...config.resolve, modules: [...(config.resolve?.modules ?? ['node_modules']), NODE_MODULES_DIR] },
       }),
-      ...(PACKAGED ? { rootDir: path.dirname(NODE_MODULES_DIR) } : {}),
+      ...(remotionRootDir() ? { rootDir: remotionRootDir() } : {}),
     });
     browser = await openBrowser('chrome', process.env.MANGO_CHROME_PATH ? { browserExecutable: process.env.MANGO_CHROME_PATH } : undefined);
   } catch (err) {
@@ -114,6 +126,60 @@ export async function renderOverlayJobs(
     }
   } finally {
     options.signal?.removeEventListener('abort', onAbort);
+    await browser.close({ silent: true }).catch(() => {});
+  }
+}
+
+export interface SmokeRenderResult {
+  ok: boolean;
+  // Set when the check itself could not run (no browser, no network); the marker is not blamed for that.
+  skipped?: boolean;
+  error?: string;
+}
+
+// Renders a few still frames of the composition in headless Chrome. esbuild only proves the file bundles;
+// this proves the animation actually runs, which is where undefined access, misused hooks and bad
+// props show up. Everything a marker throws while rendering becomes the returned error text.
+export async function smokeRenderFrames(entryPoint: string, frames: number[], scratchDir: string): Promise<SmokeRenderResult> {
+  let serveUrl: string;
+  try {
+    serveUrl = await bundle({
+      entryPoint,
+      webpackOverride: (config) => ({
+        ...config,
+        resolve: { ...config.resolve, modules: [...(config.resolve?.modules ?? ['node_modules']), NODE_MODULES_DIR] },
+      }),
+      ...(remotionRootDir() ? { rootDir: remotionRootDir() } : {}),
+    });
+  } catch (err) {
+    return { ok: false, error: `The animation could not be bundled: ${err instanceof Error ? err.message : String(err)}`.slice(0, 2500) };
+  }
+
+  let browser: Awaited<ReturnType<typeof openBrowser>>;
+  try {
+    browser = await openBrowser('chrome', process.env.MANGO_CHROME_PATH ? { browserExecutable: process.env.MANGO_CHROME_PATH } : undefined);
+  } catch (err) {
+    return { ok: true, skipped: true, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  fs.mkdirSync(scratchDir, { recursive: true });
+  try {
+    const composition = await selectComposition({ serveUrl, id: 'Overlay', puppeteerInstance: browser });
+    for (const frame of frames) {
+      const clamped = Math.min(Math.max(0, frame), composition.durationInFrames - 1);
+      const output = path.join(scratchDir, `smoke_${clamped}.png`);
+      try {
+        await renderStill({ composition, serveUrl, frame: clamped, output, imageFormat: 'png', puppeteerInstance: browser, timeoutInMilliseconds: 30_000 });
+      } catch (err) {
+        return { ok: false, error: `The animation failed while rendering frame ${clamped}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 2500) };
+      } finally {
+        fs.rmSync(output, { force: true });
+      }
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: `The animation failed while rendering: ${err instanceof Error ? err.message : String(err)}`.slice(0, 2500) };
+  } finally {
     await browser.close({ silent: true }).catch(() => {});
   }
 }

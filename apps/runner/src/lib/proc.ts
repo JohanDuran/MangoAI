@@ -29,13 +29,13 @@ export interface RunResult {
 }
 
 // Runs a short-lived command and collects its output. Never rejects.
-export function runCommand(command: string, args: string[], opts: { timeoutMs?: number; cwd?: string } = {}): Promise<RunResult> {
+export function runCommand(command: string, args: string[], opts: { timeoutMs?: number; cwd?: string; shell?: boolean } = {}): Promise<RunResult> {
   return new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let settled = false;
     let timedOut = false;
-    const child = spawnHidden(command, args, { cwd: opts.cwd });
+    const child = spawnHidden(command, args, { cwd: opts.cwd, shell: opts.shell });
     const done = (result: RunResult) => {
       if (settled) return;
       settled = true;

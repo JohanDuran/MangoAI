@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { inputDir } from '../lib/paths.js';
 import { readProject, baseLayerOf } from '../lib/scaffold.js';
@@ -11,7 +12,14 @@ import { regenerateRegistry } from '../lib/registry.js';
 import { skillPublicFile } from '../lib/skills.js';
 import { bundleOverlay } from '../lib/overlayBundle.js';
 import { assertSafeId, InvalidIdError } from '../lib/paths.js';
+import { probeVideo, PREVIEW_RISKY_CODECS } from '../lib/probe.js';
+import { assertFreeSpace } from '../lib/disk.js';
 
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm', '.avi', '.mpg', '.mpeg', '.wmv', '.flv', '.ts', '.mts', '.m2ts', '.3gp']);
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+
+// The upload lands under a temporary name and only replaces the project's current video once ffprobe
+// has confirmed it is a real, readable video. A failed or aborted upload leaves the old video alone.
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
     const id = req.params.id;
@@ -23,27 +31,64 @@ const storage = multer.diskStorage({
       cb(new Error('This project was started without a video and cannot accept a video upload'), '');
       return;
     }
-    removeExistingRawVideo(id);
     cb(null, inputDir(id));
   },
-  filename: (_req, file, cb) => {
-    cb(null, `raw_video${path.extname(file.originalname) || '.mp4'}`);
+  filename: (_req, _file, cb) => {
+    cb(null, `upload_${crypto.randomBytes(4).toString('hex')}.part`);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('video/')),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+  // Some systems report no video mimetype for .mkv and friends, so the extension counts too; ffprobe decides in the end.
+  fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('video/') || VIDEO_EXTENSIONS.has(path.extname(file.originalname).toLowerCase())),
 });
 
 export const videoRouter = Router();
 
 videoRouter.post('/projects/:id/video', (req, res) => {
-  upload.single('video')(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
-    if (!req.file) return res.status(400).json({ error: 'video file is required (field name "video")' });
-    res.status(201).json({ url: `/projects/${req.params.id}/video` });
+  const id = req.params.id;
+  try {
+    assertSafeId('project id', id);
+    if (!readProject(id)) return res.status(404).json({ error: 'not found' });
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > 0) assertFreeSpace(inputDir(id), declared * 1.1 + 500 * 1024 ** 2, 'this video and its exports');
+  } catch (err) {
+    return res.status(err instanceof InvalidIdError ? 400 : 507).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+
+  upload.single('video')(req, res, async (err) => {
+    if (err) {
+      const tooLarge = (err as { code?: string }).code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({ error: tooLarge ? 'That file is larger than 2 GB. Trim or compress it first.' : err.message });
+    }
+    const uploaded = req.file;
+    if (!uploaded) return res.status(400).json({ error: 'A video file is required (form field "video"), and it must be a video.' });
+
+    try {
+      const info = await probeVideo(uploaded.path);
+      if (!info) {
+        fs.rmSync(uploaded.path, { force: true });
+        return res.status(400).json({ error: 'This file could not be read as a video. It may be corrupted or use a format ffmpeg cannot open.' });
+      }
+      removeExistingRawVideo(id);
+      const rawExt = path.extname(uploaded.originalname).toLowerCase();
+      const ext = /^\.[a-z0-9]{2,5}$/.test(rawExt) ? rawExt : '.mp4';
+      fs.renameSync(uploaded.path, path.join(inputDir(id), `raw_video${ext}`));
+
+      const warnings: string[] = [];
+      if (PREVIEW_RISKY_CODECS.has(info.codec)) warnings.push(`This video uses the ${info.codec} codec, which the preview may not be able to play. Export still works.`);
+      if (info.rotation !== 0) warnings.push(`This video is rotated (${info.rotation}°). Dimensions were adjusted so the overlay lines up.`);
+      res.status(201).json({
+        url: `/projects/${id}/video`,
+        info: { width: info.width, height: info.height, durationSeconds: info.durationSeconds, codec: info.codec, hasAudio: info.hasAudio },
+        warnings,
+      });
+    } catch (e) {
+      fs.rmSync(uploaded.path, { force: true });
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    }
   });
 });
 

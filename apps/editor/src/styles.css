@@ -981,3 +981,120 @@ select {
 .status-skill-name { font-weight: 600; }
 .status-skill-desc { font-size: 12px; color: var(--text-muted); }
 .status-tag { margin-left: 6px; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 10.5px; font-weight: 400; color: var(--text-muted); }
+
+/* ---- notices, connection banner, export progress, desktop settings ---- */
+.notice-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(460px, 92vw);
+}
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.notice span {
+  flex: 1;
+}
+.notice-error {
+  border-color: var(--error);
+  background: var(--error-wash);
+  color: var(--error);
+}
+.notice-warn {
+  border-color: var(--generating);
+  color: var(--generating);
+}
+.notice-close {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.connection-banner {
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 13px;
+  background: var(--error);
+  color: #1a0d0d;
+  font-weight: 600;
+}
+.overlay-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: white;
+  background: rgba(120, 20, 20, 0.8);
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 28px;
+}
+.export-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.export-progress-bar {
+  flex: 0 0 220px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.export-progress-fill {
+  height: 100%;
+  background: var(--mango);
+  transition: width 0.4s ease;
+}
+.desktop-card {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.desktop-card h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.desktop-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 8px;
+}
+.desktop-row input[type='password'],
+.desktop-row input[type='text'] {
+  flex: 1 1 260px;
+  min-width: 200px;
+}
+.desktop-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+}

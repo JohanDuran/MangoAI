@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import { runClaudeHeadless, buildRegeneratePrompt, withProjectLock } from './claude.js';
 import { validateMarkerFile } from './validate.js';
+import { smokeRenderFrames } from './render.js';
+import { readCompositionConfig } from './composition.js';
+import path from 'node:path';
 import { logAttempt } from './debug.js';
 import { updateMarkerStatus, readMarkers } from './markers.js';
 import { assetsForPrompt } from './assets.js';
@@ -127,6 +130,25 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
     const validation = await validateMarkerFile(opts.file, config.validatorExternals);
     logAttempt(opts.projectId, opts.markerId, attempt, lastCode, validation);
     log(validation.ok ? 'info' : 'warn', 'marker.validation', { ...ctx, attempt, ok: validation.ok, error: validation.ok ? undefined : clip(validation.error, 600) });
+
+    if (validation.ok && !process.env.MANGO_SKIP_RENDER_CHECK) {
+      // Bundling proves the file is well formed; rendering a few frames proves it runs.
+      opts.onEvent({ type: 'progress', attempt, phase: 'rendering-check' });
+      const marker = readMarkers(opts.projectId).find((m) => m.marker_id === opts.markerId);
+      const { fps, durationInFrames } = readCompositionConfig(opts.projectId);
+      const startFrame = Math.round((marker?.start ?? 0) * fps);
+      const endFrame = Math.round((marker?.end ?? 1) * fps);
+      const frames = [startFrame + 1, Math.round((startFrame + endFrame) / 2), endFrame - 2].map((f) => Math.min(Math.max(0, f), durationInFrames - 1));
+      const smoke = await smokeRenderFrames(path.join(path.dirname(opts.file), 'Root.tsx'), [...new Set(frames)], path.join(path.dirname(opts.file), '..', '05_debug', 'smoke'));
+      if (smoke.skipped) log('warn', 'marker.render_check_skipped', { ...ctx, attempt, reason: clip(smoke.error, 300) });
+      else if (!smoke.ok) {
+        log('warn', 'marker.render_check_failed', { ...ctx, attempt, error: clip(smoke.error, 600) });
+        priorError = smoke.error;
+        logAttempt(opts.projectId, opts.markerId, attempt, lastCode, { ok: false, error: smoke.error });
+        opts.onEvent({ type: 'progress', attempt, phase: 'validation-failed', error: priorError });
+        continue;
+      }
+    }
 
     if (validation.ok) {
       success = true;

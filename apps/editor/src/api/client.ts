@@ -93,7 +93,7 @@ export const uploadVideo = (id: string, file: File) => {
   const form = new FormData();
   form.append('video', file);
   return fetch(`${BASE}/projects/${id}/video`, { method: 'POST', body: form }).then((r) =>
-    json<{ url: string }>(r)
+    json<{ url: string; warnings?: string[]; info?: { width: number; height: number; durationSeconds: number; codec: string; hasAudio: boolean } }>(r)
   );
 };
 
@@ -134,20 +134,52 @@ export const deleteMarker = (id: string, markerId: string) =>
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   });
 
-export const exportProject = (id: string, includeVideo = false, perMarker = false) =>
-  fetch(`${BASE}/projects/${id}/export`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ includeVideo, perMarker }),
-  }).then((r) =>
-    json<{
-      success: boolean;
-      output?: string;
-      outputDir?: string;
-      outputs?: { markerId: string; file: string }[];
-      log?: string;
-    }>(r)
-  );
+export interface ExportStatus {
+  state: 'idle' | 'running' | 'done' | 'failed' | 'cancelled';
+  phase: 'preparing' | 'bundling' | 'rendering' | 'mixing' | 'finishing' | null;
+  percent: number;
+  message: string;
+  result?: { output?: string; outputDir?: string; outputs?: { markerId: string; file: string }[] };
+  error?: string;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export const getExportStatus = (id: string) => fetch(`${BASE}/projects/${id}/export/status`).then((r) => json<ExportStatus>(r));
+
+export const cancelExport = (id: string) => fetch(`${BASE}/projects/${id}/export/cancel`, { method: 'POST' }).then(() => undefined);
+
+// Starts an export and follows it until it finishes, reporting progress along the way. If the editor
+// reloads mid-export, calling this again with resume=true picks the running export back up.
+export async function exportProject(
+  id: string,
+  includeVideo: boolean,
+  perMarker: boolean,
+  onProgress: (status: ExportStatus) => void,
+  resume = false
+): Promise<ExportStatus> {
+  if (!resume) {
+    const started = await fetch(`${BASE}/projects/${id}/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ includeVideo, perMarker }),
+    }).then((r) => json<ExportStatus>(r));
+    onProgress(started);
+  }
+  let failures = 0;
+  for (;;) {
+    await sleep(700);
+    try {
+      const status = await getExportStatus(id);
+      failures = 0;
+      onProgress(status);
+      if (status.state !== 'running') return status;
+    } catch (err) {
+      // The runner may be restarting; give it a moment before giving up on following the export.
+      if (++failures >= 15) throw err;
+    }
+  }
+}
 
 export interface TranscriptSegment {
   start: number;
