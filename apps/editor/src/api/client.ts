@@ -159,6 +159,14 @@ export const transcribeProject = (id: string) =>
 export const getTranscript = (id: string) =>
   fetch(`${BASE}/projects/${id}/transcript`).then((r) => json<{ segments: TranscriptSegment[] }>(r));
 
+// Saves manual edits to the transcript text (e.g. fixing a misheard word) without re-running Whisper.
+export const updateTranscript = (id: string, segments: TranscriptSegment[]) =>
+  fetch(`${BASE}/projects/${id}/transcript`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ segments }),
+  }).then((r) => json<{ segments: TranscriptSegment[] }>(r));
+
 export interface RegenerateEvent {
   event: string;
   data: unknown;
@@ -233,10 +241,21 @@ export interface ProposedMarker {
   assets?: string[];
 }
 
-export const planMarkers = (id: string) =>
-  fetch(`${BASE}/projects/${id}/markers/plan`, { method: 'POST' }).then((r) =>
-    json<{ proposals: ProposedMarker[]; droppedCount: number }>(r)
-  );
+// context is optional free-text steering (e.g. "use a line graph for the compound interest
+// section") layered on top of the transcript the plan is otherwise based on.
+export const planMarkers = (id: string, context?: string) =>
+  fetch(`${BASE}/projects/${id}/markers/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context }),
+  }).then((r) => json<{ proposals: ProposedMarker[]; droppedCount: number }>(r));
+
+export const planMarkersFromIdea = (id: string, idea: string) =>
+  fetch(`${BASE}/projects/${id}/markers/plan-from-idea`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idea }),
+  }).then((r) => json<{ proposals: ProposedMarker[]; droppedCount: number }>(r));
 
 export interface ApplyMarkerInput {
   start: number;

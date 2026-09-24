@@ -15,12 +15,14 @@ import {
   regenerateMarker,
   transcribeProject,
   getTranscript,
+  updateTranscript,
   listAssets,
   uploadAsset,
   setMarkerAssets,
   describeAsset,
   saveAutoDescribe,
   planMarkers,
+  planMarkersFromIdea,
   applyMarkerPlan,
   videoUrl as videoUrlFor,
   type Asset,
@@ -35,9 +37,12 @@ import {
 import { DualLayerPreview, type DualLayerPreviewHandle } from './components/DualLayerPreview';
 import { Timeline } from './components/Timeline';
 import { AddMarkerPanel } from './components/AddMarkerPanel';
+import { IdeaPlanPanel } from './components/IdeaPlanPanel';
 import { MarkerInspector } from './components/MarkerInspector';
 import { AssetLibrary } from './components/AssetLibrary';
 import { MarkerPlanReview, type ReviewItem } from './components/MarkerPlanReview';
+import { PlanMarkersPanel } from './components/PlanMarkersPanel';
+import { TranscriptPanel } from './components/TranscriptPanel';
 import { CreateProjectModal } from './components/CreateProjectModal';
 
 const DEFAULT_COMPOSITION: CompositionConfig = { fps: 30, width: 1920, height: 1080, durationInFrames: 1800 };
@@ -121,10 +126,17 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [newMarkerPanelVisible, setNewMarkerPanelVisible] = useState(true);
   const [inspectorWidth, setInspectorWidth] = useState(340);
   const [planReviewOpen, setPlanReviewOpen] = useState(false);
+  const [ideaPanelOpen, setIdeaPanelOpen] = useState(false);
+  const [planPanelOpen, setPlanPanelOpen] = useState(false);
+  const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [droppedCount, setDroppedCount] = useState(0);
+  // Which proposed marker's area is being drawn on the preview, if any — mirrors
+  // editingRegionMarkerId/editingNewMarkerRegion but targets a reviewItems entry directly
+  // since it has no server-backed marker until the plan is applied.
+  const [editingPlanItemKey, setEditingPlanItemKey] = useState<string | null>(null);
   const [applyingPlan, setApplyingPlan] = useState(false);
   const previewRef = useRef<DualLayerPreviewHandle>(null);
   const resizingRef = useRef(false);
@@ -279,11 +291,23 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     try {
       const { segments } = await transcribeProject(projectId);
       setTranscript(segments);
+      setTranscriptPanelOpen(true);
     } catch (err) {
       setTranscribeError(err instanceof Error ? err.message : String(err));
     } finally {
       setTranscribing(false);
     }
+  };
+
+  const handleSaveTranscript = async (segments: TranscriptSegment[]) => {
+    if (!projectId) return;
+    const saved = await updateTranscript(projectId, segments);
+    setTranscript(saved.segments);
+  };
+
+  const handleSeek = (seconds: number) => {
+    previewRef.current?.pause();
+    previewRef.current?.seekTo(seconds);
   };
 
   const markEdited = () => {
@@ -321,7 +345,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     }
   };
 
-  const handlePlanMarkers = async () => {
+  const handlePlanMarkers = async (context: string) => {
     if (!projectId) return;
     if (editingRegionMarkerId || editingNewMarkerRegion) {
       setPlanError('Finish or cancel the current area edit first.');
@@ -330,7 +354,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     setPlanning(true);
     setPlanError(null);
     try {
-      const { proposals, droppedCount } = await planMarkers(projectId);
+      const { proposals, droppedCount } = await planMarkers(projectId, context);
       setReviewItems(
         proposals.map((p) => ({
           key: crypto.randomUUID(),
@@ -344,6 +368,43 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         }))
       );
       setDroppedCount(droppedCount);
+      setEditingPlanItemKey(null);
+      setPlanPanelOpen(false);
+      selectMarker(null);
+      setNewMarkerPanelVisible(false);
+      setPlanReviewOpen(true);
+    } catch (err) {
+      setPlanError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const handlePlanFromIdea = async (idea: string) => {
+    if (!projectId) return;
+    if (editingRegionMarkerId || editingNewMarkerRegion) {
+      setPlanError('Finish or cancel the current area edit first.');
+      return;
+    }
+    setPlanning(true);
+    setPlanError(null);
+    try {
+      const { proposals, droppedCount } = await planMarkersFromIdea(projectId, idea);
+      setReviewItems(
+        proposals.map((p) => ({
+          key: crypto.randomUUID(),
+          included: true,
+          start: p.start,
+          end: p.end,
+          prompt: p.prompt,
+          region: p.region,
+          allowImage: false,
+          assets: p.assets ?? [],
+        }))
+      );
+      setDroppedCount(droppedCount);
+      setEditingPlanItemKey(null);
+      setIdeaPanelOpen(false);
       selectMarker(null);
       setNewMarkerPanelVisible(false);
       setPlanReviewOpen(true);
@@ -360,12 +421,28 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const handleReviewItemRemove = (key: string) => {
     setReviewItems((prev) => prev.filter((it) => it.key !== key));
+    setEditingPlanItemKey((k) => (k === key ? null : k));
   };
 
   const handleCancelPlanReview = () => {
     setPlanReviewOpen(false);
     setReviewItems([]);
     setPlanError(null);
+    setEditingPlanItemKey(null);
+  };
+
+  const handleStartEditPlanItemRegion = (key: string) => {
+    setEditingRegionMarkerId(null);
+    setEditingNewMarkerRegion(false);
+    setEditingPlanItemKey(key);
+  };
+
+  const handleDoneEditPlanItemRegion = () => {
+    setEditingPlanItemKey(null);
+  };
+
+  const handleResetPlanItemRegion = () => {
+    if (editingPlanItemKey) handleReviewItemChange(editingPlanItemKey, { region: null });
   };
 
   // Mirrors triggerRegenerate's SSE-consumption pattern, but multiplexed across the
@@ -378,6 +455,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     const approved = reviewItems.filter((i) => i.included);
     if (approved.length === 0) return;
     markEdited();
+    setEditingPlanItemKey(null);
     setApplyingPlan(true);
     try {
       await applyMarkerPlan(
@@ -653,15 +731,18 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const durationSeconds = composition.durationInFrames / composition.fps;
 
   // Only one region overlay is ever active: the new-marker draft takes priority (it has
-  // no server-backed marker to fall back to), otherwise whichever existing marker is
-  // being edited.
+  // no server-backed marker to fall back to), then a proposed marker being reviewed
+  // (also unsaved), otherwise whichever existing marker is being edited.
   const activeRegionDraft = editingNewMarkerRegion
     ? newMarkerRegion ?? FULL_SCREEN_REGION
+    : editingPlanItemKey
+    ? reviewItems.find((i) => i.key === editingPlanItemKey)?.region ?? FULL_SCREEN_REGION
     : editingRegionMarkerId
     ? regionDraft
     : null;
   const handleRegionDraftChange = (region: MarkerRegion) => {
     if (editingNewMarkerRegion) setNewMarkerRegion(region);
+    else if (editingPlanItemKey) handleReviewItemChange(editingPlanItemKey, { region: isFullScreenRegion(region) ? null : region });
     else setRegionDraft(region);
   };
 
@@ -701,6 +782,26 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 />
               </label>
             )}
+            {baseLayer.type !== 'video' && (
+              <label
+                className="volume-control"
+                title="Length of the composition. There's no source video to derive this from, so set it directly."
+              >
+                <span>Duration (s)</span>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={Math.round(durationSeconds)}
+                  onChange={(e) => {
+                    const seconds = Number(e.target.value);
+                    if (!Number.isFinite(seconds) || seconds <= 0) return;
+                    handleDurationChange(Math.round(seconds * composition.fps));
+                  }}
+                  style={{ width: 56 }}
+                />
+              </label>
+            )}
             <button
               onClick={() => setLibraryOpen(true)}
               className="btn btn-sm"
@@ -711,13 +812,36 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             <button onClick={handleTranscribe} disabled={transcribing} className="btn btn-sm">
               {transcribing ? 'Transcribing…' : transcript.length > 0 ? 'Re-transcribe' : 'Transcribe video'}
             </button>
+            {transcript.length > 0 && (
+              <button onClick={() => setTranscriptPanelOpen(true)} className="btn btn-sm" title="View or edit the transcript text">
+                View transcript
+              </button>
+            )}
             <button
-              onClick={handlePlanMarkers}
+              onClick={() => {
+                selectMarker(null);
+                setNewMarkerPanelVisible(false);
+                setPlanError(null);
+                setPlanPanelOpen(true);
+              }}
               disabled={transcript.length === 0 || planning}
               className="btn btn-sm"
               title={transcript.length === 0 ? 'Transcribe the video first' : 'Have Claude propose markers from the transcript'}
             >
               {planning ? 'Planning…' : 'Plan markers'}
+            </button>
+            <button
+              onClick={() => {
+                selectMarker(null);
+                setNewMarkerPanelVisible(false);
+                setPlanError(null);
+                setIdeaPanelOpen(true);
+              }}
+              disabled={planning}
+              className="btn btn-sm"
+              title="Describe an idea and have Claude design a full sequence of markers to cover the video"
+            >
+              Design from idea
             </button>
             <label
               className="volume-control"
@@ -820,10 +944,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 isPlaying={isPlaying}
                 onPlayPause={handlePlayPause}
                 onStop={handleStop}
-                onSeek={(seconds) => {
-                  previewRef.current?.pause();
-                  previewRef.current?.seekTo(seconds);
-                }}
+                onSeek={handleSeek}
                 onSelect={selectMarker}
                 onDeselectAll={handleTimelineDeselect}
                 onRangeSelect={(start, end) => {
@@ -870,9 +991,37 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               onRemove={handleReviewItemRemove}
               onCancel={handleCancelPlanReview}
               onApply={handleApplyPlan}
+              editingRegionKey={editingPlanItemKey}
+              onStartEditRegion={handleStartEditPlanItemRegion}
+              onDoneEditRegion={handleDoneEditPlanItemRegion}
+              onResetRegion={handleResetPlanItemRegion}
             />
           )}
-          {projectId && !planReviewOpen && !selectedMarker && newMarkerPanelVisible && (
+          {projectId && !planReviewOpen && !selectedMarker && planPanelOpen && (
+            <PlanMarkersPanel
+              planning={planning}
+              error={planError}
+              onSubmit={handlePlanMarkers}
+              onCancel={() => {
+                setPlanPanelOpen(false);
+                setNewMarkerPanelVisible(true);
+                setPlanError(null);
+              }}
+            />
+          )}
+          {projectId && !planReviewOpen && !selectedMarker && ideaPanelOpen && (
+            <IdeaPlanPanel
+              planning={planning}
+              error={planError}
+              onSubmit={handlePlanFromIdea}
+              onCancel={() => {
+                setIdeaPanelOpen(false);
+                setNewMarkerPanelVisible(true);
+                setPlanError(null);
+              }}
+            />
+          )}
+          {projectId && !planReviewOpen && !selectedMarker && !ideaPanelOpen && !planPanelOpen && newMarkerPanelVisible && (
             <AddMarkerPanel
               projectId={projectId}
               assets={assets}
@@ -915,6 +1064,14 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           )}
         </div>
       </div>
+      {transcriptPanelOpen && projectId && (
+        <TranscriptPanel
+          segments={transcript}
+          onSave={handleSaveTranscript}
+          onClose={() => setTranscriptPanelOpen(false)}
+          onSeek={handleSeek}
+        />
+      )}
       {libraryOpen && projectId && (
         <AssetLibrary
           projectId={projectId}

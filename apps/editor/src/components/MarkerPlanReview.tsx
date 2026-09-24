@@ -35,6 +35,11 @@ interface Props {
   onRemove: (key: string) => void;
   onCancel: () => void;
   onApply: () => void;
+  // The item whose area is currently being drawn on the preview above, if any.
+  editingRegionKey: string | null;
+  onStartEditRegion: (key: string) => void;
+  onDoneEditRegion: () => void;
+  onResetRegion: () => void;
 }
 
 const rowStatus = (item: ReviewItem, run?: MarkerRunState): DisplayStatus | null => {
@@ -56,6 +61,10 @@ export const MarkerPlanReview: React.FC<Props> = ({
   onRemove,
   onCancel,
   onApply,
+  editingRegionKey,
+  onStartEditRegion,
+  onDoneEditRegion,
+  onResetRegion,
 }) => {
   const includedCount = items.filter((i) => i.included).length;
 
@@ -138,7 +147,33 @@ export const MarkerPlanReview: React.FC<Props> = ({
                     />
                   </div>
                 )}
-                <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{formatRegion(item.region)}</div>
+                <div>
+                  {editingRegionKey === item.key ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>
+                        Drag on the preview above to draw, move, or resize the area.
+                      </span>
+                      <button type="button" className="btn btn-sm" onClick={onResetRegion}>
+                        Full screen
+                      </button>
+                      <button type="button" className="btn btn-primary btn-sm" onClick={onDoneEditRegion}>
+                        Done
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{formatRegion(item.region)}</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={locked || (editingRegionKey !== null && editingRegionKey !== item.key)}
+                        onClick={() => onStartEditRegion(item.key)}
+                      >
+                        Edit area
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {item.error && <div className="field-error">{item.error}</div>}
                 {run && run.log.length > 0 && (
                   <div className="run-log">

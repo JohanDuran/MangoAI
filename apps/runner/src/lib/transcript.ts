@@ -21,6 +21,14 @@ export function readTranscript(id: string): TranscriptSegment[] {
   return data.segments ?? [];
 }
 
+// Lets the editor persist manual corrections to a transcript (e.g. fixing a misheard word)
+// without re-running Whisper.
+export function writeTranscript(id: string, segments: TranscriptSegment[]): void {
+  const file = transcriptFile(id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ segments }, null, 2));
+}
+
 // Strips the (often large) video stream and re-encodes just the audio as a low-bitrate
 // mono mp3 — typically 10-20x smaller than the source video, and Whisper transcribes it
 // just as well since it resamples internally regardless of input quality.
@@ -92,7 +100,7 @@ export async function transcribeProject(id: string): Promise<TranscriptSegment[]
       text: s.text.trim(),
     }));
 
-    fs.writeFileSync(transcriptFile(id), JSON.stringify({ segments }, null, 2));
+    writeTranscript(id, segments);
     log('info', 'transcribe.done', { project: id, segments: segments.length, ms: Date.now() - started });
     return segments;
   } finally {

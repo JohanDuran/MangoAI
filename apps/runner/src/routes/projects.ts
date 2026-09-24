@@ -32,12 +32,12 @@ import { validAssetIds } from '../lib/assets.js';
 import { syncAssetModule } from '../lib/assetModule.js';
 import { regenerateRegistry } from '../lib/registry.js';
 import { generateMarkerWithRetry } from '../lib/generateMarker.js';
-import { planMarkers } from '../lib/planner.js';
+import { planMarkers, planMarkersFromIdea } from '../lib/planner.js';
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
 import { markerFrameRanges, perMarkerFrameRanges, type FrameRange } from '../lib/ranges.js';
 import { renderOverlayJobs } from '../lib/render.js';
-import { transcribeProject, readTranscript, transcriptForRange } from '../lib/transcript.js';
+import { transcribeProject, readTranscript, writeTranscript, transcriptForRange, type TranscriptSegment } from '../lib/transcript.js';
 
 export const projectsRouter = Router();
 
@@ -280,11 +280,44 @@ projectsRouter.get('/projects/:id/transcript', (req, res) => {
   res.json({ segments: readTranscript(req.params.id) });
 });
 
+const isValidSegment = (s: unknown): s is TranscriptSegment =>
+  !!s &&
+  typeof s === 'object' &&
+  typeof (s as TranscriptSegment).start === 'number' &&
+  typeof (s as TranscriptSegment).end === 'number' &&
+  typeof (s as TranscriptSegment).text === 'string';
+
+// Lets the editor save manual corrections to the transcript text (e.g. a misheard word) —
+// the planner and per-marker "said in the video" context both read from this file.
+projectsRouter.put('/projects/:id/transcript', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const segments = (req.body as { segments?: unknown }).segments;
+  if (!Array.isArray(segments) || !segments.every(isValidSegment)) {
+    return res.status(400).json({ error: 'segments must be a list of {start, end, text}' });
+  }
+  writeTranscript(req.params.id, segments);
+  res.json({ segments });
+});
+
 projectsRouter.post('/projects/:id/markers/plan', async (req, res) => {
+  const { context } = req.body as { context?: unknown };
   try {
-    res.json(await planMarkers(req.params.id));
+    res.json(await planMarkers(req.params.id, typeof context === 'string' ? context : undefined));
   } catch (err) {
     writeLog('error', 'route.error', { route: 'plan-markers', project: req.params.id, error: err });
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+projectsRouter.post('/projects/:id/markers/plan-from-idea', async (req, res) => {
+  const { idea } = req.body as { idea?: unknown };
+  if (typeof idea !== 'string' || !idea.trim()) {
+    return res.status(400).json({ error: 'idea must be a non-empty string' });
+  }
+  try {
+    res.json(await planMarkersFromIdea(req.params.id, idea));
+  } catch (err) {
+    writeLog('error', 'route.error', { route: 'plan-markers-from-idea', project: req.params.id, error: err });
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
