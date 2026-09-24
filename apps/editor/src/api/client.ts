@@ -1,4 +1,6 @@
-export const BASE = 'http://localhost:5175';
+// In development the editor runs on the Vite server and talks to the runner directly. When the runner
+// serves the built editor (the installed app), API calls are same-origin.
+export const BASE: string = import.meta.env.DEV ? (import.meta.env.VITE_RUNNER_URL as string | undefined) ?? 'http://localhost:5175' : '';
 
 // What the timeline is built on top of. Absent (or 'video') means the classic flow: an uploaded
 // raw video drives preview/export. The others let a project exist with no uploaded video.

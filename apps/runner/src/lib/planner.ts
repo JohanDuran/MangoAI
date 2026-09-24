@@ -173,7 +173,7 @@ export async function planMarkers(id: string, context?: string): Promise<PlanMar
     context: context?.trim() || undefined,
   });
 
-  const { text } = await withProjectLock(id, () =>
+  const { text, success, failure } = await withProjectLock(id, () =>
     runClaudeHeadlessCapturingText({
       cwd: projectDir(id),
       prompt,
@@ -183,6 +183,7 @@ export async function planMarkers(id: string, context?: string): Promise<PlanMar
     })
   );
 
+  if (!success) throw new Error(failure?.message ?? 'Claude could not produce a plan.');
   const raw = extractJsonArray(text);
   const result = finalizeProposals(raw, id, durationSeconds, markers);
 
@@ -207,7 +208,7 @@ export async function planMarkersFromIdea(id: string, idea: string): Promise<Pla
     library: readAssets(id),
   });
 
-  const { text } = await withProjectLock(id, () =>
+  const { text, success, failure } = await withProjectLock(id, () =>
     runClaudeHeadlessCapturingText({
       cwd: projectDir(id),
       prompt,
@@ -217,6 +218,7 @@ export async function planMarkersFromIdea(id: string, idea: string): Promise<Pla
     })
   );
 
+  if (!success) throw new Error(failure?.message ?? 'Claude could not produce a plan.');
   const raw = extractJsonArray(text);
   const result = finalizeProposals(raw, id, durationSeconds, markers);
 

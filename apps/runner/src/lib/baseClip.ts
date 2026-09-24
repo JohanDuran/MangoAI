@@ -1,4 +1,5 @@
-import { spawn } from 'node:child_process';
+import { spawnHidden } from './proc.js';
+import { ffmpegBin, ffprobeBin } from './bin.js';
 import type { BaseLayer } from './baseLayer.js';
 
 export interface BaseClipGeometry {
@@ -50,7 +51,7 @@ export function synthesizeBaseClip(baseLayer: BaseLayer, geometry: BaseClipGeome
 
   return new Promise((resolve) => {
     let log = '';
-    const child = spawn('ffmpeg', ['-y', ...args, '-pix_fmt', 'yuv420p', '-c:v', 'libx264', outFile]);
+    const child = spawnHidden(ffmpegBin(), ['-y', ...args, '-pix_fmt', 'yuv420p', '-c:v', 'libx264', outFile]);
     child.stderr.on('data', (c) => (log += c.toString()));
     child.on('error', (err) => resolve({ ok: false, log: `Could not run ffmpeg: ${err.message}` }));
     child.on('close', (code) => resolve({ ok: code === 0, log }));

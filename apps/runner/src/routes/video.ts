@@ -9,6 +9,8 @@ import { updateCompositionConfig } from '../lib/composition.js';
 import { assetFilePath } from '../lib/images.js';
 import { regenerateRegistry } from '../lib/registry.js';
 import { skillPublicFile } from '../lib/skills.js';
+import { bundleOverlay } from '../lib/overlayBundle.js';
+import { assertSafeId, InvalidIdError } from '../lib/paths.js';
 
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -43,6 +45,19 @@ videoRouter.post('/projects/:id/video', (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'video file is required (field name "video")' });
     res.status(201).json({ url: `/projects/${req.params.id}/video` });
   });
+});
+
+// The project's generated overlay, bundled into one ES module for the editor's live preview.
+videoRouter.get('/projects/:id/overlay.js', async (req, res) => {
+  try {
+    assertSafeId('project id', req.params.id);
+    if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+    const { code } = await bundleOverlay(req.params.id);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('application/javascript').send(code);
+  } catch (err) {
+    res.status(err instanceof InvalidIdError ? 400 : 500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 videoRouter.get('/projects/:id/video', (req, res) => {

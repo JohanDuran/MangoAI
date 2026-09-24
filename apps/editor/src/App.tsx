@@ -63,7 +63,8 @@ export interface MarkerRunState {
 // from the previous project can leak into the next.
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState<string | null>(null);
+  // ?project=<id> opens that project directly.
+  const [projectId, setProjectId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('project'));
 
   useEffect(() => {
     listProjects().then(setProjects);

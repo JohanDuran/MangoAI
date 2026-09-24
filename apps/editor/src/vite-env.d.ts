@@ -1,3 +1,6 @@
 /// <reference types="vite/client" />
 
-declare const __PROJECTS_ABS_PATH__: string;
+interface Window {
+  // Modules the runner-bundled overlay code shares with the editor (see overlayBundle.ts in the runner).
+  __MANGO_SHARED__?: Record<string, unknown>;
+}

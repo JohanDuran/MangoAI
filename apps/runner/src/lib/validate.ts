@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild';
+import { NODE_MODULES_DIR } from './paths.js';
 
 export interface ValidationResult {
   ok: boolean;
@@ -18,6 +19,7 @@ export async function validateMarkerFile(filePath: string, extraExternals: strin
       format: 'esm',
       platform: 'browser',
       logLevel: 'silent',
+      nodePaths: [NODE_MODULES_DIR],
       external: ['react', 'react-dom', 'remotion', '@remotion/*', ...extraExternals],
     });
     return { ok: true };

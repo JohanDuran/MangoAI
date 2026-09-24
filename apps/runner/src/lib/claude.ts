@@ -1,7 +1,9 @@
-import { spawn } from 'node:child_process';
 import readline from 'node:readline';
+import type { ChildProcess } from 'node:child_process';
 import { log, clip, type LogFields } from './log.js';
 import type { PromptAsset } from './assets.js';
+import { findClaude, quoteForCmd } from './bin.js';
+import { spawnHidden, killTree } from './proc.js';
 
 // Claude runs for one project are executed one at a time. A second request waits for the first
 // instead of killing it: two generations for different markers used to kill each other's
@@ -22,6 +24,66 @@ export function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Pro
   return run;
 }
 
+// Runs still in flight, so a shutdown (or a timeout) can end them instead of leaving orphans.
+const running = new Set<ChildProcess>();
+export function killAllClaude(): void {
+  for (const child of running) killTree(child);
+}
+
+export type ClaudeFailureKind =
+  | 'not-installed'
+  | 'not-signed-in'
+  | 'usage-limit'
+  | 'overloaded'
+  | 'unsupported-cli'
+  | 'timeout'
+  | 'cancelled'
+  | 'failed';
+
+export interface ClaudeFailure {
+  kind: ClaudeFailureKind;
+  // Shown to the user as is.
+  message: string;
+  // Whether trying the same request again can plausibly help.
+  retryable: boolean;
+}
+
+// Turns whatever Claude printed when it failed into something a person can act on. Only the
+// transient kinds are worth retrying; a signed-out CLI fails identically three times in a row.
+export function classifyClaudeFailure(input: {
+  exitCode: number | null;
+  text: string;
+  spawnError?: string;
+  timedOut?: boolean;
+  cancelled?: boolean;
+}): ClaudeFailure {
+  const text = input.text;
+  if (input.cancelled) return { kind: 'cancelled', message: 'The request was cancelled.', retryable: false };
+  if (input.timedOut) {
+    return { kind: 'timeout', message: 'Claude took too long and was stopped. Try again, or simplify the request.', retryable: true };
+  }
+  if (input.spawnError) {
+    const missing = /ENOENT|not found|EINVAL/i.test(input.spawnError);
+    return missing
+      ? { kind: 'not-installed', message: 'The Claude Code CLI was not found. Install it, sign in, then try again (see the Status panel).', retryable: false }
+      : { kind: 'failed', message: `Could not start Claude: ${input.spawnError}`, retryable: false };
+  }
+  if (/not logged in|please run \/login|invalid api key|authentication[_ ]error|oauth token .*(expired|revoked)|\b401\b/i.test(text)) {
+    return { kind: 'not-signed-in', message: 'Claude Code is not signed in. Run `claude` in a terminal, sign in, then try again.', retryable: false };
+  }
+  if (/usage limit|credit balance|quota|rate[_ ]limit|limit reached|too many requests|\b429\b/i.test(text)) {
+    return { kind: 'usage-limit', message: 'Your Claude usage limit was reached. Wait for it to reset (or check your plan), then try again.', retryable: false };
+  }
+  if (/overloaded|\b529\b|\b503\b|temporar|econnreset|etimedout|enotfound|network|socket hang up/i.test(text)) {
+    return { kind: 'overloaded', message: 'Claude is temporarily unavailable or the network dropped. Trying again usually works.', retryable: true };
+  }
+  if (/unknown option|unknown argument|unrecognized|invalid (option|argument)|unexpected argument/i.test(text)) {
+    return { kind: 'unsupported-cli', message: 'This version of the Claude Code CLI does not support a feature MangoAI needs. Update it with `claude update`.', retryable: false };
+  }
+  const tail = text.trim() ? `: ${clip(text.trim().split(/\r?\n/).slice(-3).join(' '), 300)}` : '';
+  return { kind: 'failed', message: `Claude stopped with an error${input.exitCode !== null ? ` (exit code ${input.exitCode})` : ''}${tail}`, retryable: true };
+}
+
 export interface RunClaudeOptions {
   cwd: string;
   prompt: string;
@@ -38,13 +100,21 @@ export interface RunClaudeOptions {
   envExclude?: string[];
   // Extra fields added to every log line of this run (project, marker, attempt, ...).
   logContext?: LogFields;
+  // The run is stopped after this long. Defaults to MANGO_CLAUDE_TIMEOUT_MS or 10 minutes.
+  timeoutMs?: number;
+  // Aborting ends the run (for example when the browser that asked for it went away).
+  signal?: AbortSignal;
   onEvent: (event: unknown) => void;
 }
 
 export interface RunClaudeResult {
   success: boolean;
   exitCode: number | null;
+  failure?: ClaudeFailure;
 }
+
+const DEFAULT_TIMEOUT_MS = Number(process.env.MANGO_CLAUDE_TIMEOUT_MS) || 10 * 60 * 1000;
+const LOG_PROMPTS = process.env.MANGO_LOG_PROMPTS === '1';
 
 // Turns the raw stream-json events of a Claude run into readable log lines: what it used, what came
 // back, and what the run cost.
@@ -104,19 +174,24 @@ export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResu
     allowedTools: opts.allowedTools,
     mcpConfig: opts.mcpConfigPath ? true : undefined,
     promptChars: opts.prompt.length,
-    prompt: clip(opts.prompt, 6000),
+    // Prompts contain the user's transcript, so they only reach the log when explicitly enabled.
+    prompt: LOG_PROMPTS ? clip(opts.prompt, 6000) : undefined,
   });
 
   return new Promise((resolve) => {
-    const args = [
-      '--print',
-      opts.prompt,
-      '--output-format',
-      'stream-json',
-      '--verbose',
-      '--tools',
-      opts.tools.join(','),
-    ];
+    const binary = findClaude();
+    if (!binary) {
+      const failure = classifyClaudeFailure({ exitCode: null, text: '', spawnError: 'claude executable not found' });
+      logClaudeEvent(ctx, { type: 'spawn-error', message: failure.message });
+      opts.onEvent({ type: 'spawn-error', message: failure.message });
+      resolve({ success: false, exitCode: null, failure });
+      return;
+    }
+
+    // The prompt is sent on stdin, not as an argument: it embeds the marker's code and the
+    // transcript, which can exceed the ~32k-character Windows command-line limit, and stdin needs
+    // no quoting even when a .cmd shim has to go through a shell.
+    const args = ['--print', '--output-format', 'stream-json', '--verbose', '--tools', opts.tools.join(',')];
     if (opts.model) args.push('--model', opts.model);
     if (opts.allowedTools && opts.allowedTools.length > 0) args.push('--allowedTools', opts.allowedTools.join(','));
     if (opts.mcpConfigPath) args.push('--mcp-config', opts.mcpConfigPath);
@@ -124,23 +199,43 @@ export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResu
     // user-level skills/plugins/settings.
     args.push('--strict-mcp-config', '--setting-sources', 'project', '--permission-mode', 'acceptEdits');
 
-    const child = spawn(
-      'claude',
-      args,
-      // Do NOT set shell: true here — claude resolves to a real .exe (confirmed via
-      // `Get-Command claude`), and routing through cmd.exe on Windows silently mangles
-      // multi-line prompt arguments (backticks, quotes) instead of passing them verbatim
-      // the way spawn()'s argv array does by default.
-      // stdin is ignored because an open, never-written pipe makes claude wait ~3s for
-      // input before starting, on every call.
-      { cwd: opts.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] }
-    );
+    const child = binary.viaShell
+      ? spawnHidden(quoteForCmd(binary.command), args.map(quoteForCmd), { cwd: opts.cwd, env, shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
+      : spawnHidden(binary.command, args, { cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    running.add(child);
 
-    const rl = readline.createInterface({ input: child.stdout });
+    let timedOut = false;
+    let cancelled = false;
+    let spawnError: string | undefined;
+    let resultText = '';
+    let resultIsError = false;
+    let stderr = '';
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child);
+    }, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const onAbort = () => {
+      cancelled = true;
+      killTree(child);
+    };
+    if (opts.signal?.aborted) onAbort();
+    else opts.signal?.addEventListener('abort', onAbort, { once: true });
+
+    child.stdin?.on('error', () => {
+      // The process ended before reading everything; its exit code tells the story.
+    });
+    child.stdin?.end(opts.prompt);
+
+    const rl = readline.createInterface({ input: child.stdout! });
     rl.on('line', (line) => {
       if (!line.trim()) return;
       try {
         const event = JSON.parse(line);
+        if (event?.type === 'result') {
+          resultIsError = !!event.is_error;
+          if (typeof event.result === 'string') resultText = event.result;
+        }
         logClaudeEvent(ctx, event);
         opts.onEvent(event);
       } catch {
@@ -148,24 +243,37 @@ export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResu
       }
     });
 
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
+    child.stderr?.on('data', (chunk) => {
       stderr += chunk.toString();
+      if (stderr.length > 20000) stderr = stderr.slice(-20000);
     });
 
-    child.on('close', (code) => {
-      if (code !== 0 && stderr) {
-        logClaudeEvent(ctx, { type: 'stderr', message: stderr });
-        opts.onEvent({ type: 'stderr', message: stderr });
+    let finished = false;
+    const finish = (code: number | null) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
+      running.delete(child);
+      const ok = code === 0 && !resultIsError && !timedOut && !cancelled;
+      let failure: ClaudeFailure | undefined;
+      if (!ok) {
+        failure = classifyClaudeFailure({ exitCode: code, text: `${resultText}\n${stderr}`, spawnError, timedOut, cancelled });
+        if (stderr) {
+          logClaudeEvent(ctx, { type: 'stderr', message: stderr });
+          opts.onEvent({ type: 'stderr', message: stderr });
+        }
       }
-      log(code === 0 ? 'info' : 'error', 'claude.exit', { ...ctx, code, ms: Date.now() - started });
-      resolve({ success: code === 0, exitCode: code });
-    });
+      log(ok ? 'info' : 'error', 'claude.exit', { ...ctx, code, ms: Date.now() - started, failure: failure?.kind });
+      resolve({ success: ok, exitCode: code, failure });
+    };
 
+    child.on('close', finish);
     child.on('error', (err) => {
+      spawnError = err.message;
       logClaudeEvent(ctx, { type: 'spawn-error', message: err.message });
       opts.onEvent({ type: 'spawn-error', message: err.message });
-      resolve({ success: false, exitCode: null });
+      finish(null);
     });
   });
 }

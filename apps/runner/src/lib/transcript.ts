@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawnHidden } from './proc.js';
+import { ffmpegBin, ffprobeBin } from './bin.js';
 import { projectDir } from './paths.js';
 import { findRawVideo } from './video.js';
 import { log } from './log.js';
+import { readJson, writeJsonAtomic } from './store.js';
 
 export interface TranscriptSegment {
   start: number;
@@ -17,7 +19,7 @@ const MAX_WHISPER_BYTES = 25 * 1024 * 1024;
 export function readTranscript(id: string): TranscriptSegment[] {
   const file = transcriptFile(id);
   if (!fs.existsSync(file)) return [];
-  const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  const data = readJson<{ segments?: TranscriptSegment[] }>(file);
   return data.segments ?? [];
 }
 
@@ -26,7 +28,7 @@ export function readTranscript(id: string): TranscriptSegment[] {
 export function writeTranscript(id: string, segments: TranscriptSegment[]): void {
   const file = transcriptFile(id);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ segments }, null, 2));
+  writeJsonAtomic(file, { segments });
 }
 
 // Strips the (often large) video stream and re-encodes just the audio as a low-bitrate
@@ -34,10 +36,9 @@ export function writeTranscript(id: string, segments: TranscriptSegment[]): void
 // just as well since it resamples internally regardless of input quality.
 function extractAudio(videoPath: string, outPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      'ffmpeg',
-      ['-y', '-i', videoPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k', outPath],
-      { shell: process.platform === 'win32' }
+    const child = spawnHidden(
+      ffmpegBin(),
+      ['-y', '-i', videoPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k', outPath]
     );
     let stderr = '';
     child.stderr.on('data', (c) => (stderr += c.toString()));

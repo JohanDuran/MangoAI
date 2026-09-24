@@ -1,14 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { PROJECTS_ROOT, TEMPLATES_ROOT, projectDir, markerFile } from './paths.js';
+import { PROJECTS_ROOT, TEMPLATES_ROOT, SAFE_ID, projectDir, markerFile } from './paths.js';
+import { readJson, writeJsonAtomic } from './store.js';
 import { readMarkers, writeMarkers, type Marker, type MarkerRegion } from './markers.js';
 import { regenerateRegistry } from './registry.js';
 import { defaultSkillNames } from './skills.js';
 import { DEFAULT_BASE_LAYER, type BaseLayer } from './baseLayer.js';
 
+// Bump when the on-disk project layout changes and add a step to migrate.ts.
+export const CURRENT_SCHEMA_VERSION = 1;
+
 export interface Project {
   id: string;
+  // Absent on projects created before versioning existed (treated as 0 by the migrations).
+  schemaVersion?: number;
   name: string;
   createdAt: string;
   // Skills enabled for this project. Absent on projects created before skills existed, which
@@ -49,12 +55,13 @@ export function createProject(name: string, opts: CreateProjectOptions = {}): Pr
   const baseLayer = opts.baseLayer ?? DEFAULT_BASE_LAYER;
   const project: Project = {
     id,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     name,
     createdAt: new Date().toISOString(),
     skills: defaultSkillNames(),
     ...(baseLayer.type !== 'video' ? { baseLayer } : {}),
   };
-  fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify(project, null, 2));
+  writeJsonAtomic(path.join(dir, 'project.json'), project);
   fs.copyFileSync(path.join(TEMPLATES_ROOT, 'CLAUDE.md'), path.join(dir, 'CLAUDE.md'));
 
   fs.writeFileSync(path.join(dir, '00_input', 'markers.json'), '[]\n');
@@ -85,7 +92,7 @@ export function listProjects(): Project[] {
   if (!fs.existsSync(PROJECTS_ROOT)) return [];
   return fs
     .readdirSync(PROJECTS_ROOT, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
+    .filter((d) => d.isDirectory() && SAFE_ID.test(d.name))
     .map((d) => readProject(d.name))
     .filter((p): p is Project => p !== null);
 }
@@ -93,7 +100,11 @@ export function listProjects(): Project[] {
 export function readProject(id: string): Project | null {
   const file = path.join(projectDir(id), 'project.json');
   if (!fs.existsSync(file)) return null;
-  return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  return readJson<Project>(file);
+}
+
+export function writeProject(project: Project): void {
+  writeJsonAtomic(path.join(projectDir(project.id), 'project.json'), project);
 }
 
 export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[] }): Marker {
@@ -136,7 +147,7 @@ export function setProjectSkills(id: string, skills: string[]): Project {
   const project = readProject(id);
   if (!project) throw new Error(`Project ${id} not found`);
   const next: Project = { ...project, skills };
-  fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify(next, null, 2));
+  writeProject(next);
   return next;
 }
 
@@ -144,7 +155,7 @@ export function setAutoDescribeImages(id: string, value: boolean): Project {
   const project = readProject(id);
   if (!project) throw new Error(`Project ${id} not found`);
   const next: Project = { ...project, autoDescribeImages: value };
-  fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify(next, null, 2));
+  writeProject(next);
   return next;
 }
 
@@ -159,7 +170,7 @@ export function baseLayerOf(id: string): BaseLayer {
 export function setOverlayVolume(id: string, volume: number): void {
   const project = readProject(id);
   if (!project) throw new Error(`Project ${id} not found`);
-  fs.writeFileSync(path.join(projectDir(id), 'project.json'), JSON.stringify({ ...project, overlayVolume: volume }, null, 2));
+  writeProject({ ...project, overlayVolume: volume });
 }
 
 const CLAUDE_MD_VERSION = /^<!-- mangoai-claude-md: \d+ -->/;

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectDir } from './paths.js';
+import { readJson, writeJsonAtomic } from './store.js';
 
 export interface CompositionConfig {
   fps: number;
@@ -14,7 +15,7 @@ export interface CompositionConfig {
 const configFile = (id: string) => path.join(projectDir(id), '03_remotion_code', 'CompositionConfig.json');
 
 export function readCompositionConfig(id: string): CompositionConfig {
-  return JSON.parse(fs.readFileSync(configFile(id), 'utf-8'));
+  return readJson<CompositionConfig>(configFile(id));
 }
 
 export function updateCompositionConfig(
@@ -22,6 +23,6 @@ export function updateCompositionConfig(
   patch: Partial<CompositionConfig>
 ): CompositionConfig {
   const next = { ...readCompositionConfig(id), ...patch };
-  fs.writeFileSync(configFile(id), JSON.stringify(next, null, 2));
+  writeJsonAtomic(configFile(id), next);
   return next;
 }

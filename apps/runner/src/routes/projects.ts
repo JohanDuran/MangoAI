@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawnHidden } from '../lib/proc.js';
+import { ffmpegBin, ffprobeBin } from '../lib/bin.js';
 import { projectDir, markerFile, PROJECTS_ROOT } from '../lib/paths.js';
 import {
   createProject,
@@ -60,7 +61,7 @@ async function applyOverlayVolume(file: string, volume: number): Promise<{ ok: b
   const audioArgs = volume === 0 ? ['-an'] : ['-af', `volume=${volume}`, '-c:a', isMov ? 'pcm_s16le' : 'libopus'];
   const run = await new Promise<{ code: number | null; log: string }>((resolve) => {
     let log = '';
-    const child = spawn('ffmpeg', ['-y', '-i', file, '-c:v', 'copy', ...audioArgs, tmp]);
+    const child = spawnHidden(ffmpegBin(), ['-y', '-i', file, '-c:v', 'copy', ...audioArgs, tmp]);
     child.stderr.on('data', (c) => (log += c.toString()));
     child.on('error', (err) => resolve({ code: -1, log: `Could not run ffmpeg: ${err.message}` }));
     child.on('close', (code) => resolve({ code, log }));
@@ -76,7 +77,7 @@ async function applyOverlayVolume(file: string, volume: number): Promise<{ ok: b
 function hasAudioStream(file: string): Promise<boolean> {
   return new Promise((resolve) => {
     let out = '';
-    const child = spawn('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file]);
+    const child = spawnHidden(ffprobeBin(), ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file]);
     child.stdout.on('data', (c) => (out += c.toString()));
     child.on('error', () => resolve(false));
     child.on('close', () => resolve(out.trim().length > 0));
@@ -90,7 +91,7 @@ function videoEncoder(): Promise<string[]> {
   videoEncoderArgs ??= new Promise((resolve) => {
     const cpu = ['-c:v', 'libx264'];
     if (process.env.MANGO_VIDEO_ENCODER === 'libx264') return resolve(cpu);
-    const child = spawn('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=0.2', '-c:v', 'h264_nvenc', '-f', 'null', '-']);
+    const child = spawnHidden(ffmpegBin(), ['-v', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=0.2', '-c:v', 'h264_nvenc', '-f', 'null', '-']);
     child.on('error', () => resolve(cpu));
     child.on('close', (code) => resolve(code === 0 ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', '23', '-b:v', '0'] : cpu));
   });
@@ -100,7 +101,7 @@ function videoEncoder(): Promise<string[]> {
 function probeVideoSize(file: string): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {
     let out = '';
-    const child = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', file]);
+    const child = spawnHidden(ffprobeBin(), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', file]);
     child.stdout.on('data', (c) => (out += c.toString()));
     child.on('error', () => resolve(null));
     child.on('close', () => {
@@ -675,8 +676,8 @@ projectsRouter.post('/projects/:id/export', async (req, res) => {
     const mixStarted = Date.now();
     const mix = await new Promise<{ code: number | null; log: string }>((resolve) => {
       let log = '';
-      const child = spawn(
-        'ffmpeg',
+      const child = spawnHidden(
+        ffmpegBin(),
         [
           '-y',
           '-i', raw,

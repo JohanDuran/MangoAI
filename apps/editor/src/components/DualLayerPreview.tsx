@@ -1,7 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { RegionOverlay } from './RegionOverlay';
-import type { BaseLayer, MarkerRegion } from '../api/client';
+import { BASE, type BaseLayer, type MarkerRegion } from '../api/client';
 
 interface Props {
   projectId: string;
@@ -101,16 +101,16 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
   }));
 
   useEffect(() => {
-    // Resolved fresh on every call (no pre-scanned glob) so it works for projects and
-    // marker edits created after this component first loaded — a static import.meta.glob
-    // here would only ever see files that existed at that first-load moment.
+    // The runner bundles the project's generated overlay on request, so it picks up projects and
+    // marker edits created after this component first loaded.
     let cancelled = false;
-    const url = `/@fs/${__PROJECTS_ABS_PATH__}/${projectId}/03_remotion_code/CustomOverlay.tsx?t=${reloadToken}`;
+    const url = `${BASE}/projects/${encodeURIComponent(projectId)}/overlay.js?t=${reloadToken}`;
     import(/* @vite-ignore */ url)
       .then((mod: { default: React.ComponentType }) => {
         if (!cancelled) setOverlay(() => mod.default);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('Could not load the overlay for this project', err);
         if (!cancelled) setOverlay(null);
       });
     return () => {

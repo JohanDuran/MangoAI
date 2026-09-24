@@ -43,7 +43,9 @@ const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 const MANAGED_MARKER = '.mangoai-managed';
 
-export const runnerUrl = () => `http://localhost:${process.env.PORT || 5175}`;
+// Where the runner can be reached, as written into generated code and skill files. Set by the
+// server once it knows its real port (the desktop app picks a free one).
+export const runnerUrl = () => `http://${process.env.MANGO_HOST || 'localhost'}:${process.env.PORT || 5175}`;
 
 function parseFrontmatter(text: string): Record<string, string> {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
@@ -232,8 +234,10 @@ export function prepareClaudeCall(opts: { projectId: string; enabled: string[]; 
     const key = mcpServerKey(skill.name);
     // Declared secrets are not written here: the server inherits them from claude's environment,
     // so no file inside the project (which Claude can read) ever contains a key.
-    const env = { MANGOAI_PROJECT_DIR: projectDir(opts.projectId), MANGOAI_RUNNER_URL: runnerUrl() };
-    servers[key] = { command: 'node', args: [path.resolve(skill.dir, skill.manifest.mcp.server)], env };
+    // ELECTRON_RUN_AS_NODE lets the desktop app's own executable act as the node runtime here, since
+    // a machine that installed MangoAI does not necessarily have node on its PATH.
+    const env = { MANGOAI_PROJECT_DIR: projectDir(opts.projectId), MANGOAI_RUNNER_URL: runnerUrl(), ELECTRON_RUN_AS_NODE: '1' };
+    servers[key] = { command: process.execPath, args: [path.resolve(skill.dir, skill.manifest.mcp.server)], env };
     for (const tool of skill.manifest.mcp.tools) allowedTools.push(`mcp__${key}__${tool}`);
   }
 

@@ -25,6 +25,8 @@ export interface GenerateMarkerOptions {
   regionWidth: number;
   regionHeight: number;
   isFullScreen: boolean;
+  // Aborting stops the run (the browser that asked for it went away or the user cancelled).
+  signal?: AbortSignal;
   onEvent: (e: { type: 'progress' | 'claude'; attempt?: number; phase?: string; error?: string; raw?: unknown }) => void;
 }
 
@@ -50,6 +52,10 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
   if (projectAssets.attached.length > 0) log('info', 'marker.assets', { ...ctx, attached: projectAssets.attached.map((a) => a.id), library: projectAssets.library.length });
 
   for (let attempt = 1; attempt <= 3; attempt++) {
+    if (opts.signal?.aborted) {
+      priorError = 'The request was cancelled.';
+      break;
+    }
     opts.onEvent({ type: 'progress', attempt, phase: 'invoking-claude' });
 
     const prompt = buildRegeneratePrompt({
@@ -101,15 +107,18 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
         mcpConfigPath: config.mcpConfigPath,
         envExclude: config.envExclude,
         logContext: { ...ctx, attempt },
+        signal: opts.signal,
         onEvent: (event) => opts.onEvent({ type: 'claude', raw: event }),
       });
       return { result, config };
     });
 
     if (!result.success) {
-      priorError = `Claude process exited with code ${result.exitCode}`;
-      log('warn', 'marker.claude_failed', { ...ctx, attempt, exitCode: result.exitCode });
+      priorError = result.failure?.message ?? `Claude process exited with code ${result.exitCode}`;
+      log('warn', 'marker.claude_failed', { ...ctx, attempt, exitCode: result.exitCode, failure: result.failure?.kind });
       opts.onEvent({ type: 'progress', attempt, phase: 'claude-failed', error: priorError });
+      // A signed-out CLI or a usage limit fails the same way every time; stop instead of burning attempts.
+      if (result.failure && !result.failure.retryable) break;
       continue;
     }
 

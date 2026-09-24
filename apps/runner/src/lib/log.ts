@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { RUNNER_ROOT } from './paths.js';
+import { LOG_DIR } from './paths.js';
 
 // One app-level log for everything the runner does. Each line is
 //   <ISO time> <LEVEL> <event> key=value key=value ...
 // so it is easy to read, grep and follow with `tail -f`. Project and marker ids are fields, so
 // `grep project=my-project-1a2b3c` shows everything that happened to one project.
 
-export const LOG_DIR = path.join(RUNNER_ROOT, 'logs');
+export { LOG_DIR };
 export const LOG_FILE = path.join(LOG_DIR, 'runner.log');
 const MAX_BYTES = 5 * 1024 * 1024;
 const CONSOLE_LINE_MAX = 400;

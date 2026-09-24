@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectDir } from './paths.js';
+import { readJson, writeJsonAtomic } from './store.js';
 
 // Normalized 0-1 fractions of the composition canvas — resolution-independent, so a
 // region drawn on a 1080p preview still lands correctly if the video is later swapped
@@ -38,11 +39,11 @@ const markersFile = (id: string) => path.join(projectDir(id), '00_input', 'marke
 export function readMarkers(id: string): Marker[] {
   const file = markersFile(id);
   if (!fs.existsSync(file)) return [];
-  return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  return readJson<Marker[]>(file);
 }
 
 export function writeMarkers(id: string, markers: Marker[]): void {
-  fs.writeFileSync(markersFile(id), JSON.stringify(markers, null, 2));
+  writeJsonAtomic(markersFile(id), markers);
 }
 
 export function findMarker(id: string, markerId: string): Marker {
