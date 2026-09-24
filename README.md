@@ -153,6 +153,22 @@ server run code on your machine, so only enable skills you trust.
 - `ffmpeg` and `ffprobe` **4.4 or newer** on your PATH (audio extraction, export, and mixing)
 - `OPENAI_API_KEY` in `apps/runner/.env` for transcription and image generation (optional)
 
+## Logs
+The runner writes one app-level log to `apps/runner/logs/runner.log` (rotated at 5 MB to
+`runner.log.1`) and mirrors it to the terminal. Each line is `time LEVEL event key=value ...`:
+
+```
+2026-09-19T06:18:29.551Z INFO  claude.start project=my-video-1a2b3c marker=m1 attempt=1 tools=[...] prompt="..."
+2026-09-19T06:18:32.369Z INFO  claude.tool_use project=my-video-1a2b3c marker=m1 tool=Skill input=...
+2026-09-19T06:18:38.956Z INFO  claude.result project=my-video-1a2b3c marker=m1 turns=4 durationMs=8739 costUsd=0.07
+```
+
+It records requests that change something (and any failure), every Claude run (prompt, tools,
+skills, each tool call and result, duration and cost), validation and retries, transcription,
+and every export step. Values that look like API keys are redacted. Follow it live with
+`tail -f apps/runner/logs/runner.log` (PowerShell: `Get-Content -Wait -Tail 50 apps\runner\logs\runner.log`),
+or filter one project with `grep project=<id>`.
+
 ## Real-Time Preview Loop
 This is the product’s differentiator.
 

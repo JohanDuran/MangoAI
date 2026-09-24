@@ -5,3 +5,5 @@ apps/runner/proyectos/*
 !apps/runner/proyectos/.gitkeep
 *.log
 .claude/
+
+apps/runner/logs/
