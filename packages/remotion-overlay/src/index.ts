@@ -14,3 +14,5 @@ export { KpiCard } from './primitives/KpiCard';
 export type { KpiCardProps } from './primitives/KpiCard';
 
 export { secondsToFrames } from './utils';
+
+export { MarkerErrorBoundary } from './MarkerErrorBoundary';

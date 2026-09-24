@@ -8,3 +8,4 @@ apps/runner/proyectos/*
 
 apps/runner/logs/
 build/
+release/
