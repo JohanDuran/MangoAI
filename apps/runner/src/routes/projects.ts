@@ -38,6 +38,16 @@ import { transcribeProject, readTranscript, writeTranscript, transcriptForRange,
 
 export const projectsRouter = Router();
 
+// Aborts when the browser goes away before the response finished (tab closed, app quit, request
+// cancelled), so a Claude run nobody is waiting for does not keep running and spending.
+function abortOnClose(res: import('express').Response): AbortSignal {
+  const controller = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) controller.abort();
+  });
+  return controller.signal;
+}
+
 const toNameList = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 
@@ -233,7 +243,7 @@ projectsRouter.put('/projects/:id/transcript', (req, res) => {
 projectsRouter.post('/projects/:id/markers/plan', async (req, res) => {
   const { context } = req.body as { context?: unknown };
   try {
-    res.json(await planMarkers(req.params.id, typeof context === 'string' ? context : undefined));
+    res.json(await planMarkers(req.params.id, typeof context === 'string' ? context : undefined, abortOnClose(res)));
   } catch (err) {
     writeLog('error', 'route.error', { route: 'plan-markers', project: req.params.id, error: err });
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -246,7 +256,7 @@ projectsRouter.post('/projects/:id/markers/plan-from-idea', async (req, res) => 
     return res.status(400).json({ error: 'idea must be a non-empty string' });
   }
   try {
-    res.json(await planMarkersFromIdea(req.params.id, idea));
+    res.json(await planMarkersFromIdea(req.params.id, idea, abortOnClose(res)));
   } catch (err) {
     writeLog('error', 'route.error', { route: 'plan-markers-from-idea', project: req.params.id, error: err });
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -276,12 +286,14 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
   };
 
   const results: { markerId?: string; success: boolean }[] = [];
+  const signal = abortOnClose(res);
 
   try {
     const { fps, durationInFrames } = readCompositionConfig(id);
     const durationSeconds = durationInFrames / fps;
 
     for (let index = 0; index < inputs.length; index++) {
+      if (signal.aborted) break;
       const input = inputs[index];
       send('item-start', { index, total: inputs.length });
 
@@ -326,6 +338,7 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
         regionWidth,
         regionHeight,
         isFullScreen,
+        signal,
         onEvent: (e) => {
           // Raw claude stream events aren't forwarded here (the frontend doesn't consume
           // them for the single-marker flow either) — just the progress phases, tagged by
@@ -396,6 +409,7 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
       regionWidth,
       regionHeight,
       isFullScreen,
+      signal: abortOnClose(res),
       onEvent: (e) => {
         if (e.type === 'claude') send('claude', e.raw);
         else send('progress', { attempt: e.attempt, phase: e.phase, error: e.error });

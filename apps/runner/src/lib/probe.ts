@@ -25,12 +25,14 @@ interface ProbeStream {
 export async function probeVideo(file: string): Promise<VideoInfo | null> {
   const result = await runCommand(ffprobeBin(), ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file], { timeoutMs: 30_000 });
   if (result.code !== 0) return null;
-  let data: { streams?: ProbeStream[]; format?: { duration?: string } };
   try {
-    data = JSON.parse(result.stdout);
+    return parseProbeOutput(JSON.parse(result.stdout));
   } catch {
     return null;
   }
+}
+
+export function parseProbeOutput(data: { streams?: ProbeStream[]; format?: { duration?: string } }): VideoInfo | null {
   const video = data.streams?.find((s) => s.codec_type === 'video' && s.width && s.height);
   if (!video) return null;
   const rotationRaw = video.side_data_list?.find((d) => typeof d.rotation === 'number')?.rotation ?? Number(video.tags?.rotate ?? 0);

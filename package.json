@@ -4,5 +4,15 @@
   "workspaces": [
     "packages/*",
     "apps/*"
-  ]
+  ],
+  "scripts": {
+    "dev:runner": "npm run dev -w @mangoai/runner",
+    "dev:editor": "npm run dev -w @mangoai/editor",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test -w @mangoai/runner",
+    "runtime": "node scripts/build-runtime.mjs",
+    "desktop:dev": "npm run dev -w @mangoai/desktop",
+    "dist": "npm run dist -w @mangoai/desktop",
+    "icon": "node scripts/make-icon.mjs"
+  }
 }

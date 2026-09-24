@@ -17,7 +17,7 @@ export interface TranscriptSegment {
 const transcriptFile = (id: string) => path.join(projectDir(id), '01_transcript', 'transcript.json');
 // Whisper accepts at most 25 MB per request. Audio is sent in pieces of this length, which at the
 // extraction bitrate (64 kbps) is about 14 MB, so any video length works.
-const CHUNK_SECONDS = 30 * 60;
+const CHUNK_SECONDS = Number(process.env.MANGO_TRANSCRIBE_CHUNK_SECONDS) || 30 * 60;
 const MAX_WHISPER_BYTES = 24 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 4;

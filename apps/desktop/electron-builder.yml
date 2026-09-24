@@ -5,6 +5,8 @@ directories:
   output: ../../release
   buildResources: build
 asar: true
+electronLanguages:
+  - en-US
 afterPack: build/afterPack.cjs
 files:
   - dist/**/*

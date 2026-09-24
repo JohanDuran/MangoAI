@@ -155,7 +155,7 @@ function finalizeProposals(raw: unknown[], id: string, durationSeconds: number, 
   return { proposals, droppedCount };
 }
 
-export async function planMarkers(id: string, context?: string): Promise<PlanMarkersResult> {
+export async function planMarkers(id: string, context?: string, signal?: AbortSignal): Promise<PlanMarkersResult> {
   const segments = readTranscript(id);
   if (segments.length === 0) throw new Error('No transcript yet — transcribe the video first.');
 
@@ -179,6 +179,7 @@ export async function planMarkers(id: string, context?: string): Promise<PlanMar
       prompt,
       tools: [],
       logContext: { project: id, purpose: 'plan-markers' },
+      signal,
       onEvent: () => {},
     })
   );
@@ -191,7 +192,7 @@ export async function planMarkers(id: string, context?: string): Promise<PlanMar
   return result;
 }
 
-export async function planMarkersFromIdea(id: string, idea: string): Promise<PlanMarkersResult> {
+export async function planMarkersFromIdea(id: string, idea: string, signal?: AbortSignal): Promise<PlanMarkersResult> {
   const trimmedIdea = idea.trim();
   if (!trimmedIdea) throw new Error('Describe the idea for the AI to design markers from.');
 
@@ -214,6 +215,7 @@ export async function planMarkersFromIdea(id: string, idea: string): Promise<Pla
       prompt,
       tools: [],
       logContext: { project: id, purpose: 'plan-markers-from-idea' },
+      signal,
       onEvent: () => {},
     })
   );

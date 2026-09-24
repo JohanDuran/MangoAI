@@ -1,0 +1,234 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { findFfmpeg, useTempData } from './helpers.ts';
+
+// The failure drills: the real server, started as a child process, talking to a stand-in for the Claude
+// CLI that can be told to fail, hang or be signed out. Windows only, because the stand-in is a .cmd shim
+// (which is also how npm installs the real CLI, so the shim path is worth exercising).
+const runnable = process.platform === 'win32';
+const bins = findFfmpeg();
+const { root, cleanup } = useTempData();
+const serverDir = path.resolve(import.meta.dirname, '..');
+
+const fake = path.join(root, 'fake bin', 'claude.cmd');
+fs.mkdirSync(path.dirname(fake), { recursive: true });
+fs.writeFileSync(
+  fake,
+  [
+    '@echo off',
+    'setlocal',
+    'set MODE=ok',
+    'if exist "%~dp0mode.txt" set /p MODE=<"%~dp0mode.txt"',
+    'if "%MODE%"=="signedout" goto signedout',
+    'if "%MODE%"=="hang" goto hang',
+    'if "%MODE%"=="version" goto version',
+    ':ok',
+    'echo {"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.01}',
+    'exit /b 0',
+    ':signedout',
+    'echo {"type":"result","subtype":"success","is_error":true,"result":"Invalid API key - Please run /login"}',
+    'exit /b 1',
+    ':hang',
+    'ping -n 40 127.0.0.1 >nul',
+    'exit /b 0',
+    ':version',
+    'echo 2.1.0 (Claude Code)',
+    'exit /b 0',
+  ].join('\r\n')
+);
+const setMode = (mode: string) => fs.writeFileSync(path.join(path.dirname(fake), 'mode.txt'), mode);
+
+let server: ChildProcess | null = null;
+let base = '';
+
+async function startServer(extraEnv: Record<string, string> = {}): Promise<void> {
+  const env = {
+    ...process.env,
+    PORT: '0',
+    MANGO_PROJECTS_DIR: process.env.MANGO_PROJECTS_DIR!,
+    MANGO_LOG_DIR: process.env.MANGO_LOG_DIR!,
+    MANGO_CLAUDE_PATH: fake,
+    MANGO_SKIP_RENDER_CHECK: '1',
+    ...(bins ? { MANGO_FFMPEG: bins.ffmpeg, MANGO_FFPROBE: bins.ffprobe } : {}),
+    ...extraEnv,
+  };
+  delete env.ELECTRON_RUN_AS_NODE;
+  server = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], { cwd: serverDir, env, windowsHide: true });
+  base = await new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('server did not start')), 30_000);
+    const onData = (chunk: Buffer) => {
+      const match = /url=(http:\/\/127\.0\.0\.1:\d+)/.exec(chunk.toString());
+      if (match) {
+        clearTimeout(timer);
+        resolve(match[1]);
+      }
+    };
+    server!.stdout!.on('data', onData);
+    server!.stderr!.on('data', (c) => process.stderr.write(c));
+  });
+}
+
+async function stopServer(): Promise<void> {
+  const child = server;
+  if (!child) return;
+  server = null;
+  await new Promise<void>((resolve) => {
+    child.once('exit', () => resolve());
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+    setTimeout(resolve, 3000);
+  });
+}
+
+const api = (p: string, init?: RequestInit) => fetch(`${base}${p}`, init);
+const json = { 'Content-Type': 'application/json' };
+
+async function sse(p: string, body: unknown, opts: { abortAfterMs?: number } = {}): Promise<{ events: { event: string; data: any }[]; aborted: boolean }> {
+  const controller = new AbortController();
+  if (opts.abortAfterMs) setTimeout(() => controller.abort(), opts.abortAfterMs);
+  let text = '';
+  let aborted = false;
+  try {
+    const res = await api(p, { method: 'POST', headers: json, body: JSON.stringify(body), signal: controller.signal });
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value);
+    }
+  } catch {
+    aborted = true;
+  }
+  const events = text
+    .split('\n\n')
+    .filter(Boolean)
+    .map((block) => ({ event: /event: (.*)/.exec(block)?.[1] ?? '', data: JSON.parse(/data: (.*)/.exec(block)?.[1] ?? 'null') }));
+  return { events, aborted };
+}
+
+const logText = () => {
+  try {
+    return fs.readFileSync(path.join(process.env.MANGO_LOG_DIR!, 'runner.log'), 'utf-8');
+  } catch {
+    return '';
+  }
+};
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function newProject(baseLayer: unknown = { type: 'transparent' }): Promise<string> {
+  const res = await api('/projects', { method: 'POST', headers: json, body: JSON.stringify({ name: 'Drill', baseLayer, width: 640, height: 360, durationInFrames: 300 }) });
+  return ((await res.json()) as { id: string }).id;
+}
+
+const skip = runnable ? false : 'Windows only';
+
+test('the server only answers requests meant for it', { skip }, async () => {
+  await startServer();
+  assert.equal((await api('/health')).status, 200);
+  // fetch() ignores a custom Host header, so DNS-rebinding style requests are sent raw
+  const status = await new Promise<number>((resolve) => {
+    const req = http.request(`${base}/health`, { headers: { Host: 'evil.example.com', Connection: 'close' }, agent: false }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode ?? 0));
+    });
+    req.on('error', () => resolve(0));
+    req.end();
+  });
+  assert.equal(status, 403);
+  const foreign = await api('/projects', { method: 'POST', headers: { ...json, Origin: 'https://evil.example.com' }, body: JSON.stringify({ name: 'x' }) });
+  assert.equal(foreign.status, 403, 'writes from other websites');
+  const traversal = await api('/projects/..%2F..%2Fsecret/overlay.js');
+  assert.equal(traversal.status, 400);
+  const traversalAsset = await api('/projects/x/assets/..%2F..%2Fproject.json');
+  assert.ok([400, 404, 500].includes(traversalAsset.status));
+});
+
+test('a signed-out CLI fails once with a clear message and does not burn three attempts', { skip }, async () => {
+  setMode('signedout');
+  const id = await newProject();
+  await api(`/projects/${id}/markers`, { method: 'POST', headers: json, body: JSON.stringify({ start: 0, end: 2, prompt: 'hello' }) });
+  const before = fs.readFileSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '03_remotion_code', 'marker_m1.tsx'), 'utf-8');
+  const { events } = await sse(`/projects/${id}/markers/m1/regenerate`, { feedback: 'more red' });
+  const done = events.find((e) => e.event === 'done')!;
+  assert.equal(done.data.success, false);
+  assert.match(done.data.error, /not signed in/i);
+  assert.equal(events.filter((e) => e.event === 'progress' && e.data.phase === 'invoking-claude').length, 1, 'no retries');
+  assert.equal(fs.readFileSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '03_remotion_code', 'marker_m1.tsx'), 'utf-8'), before, 'the marker code is untouched');
+});
+
+test('closing the browser mid-run stops Claude', { skip }, async () => {
+  setMode('hang');
+  const id = await newProject();
+  await api(`/projects/${id}/markers`, { method: 'POST', headers: json, body: JSON.stringify({ start: 0, end: 2, prompt: 'hello' }) });
+  const started = Date.now();
+  await sse(`/projects/${id}/markers/m1/regenerate`, { feedback: 'x' }, { abortAfterMs: 2000 });
+  for (let i = 0; i < 40 && !/claude\.exit.*failure=cancelled/.test(logText()); i++) await sleep(250);
+  assert.match(logText(), /claude\.exit.*failure=cancelled/, 'the run is ended when the client disconnects');
+  assert.ok(Date.now() - started < 15_000, 'it must not wait for the hung process');
+  // the marker keeps the status it had before the cancelled run
+  const marker = ((await (await api(`/projects/${id}`)).json()) as { markers: { status: string }[] }).markers[0];
+  assert.equal(marker.status, 'draft');
+});
+
+test('a hung Claude run is stopped by the timeout and reported', { skip }, async () => {
+  await stopServer();
+  await startServer({ MANGO_CLAUDE_TIMEOUT_MS: '1500' });
+  setMode('hang');
+  const id = await newProject();
+  await api(`/projects/${id}/markers`, { method: 'POST', headers: json, body: JSON.stringify({ start: 0, end: 2, prompt: 'hello' }) });
+  const started = Date.now();
+  const { events } = await sse(`/projects/${id}/markers/m1/regenerate`, { feedback: 'x' });
+  const done = events.find((e) => e.event === 'done')!;
+  assert.equal(done.data.success, false);
+  assert.match(done.data.error, /took too long/);
+  assert.ok(Date.now() - started < 30_000);
+});
+
+test('a bad upload is refused and never replaces the current video', { skip: runnable && bins ? false : 'needs Windows and the staged ffmpeg' }, async () => {
+  const id = await newProject({ type: 'video' });
+  const good = path.join(root, 'good.mp4');
+  const made = spawnSync(bins!.ffmpeg, ['-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=30:duration=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', good], { windowsHide: true });
+  assert.equal(made.status, 0);
+
+  const upload = (file: string, name: string, type: string) => {
+    const form = new FormData();
+    form.append('video', new Blob([fs.readFileSync(file)], { type }), name);
+    return api(`/projects/${id}/video`, { method: 'POST', body: form });
+  };
+  const ok = await upload(good, 'clip.mp4', 'video/mp4');
+  assert.equal(ok.status, 201);
+  const info = (await ok.json()) as { info: { width: number; height: number } };
+  assert.deepEqual([info.info.width, info.info.height], [320, 180]);
+  const goodSize = fs.statSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '00_input', 'raw_video.mp4')).size;
+
+  const junk = path.join(root, 'junk.mp4');
+  fs.writeFileSync(junk, 'this is not a video at all '.repeat(1000));
+  const bad = await upload(junk, 'broken.mp4', 'video/mp4');
+  assert.equal(bad.status, 400);
+  assert.match(((await bad.json()) as { error: string }).error, /could not be read as a video/);
+  const notVideo = await upload(junk, 'notes.txt', 'text/plain');
+  assert.equal(notVideo.status, 400);
+
+  const after = await api(`/projects/${id}/video`);
+  assert.equal(after.status, 200);
+  assert.equal(fs.statSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '00_input', 'raw_video.mp4')).size, goodSize, 'the good video is still there');
+  assert.equal(fs.readdirSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '00_input')).filter((f) => f.endsWith('.part')).length, 0, 'no temp upload left');
+});
+
+test('the requirements panel reports the stand-in CLI', { skip }, async () => {
+  setMode('version');
+  const status = (await (await api('/status')).json()) as { checks: { id: string; state: string; summary: string }[] };
+  const claude = status.checks.find((c) => c.id === 'claude')!;
+  assert.ok(['ok', 'warn', 'error'].includes(claude.state));
+  assert.ok(status.checks.some((c) => c.id === 'disk'));
+  assert.ok(status.checks.some((c) => c.id === 'encoder'));
+});
+
+test.after(async () => {
+  await stopServer();
+  cleanup();
+});

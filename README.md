@@ -148,26 +148,42 @@ To add your own, follow [docs/writing-skills.md](docs/writing-skills.md). Skills
 server run code on your machine, so only enable skills you trust.
 
 ## Requirements
+**Installed desktop app (Windows):** run `MangoAI-Setup-<version>.exe`. It bundles Node, ffmpeg and the renderer. You bring the
+`claude` CLI (Claude Code, signed in) and, optionally, an OpenAI API key (entered in the app's Status panel and stored encrypted).
+The app checks all of this on first start. Building and publishing the installer is described in
+[docs/RELEASING.md](docs/RELEASING.md).
+
+**From a checkout (development):**
 - Node.js 20 or newer
 - The `claude` CLI (Claude Code), signed in
 - `ffmpeg` and `ffprobe` **4.4 or newer** on your PATH (audio extraction, export, and mixing)
 - `OPENAI_API_KEY` in `apps/runner/.env` for transcription and image generation (optional)
+- `npm install`, then `npm run dev:runner` and `npm run dev:editor` (two terminals). `npm test` runs the tests and the failure drills
+  (`npm run runtime` first if you want the ffmpeg-dependent ones), `npm run typecheck` checks every package.
+
+## Desktop app
+`apps/desktop` is an Electron shell around the same runner and editor. In the installed app the runner listens on `127.0.0.1` only,
+serves the built editor itself, and rejects requests whose `Host` or `Origin` is not local. Projects are stored in
+`%APPDATA%\MangoAI\projects`, logs in `%APPDATA%\MangoAI\logs`. The generated overlay code is bundled by the runner (`overlayBundle.ts`)
+and shares the editor's React and Remotion instances, so the live preview does not need the Vite dev server.
+`MangoAI.exe --smoke-test` starts the app, opens a project, checks the preview and runs a real export.
 
 ## Logs
 The runner writes one app-level log to `apps/runner/logs/runner.log` (rotated at 5 MB to
 `runner.log.1`) and mirrors it to the terminal. Each line is `time LEVEL event key=value ...`:
 
 ```
-2026-09-19T06:18:29.551Z INFO  claude.start project=my-video-1a2b3c marker=m1 attempt=1 tools=[...] prompt="..."
+2026-09-19T06:18:29.551Z INFO  claude.start project=my-video-1a2b3c marker=m1 attempt=1 tools=[...] promptChars=1976
 2026-09-19T06:18:32.369Z INFO  claude.tool_use project=my-video-1a2b3c marker=m1 tool=Skill input=...
 2026-09-19T06:18:38.956Z INFO  claude.result project=my-video-1a2b3c marker=m1 turns=4 durationMs=8739 costUsd=0.07
 ```
 
-It records requests that change something (and any failure), every Claude run (prompt, tools,
-skills, each tool call and result, duration and cost), validation and retries, transcription,
+It records requests that change something (and any failure), every Claude run (tools,
+skills, each tool call and result, duration and cost; the prompt text itself only with `MANGO_LOG_PROMPTS=1`, because it contains your transcript), validation and retries, transcription,
 and every export step. Values that look like API keys are redacted. Follow it live with
 `tail -f apps/runner/logs/runner.log` (PowerShell: `Get-Content -Wait -Tail 50 apps\runner\logs\runner.log`),
-or filter one project with `grep project=<id>`.
+or filter one project with `grep project=<id>`. The installed app writes the same log to `%APPDATA%\MangoAI\logs\runner.log`
+(File > Save diagnostics bundles it with the status panel for bug reports).
 
 ## Real-Time Preview Loop
 This is the product’s differentiator.
@@ -235,8 +251,11 @@ Claude not to run render or preview commands — validation and rendering are th
 ### Self-heal loop
 Retrying lives in the Node runner, not in a single Claude run looping on itself:
 ```
-generate → validate → on failure: re-invoke with the error appended → retry (max 3) → surface error to user
+generate → bundle check → render check → on failure: re-invoke with the error appended → retry (max 3) → surface error to user
 ```
+The render check draws a few frames of the marker in headless Chrome, so runtime errors (undefined access, misused hooks) are caught
+and fed back too, not just syntax errors. Failures that a retry cannot fix (CLI signed out, usage limit reached, CLI missing) stop at
+once with a specific message instead of using all three attempts.
 Each retry is a fresh headless call with the previous error as context, which keeps each
 step small, inspectable, and logged to `05_debug/`.
 

@@ -14,7 +14,7 @@ import { log, LOG_FILE } from './lib/log.js';
 import { PACKAGED, EDITOR_DIST, InvalidIdError } from './lib/paths.js';
 import { killAllClaude } from './lib/claude.js';
 import { migrateProjects } from './lib/migrate.js';
-import { cleanupLeftovers, trimRenderCache } from './lib/cleanup.js';
+import { cleanupLeftovers, trimRenderCache, sweepRemotionTemp } from './lib/cleanup.js';
 import { APP_VERSION } from './lib/version.js';
 
 const app = express();
@@ -126,6 +126,7 @@ const server = app.listen(requestedPort, host, () => {
   migrateProjects();
   cleanupLeftovers();
   trimRenderCache();
+  sweepRemotionTemp();
 
   const { skills, problems } = discoverSkills();
   log('info', 'runner.start', {

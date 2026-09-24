@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { PROJECTS_ROOT } from './paths.js';
 import { listProjects } from './scaffold.js';
@@ -59,4 +60,29 @@ export function trimRenderCache(maxBytes = 1.5 * 1024 ** 3): void {
   if (size <= maxBytes) return;
   fs.rmSync(path.join(cache, 'node_modules'), { recursive: true, force: true });
   log('info', 'cleanup.cache_cleared', { mb: Math.round(size / 1024 ** 2) });
+}
+
+// Bundles and render folders that a crashed or killed run could not remove. Only old ones are touched, so a
+// second MangoAI (or a Remotion tool of your own) that is rendering right now is left alone.
+export function sweepRemotionTemp(olderThanMs = 60 * 60 * 1000): void {
+  const tmp = os.tmpdir();
+  let removed = 0;
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(tmp, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^(remotion-webpack-bundle-|react-motion-render)/.test(entry.name)) continue;
+    const full = path.join(tmp, entry.name);
+    try {
+      if (Date.now() - fs.statSync(full).mtimeMs < olderThanMs) continue;
+      fs.rmSync(full, { recursive: true, force: true });
+      removed++;
+    } catch {
+      // in use or locked; next start
+    }
+  }
+  if (removed > 0) log('info', 'cleanup.temp_swept', { removed });
 }

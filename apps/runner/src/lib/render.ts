@@ -40,6 +40,13 @@ function remotionRootDir(): string | undefined {
   return cache;
 }
 
+// bundle() writes a fresh ~25 MB copy of the compiled project to the temp folder on every call and never
+// removes it. Left alone, a few dozen exports and render checks fill the disk.
+export function removeBundle(serveUrl: string | undefined): void {
+  if (!serveUrl || !/^remotion-webpack-bundle-/.test(path.basename(serveUrl))) return;
+  fs.rmSync(serveUrl, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+}
+
 // A render page with too many parallel tabs can exhaust the memory of a small machine, so the
 // default is capped by available RAM. MANGO_RENDER_CONCURRENCY overrides it.
 function renderConcurrency(): number | null {
@@ -61,10 +68,11 @@ export async function renderOverlayJobs(
 ): Promise<void> {
   const bundleStarted = Date.now();
   let serveUrl: string;
+  let bundled: string | undefined;
   let browser: Awaited<ReturnType<typeof openBrowser>>;
   options.onPhase?.('bundling');
   try {
-    serveUrl = await bundle({
+    serveUrl = bundled = await bundle({
       entryPoint,
       // Projects live in the user's data folder, far from the installed node_modules, so the bare
       // imports of generated code (react, remotion, @mangoai/remotion-overlay) need this extra lookup path.
@@ -76,6 +84,7 @@ export async function renderOverlayJobs(
     });
     browser = await openBrowser('chrome', process.env.MANGO_CHROME_PATH ? { browserExecutable: process.env.MANGO_CHROME_PATH } : undefined);
   } catch (err) {
+    removeBundle(bundled);
     const result = { ok: false, log: `Bundling failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`, ms: Date.now() - bundleStarted };
     await onJobDone(0, result);
     return;
@@ -127,6 +136,7 @@ export async function renderOverlayJobs(
   } finally {
     options.signal?.removeEventListener('abort', onAbort);
     await browser.close({ silent: true }).catch(() => {});
+    removeBundle(bundled);
   }
 }
 
@@ -159,6 +169,7 @@ export async function smokeRenderFrames(entryPoint: string, frames: number[], sc
   try {
     browser = await openBrowser('chrome', process.env.MANGO_CHROME_PATH ? { browserExecutable: process.env.MANGO_CHROME_PATH } : undefined);
   } catch (err) {
+    removeBundle(serveUrl);
     return { ok: true, skipped: true, error: err instanceof Error ? err.message : String(err) };
   }
 
@@ -181,5 +192,6 @@ export async function smokeRenderFrames(entryPoint: string, frames: number[], sc
     return { ok: false, error: `The animation failed while rendering: ${err instanceof Error ? err.message : String(err)}`.slice(0, 2500) };
   } finally {
     await browser.close({ silent: true }).catch(() => {});
+    removeBundle(serveUrl);
   }
 }

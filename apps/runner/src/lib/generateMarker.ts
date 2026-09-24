@@ -158,7 +158,8 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
     opts.onEvent({ type: 'progress', attempt, phase: 'validation-failed', error: priorError });
   }
 
-  updateMarkerStatus(opts.projectId, opts.markerId, opts.feedback, success ? 'ready' : 'error');
+  // A cancelled run says nothing about the marker; leave whatever status it had.
+  if (!opts.signal?.aborted) updateMarkerStatus(opts.projectId, opts.markerId, opts.feedback, success ? 'ready' : 'error');
   log(success ? 'info' : 'error', 'marker.done', { ...ctx, status: success ? 'ready' : 'error', error: success ? undefined : clip(priorError, 300) });
   return { success, code: lastCode, error: success ? undefined : priorError };
 }
