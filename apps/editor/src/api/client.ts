@@ -244,8 +244,8 @@ const IMAGE_SKILLS = ['image-generation'];
 
 const isAbort = (err: unknown) => err instanceof DOMException && err.name === 'AbortError';
 
-// Aborting only closes this browser's connection; a generation already running on the runner
-// carries on and saves its result. Aborting resolves quietly instead of throwing.
+// Aborting closes this browser's connection, which also stops the run on the runner (use stopWork
+// to stop it and still get the final event). Aborting resolves quietly instead of throwing.
 export async function regenerateMarker(
   id: string,
   markerId: string,
@@ -275,6 +275,47 @@ export interface ProposedMarker {
   assets?: string[];
 }
 
+// A proposed marker as saved in the project's plan file, with the edits made while reviewing it.
+export interface PlanItem {
+  key: string;
+  included: boolean;
+  start: number;
+  end: number;
+  prompt: string;
+  region: MarkerRegion | null;
+  allowImage: boolean;
+  assets: string[];
+  // Set once applying the plan created a marker for this item.
+  markerId?: string;
+  // Why applying skipped this item, if it did.
+  error?: string;
+}
+
+export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string };
+
+// Saved on the runner from the moment planning starts, so a crash or reload does not lose it.
+export interface StoredPlan {
+  state: 'planning' | 'review' | 'applying';
+  source: PlanSource;
+  createdAt: string;
+  updatedAt: string;
+  droppedCount: number;
+  items: PlanItem[];
+}
+
+// Thrown when the user stopped the request.
+export class StoppedError extends Error {
+  constructor() {
+    super('Stopped.');
+    this.name = 'StoppedError';
+  }
+}
+
+const planResult = async (r: Response) => {
+  if (r.status === 499) throw new StoppedError();
+  return json<{ proposals: ProposedMarker[]; droppedCount: number; plan: StoredPlan }>(r);
+};
+
 // context is optional free-text steering (e.g. "use a line graph for the compound interest
 // section") layered on top of the transcript the plan is otherwise based on.
 export const planMarkers = (id: string, context?: string) =>
@@ -282,14 +323,39 @@ export const planMarkers = (id: string, context?: string) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ context }),
-  }).then((r) => json<{ proposals: ProposedMarker[]; droppedCount: number }>(r));
+  }).then(planResult);
 
 export const planMarkersFromIdea = (id: string, idea: string) =>
   fetch(`${BASE}/projects/${id}/markers/plan-from-idea`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ idea }),
-  }).then((r) => json<{ proposals: ProposedMarker[]; droppedCount: number }>(r));
+  }).then(planResult);
+
+// running lists the Claude work in progress for the project ('plan', 'apply', 'regenerate:<id>').
+export const getPlan = (id: string) => fetch(`${BASE}/projects/${id}/plan`).then((r) => json<{ plan: StoredPlan | null; running: string[] }>(r));
+
+export const savePlan = (id: string, items: PlanItem[]) =>
+  fetch(`${BASE}/projects/${id}/plan`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  }).then((r) => json<{ plan: StoredPlan }>(r));
+
+export const discardPlan = (id: string) =>
+  fetch(`${BASE}/projects/${id}/plan`, { method: 'DELETE' }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  });
+
+// Stops Claude work on the runner: 'plan', 'apply', 'regenerate:<markerId>', or everything when omitted.
+// A stopped generation puts back the marker's previous code, and markers a stopped plan apply had
+// only half made are removed.
+export const stopWork = (id: string, tag?: string) =>
+  fetch(`${BASE}/projects/${id}/stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag }),
+  }).then((r) => json<{ stopped: number }>(r));
 
 export interface ApplyMarkerInput {
   start: number;
@@ -298,6 +364,10 @@ export interface ApplyMarkerInput {
   region: MarkerRegion | null;
   allowImage: boolean;
   assets?: string[];
+  // The saved plan item this comes from.
+  key?: string;
+  // A marker left unfinished by an interrupted earlier apply of this item.
+  markerId?: string;
 }
 
 export async function applyMarkerPlan(

@@ -15,6 +15,9 @@ interface Props {
   run?: MarkerRunState;
   transcript: TranscriptSegment[];
   onRegenerate: (markerId: string, feedback: string, allowImage: boolean) => void;
+  // Stops the generation running for this marker; its previous code is put back.
+  onStop: (markerId: string) => void;
+  stopping: boolean;
   onDelete: (markerId: string) => void;
   regionStale: boolean;
   regionEditing: boolean;
@@ -34,6 +37,8 @@ export const MarkerInspector: React.FC<Props> = ({
   run,
   transcript,
   onRegenerate,
+  onStop,
+  stopping,
   onDelete,
   regionStale,
   regionEditing,
@@ -216,13 +221,26 @@ export const MarkerInspector: React.FC<Props> = ({
         <input type="checkbox" checked={allowImage} onChange={(e) => setAllowImage(e.target.checked)} />
         Allow AI image generation (Claude may generate one via OpenAI if it fits the request)
       </label>
-      <button
-        onClick={() => onRegenerate(marker.marker_id, feedback, allowImage)}
-        disabled={generating}
-        className="btn btn-primary"
-      >
-        {generating ? 'Generating…' : marker.status === 'draft' ? 'Generate' : 'Regenerate'}
-      </button>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={() => onRegenerate(marker.marker_id, feedback, allowImage)}
+          disabled={generating}
+          className="btn btn-primary"
+        >
+          {generating ? 'Generating…' : marker.status === 'draft' ? 'Generate' : 'Regenerate'}
+        </button>
+        {generating && (
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={stopping}
+            onClick={() => onStop(marker.marker_id)}
+            title="Stop Claude now and keep the animation this marker had before"
+          >
+            {stopping ? 'Stopping…' : 'Stop'}
+          </button>
+        )}
+      </div>
 
       <div className="code-toggle">
         <button onClick={() => setShowCode((v) => !v)} className="btn btn-ghost btn-sm">

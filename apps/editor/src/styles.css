@@ -224,6 +224,17 @@ select {
   font-size: 12.5px;
 }
 
+.btn-danger {
+  background: var(--error-wash);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--error);
+  color: var(--bg);
+}
+
 .volume-control {
   display: flex;
   align-items: center;
@@ -314,6 +325,17 @@ select {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+/* Catches clicks on the picture for click-to-select. With a <video>, it stops short of the bottom
+   so the native control bar stays reachable (hovering there still reveals the controls). */
+.stage-click-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.stage-click-layer.has-controls {
+  bottom: 48px;
 }
 
 .region-overlay {
@@ -684,6 +706,26 @@ select {
 }
 
 /* ---------- marker plan review ---------- */
+
+.plan-source {
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.plan-interrupted {
+  color: var(--mango);
+  background: var(--mango-wash);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+
+.plan-bulk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
 
 .plan-review-list {
   display: flex;

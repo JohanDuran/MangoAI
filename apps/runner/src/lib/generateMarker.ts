@@ -37,6 +37,8 @@ export interface GenerateMarkerResult {
   success: boolean;
   code: string;
   error?: string;
+  // The run was stopped; the marker's file was put back as it was before.
+  cancelled?: boolean;
 }
 
 // The generate-then-validate retry loop shared by a single marker's own regenerate call
@@ -46,6 +48,7 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
   let priorError: string | undefined;
   let success = false;
   let lastCode = fs.readFileSync(opts.file, 'utf-8');
+  const originalCode = lastCode;
   refreshClaudeMd(opts.projectId);
   syncAssetModule(opts.projectId);
   const ctx = { project: opts.projectId, marker: opts.markerId };
@@ -158,8 +161,18 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
     opts.onEvent({ type: 'progress', attempt, phase: 'validation-failed', error: priorError });
   }
 
-  // A cancelled run says nothing about the marker; leave whatever status it had.
-  if (!opts.signal?.aborted) updateMarkerStatus(opts.projectId, opts.markerId, opts.feedback, success ? 'ready' : 'error');
+  // A cancelled run says nothing about the marker: put back the code it had before (Claude may have
+  // been halfway through editing it) and leave whatever status it had.
+  if (opts.signal?.aborted) {
+    try {
+      if (fs.readFileSync(opts.file, 'utf-8') !== originalCode) fs.writeFileSync(opts.file, originalCode);
+    } catch (err) {
+      log('warn', 'marker.restore_failed', { ...ctx, error: err });
+    }
+    log('info', 'marker.cancelled', ctx);
+    return { success: false, code: originalCode, error: 'Stopped.', cancelled: true };
+  }
+  updateMarkerStatus(opts.projectId, opts.markerId, opts.feedback, success ? 'ready' : 'error');
   log(success ? 'info' : 'error', 'marker.done', { ...ctx, status: success ? 'ready' : 'error', error: success ? undefined : clip(priorError, 300) });
   return { success, code: lastCode, error: success ? undefined : priorError };
 }

@@ -20,6 +20,15 @@ interface Props {
   onRegionDraftChange?: (region: MarkerRegion) => void;
   onRegionCommit?: () => void;
   overlayVolume?: number;
+  // Hit-testing for click-to-select on the picture. `point` is normalized (0–1) to the stage, and
+  // `seconds` is the playhead at the moment of the click/hover.
+  hasMarkerAt?: (point: StagePoint, seconds: number) => boolean;
+  onMarkerClick?: (point: StagePoint, seconds: number) => boolean;
+}
+
+export interface StagePoint {
+  x: number;
+  y: number;
 }
 
 export interface DualLayerPreviewHandle {
@@ -47,6 +56,8 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     onRegionDraftChange,
     onRegionCommit,
     overlayVolume = 1,
+    hasMarkerAt,
+    onMarkerClick,
   },
   ref
 ) {
@@ -234,6 +245,36 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     player.setVolume(overlayVolume);
   }, [overlayVolume, Overlay]);
 
+  const [overMarker, setOverMarker] = useState(false);
+
+  const currentSeconds = () =>
+    hasVideo ? videoRef.current?.currentTime ?? 0 : (playerRef.current?.getCurrentFrame() ?? 0) / fps;
+
+  // Normalized to the whole stage (not the click layer, which stops short of the control bar), so
+  // it matches the coordinate space of MarkerRegion.
+  const stagePoint = (e: React.MouseEvent<HTMLDivElement>): StagePoint => {
+    const stage = e.currentTarget.parentElement!.getBoundingClientRect();
+    return { x: (e.clientX - stage.left) / stage.width, y: (e.clientY - stage.top) / stage.height };
+  };
+
+  // Clicking the picture selects the marker under the cursor. Anywhere else keeps the native
+  // click-to-play/pause the click layer would otherwise swallow.
+  const handleStageClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (onMarkerClick?.(stagePoint(e), currentSeconds())) return;
+    if (hasVideo) {
+      const video = videoRef.current;
+      if (video?.paused) video.play();
+      else video?.pause();
+    } else {
+      playerRef.current?.toggle(e);
+    }
+  };
+
+  const handleStageMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const over = hasMarkerAt?.(stagePoint(e), currentSeconds()) ?? false;
+    if (over !== overMarker) setOverMarker(over);
+  };
+
   const ratio = compositionWidth / compositionHeight;
 
   // The width that makes the stage fill as much of the frame as possible while
@@ -345,6 +386,15 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
                 )}
               />
             </div>
+          )}
+          {!regionDraft && onMarkerClick && (hasVideo || Overlay) && (
+            <div
+              className={`stage-click-layer${hasVideo ? ' has-controls' : ''}`}
+              style={{ cursor: overMarker ? 'pointer' : undefined }}
+              onClick={handleStageClick}
+              onMouseMove={handleStageMouseMove}
+              onMouseLeave={() => setOverMarker(false)}
+            />
           )}
           {regionDraft && onRegionDraftChange && (
             <RegionOverlay region={regionDraft} onChange={onRegionDraftChange} onCommit={onRegionCommit} />

@@ -24,6 +24,13 @@ import {
   planMarkers,
   planMarkersFromIdea,
   applyMarkerPlan,
+  getPlan,
+  savePlan,
+  discardPlan,
+  stopWork,
+  StoppedError,
+  type StoredPlan,
+  type PlanSource,
   videoUrl as videoUrlFor,
   type Asset,
   type Project,
@@ -34,13 +41,13 @@ import {
   type BaseLayer,
   type CreateProjectOptions,
 } from './api/client';
-import { DualLayerPreview, type DualLayerPreviewHandle } from './components/DualLayerPreview';
+import { DualLayerPreview, type DualLayerPreviewHandle, type StagePoint } from './components/DualLayerPreview';
 import { Timeline } from './components/Timeline';
 import { AddMarkerPanel } from './components/AddMarkerPanel';
 import { IdeaPlanPanel } from './components/IdeaPlanPanel';
 import { MarkerInspector } from './components/MarkerInspector';
 import { AssetLibrary } from './components/AssetLibrary';
-import { MarkerPlanReview, type ReviewItem } from './components/MarkerPlanReview';
+import { MarkerPlanReview, ALL_AREAS_KEY, isItemDone, type ReviewItem } from './components/MarkerPlanReview';
 import { PlanMarkersPanel } from './components/PlanMarkersPanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { CreateProjectModal } from './components/CreateProjectModal';
@@ -149,8 +156,19 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   // Which proposed marker's area is being drawn on the preview, if any — mirrors
   // editingRegionMarkerId/editingNewMarkerRegion but targets a reviewItems entry directly
   // since it has no server-backed marker until the plan is applied.
+  // ALL_AREAS_KEY while one area is drawn for every selected item still to generate.
   const [editingPlanItemKey, setEditingPlanItemKey] = useState<string | null>(null);
   const [applyingPlan, setApplyingPlan] = useState(false);
+  // What the open plan was made from, and whether it was restored after an interrupted apply.
+  const [planSource, setPlanSource] = useState<PlanSource | null>(null);
+  const [planInterrupted, setPlanInterrupted] = useState(false);
+  // Set when planning was interrupted (crash, reload): the planning panel reopens with the request
+  // filled in so it can be run again.
+  const [interruptedPlanning, setInterruptedPlanning] = useState<PlanSource | null>(null);
+  // Tags of the runs a Stop was requested for ('plan', 'apply', 'regenerate:<markerId>').
+  const [stopping, setStopping] = useState<Set<string>>(new Set());
+  // The review items last saved to (or loaded from) the runner, so unchanged items are not re-sent.
+  const savedPlanItemsRef = useRef<string>('');
   const previewRef = useRef<DualLayerPreviewHandle>(null);
   const resizingRef = useRef(false);
   // Read by the arrow-key seek handler below without needing currentTime in that effect's
@@ -201,7 +219,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     return () => abortRef.current.abort();
   }, []);
 
-  const refreshProject = (id: string) => {
+  const refreshProject = (id: string) =>
     getProject(id).then(({ markers, hasVideo, composition }) => {
       setMarkers(markers);
       setComposition(composition);
@@ -211,7 +229,6 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       // Only mint a new URL on the actual transition from no-video to has-video.
       setVideoUrl((prev) => (hasVideo ? prev ?? videoUrlFor(id) : null));
     });
-  };
 
   const refreshAssets = (id: string) => listAssets(id).then(setAssets).catch(() => {});
 
@@ -267,6 +284,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         setBaseLayer(baseLayer);
       });
       setNewMarkerPanelVisible(true);
+      restorePlan(projectId).catch(() => {});
     } else {
       savedVolumeRef.current = null;
       setMarkers([]);
@@ -349,14 +367,18 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             },
           }));
         } else if (e.event === 'done') {
-          const d = e.data as { success: boolean; error?: string };
-          setRunState((prev) => ({
-            ...prev,
-            [markerId]: { phase: 'done', log: prev[markerId]?.log ?? [], success: d.success, error: d.error },
-          }));
+          const d = e.data as { success: boolean; error?: string; cancelled?: boolean };
+          // A stopped run left the marker as it was, so it goes back to showing its saved status.
+          setRunState((prev) => {
+            const next = { ...prev };
+            if (d.cancelled) delete next[markerId];
+            else next[markerId] = { phase: 'done', log: prev[markerId]?.log ?? [], success: d.success, error: d.error };
+            return next;
+          });
         }
       }, abortRef.current.signal);
     } finally {
+      markStopping(`regenerate:${markerId}`, false);
       if (!abortRef.current.signal.aborted) {
         refreshProject(projectId);
         setReloadToken((t) => t + 1);
@@ -364,42 +386,75 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     }
   };
 
-  const handlePlanMarkers = async (context: string) => {
+  const markStopping = (tag: string, on: boolean) =>
+    setStopping((prev) => {
+      if (prev.has(tag) === on) return prev;
+      const next = new Set(prev);
+      if (on) next.add(tag);
+      else next.delete(tag);
+      return next;
+    });
+
+  // Asks the runner to stop a run. The flow that started the run clears the stopping state when its
+  // request ends; if nothing was running any more, it is cleared here.
+  const requestStop = async (tag: string) => {
     if (!projectId) return;
-    if (editingRegionMarkerId || editingNewMarkerRegion) {
-      setPlanError('Finish or cancel the current area edit first.');
-      return;
-    }
-    setPlanning(true);
-    setPlanError(null);
+    markStopping(tag, true);
     try {
-      const { proposals, droppedCount } = await planMarkers(projectId, context);
-      setReviewItems(
-        proposals.map((p) => ({
-          key: crypto.randomUUID(),
-          included: true,
-          start: p.start,
-          end: p.end,
-          prompt: p.prompt,
-          region: p.region,
-          allowImage: false,
-          assets: p.assets ?? [],
-        }))
-      );
-      setDroppedCount(droppedCount);
-      setEditingPlanItemKey(null);
-      setPlanPanelOpen(false);
-      selectMarker(null);
-      setNewMarkerPanelVisible(false);
-      setPlanReviewOpen(true);
+      const { stopped } = await stopWork(projectId, tag);
+      if (stopped === 0) markStopping(tag, false);
     } catch (err) {
-      setPlanError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPlanning(false);
+      markStopping(tag, false);
+      notify('error', `Could not stop: ${describeError(err)}`);
     }
   };
 
-  const handlePlanFromIdea = async (idea: string) => {
+  const openPlanReview = (plan: StoredPlan, interrupted: boolean) => {
+    savedPlanItemsRef.current = JSON.stringify(plan.items);
+    setReviewItems(plan.items);
+    setDroppedCount(plan.droppedCount);
+    setPlanSource(plan.source);
+    setPlanInterrupted(interrupted);
+    setEditingPlanItemKey(null);
+    setPlanPanelOpen(false);
+    setIdeaPanelOpen(false);
+    setInterruptedPlanning(null);
+    selectMarker(null);
+    setNewMarkerPanelVisible(false);
+    setPlanReviewOpen(true);
+  };
+
+  // Picks the saved plan back up when a project opens: a plan waiting for review reopens as it was
+  // left, one whose planning or applying was cut off (crash, reload, quit) reopens so it can be resumed.
+  const restorePlan = async (id: string) => {
+    const { plan, running } = await getPlan(id);
+    if (!plan || abortRef.current.signal.aborted) return;
+    if (plan.state === 'planning') {
+      if (running.includes('plan')) return;
+      setInterruptedPlanning(plan.source);
+      selectMarker(null);
+      setNewMarkerPanelVisible(false);
+      if (plan.source.kind === 'idea') setIdeaPanelOpen(true);
+      else setPlanPanelOpen(true);
+      return;
+    }
+    openPlanReview(plan, plan.state === 'applying' && !running.includes('apply'));
+  };
+
+  const interruptedPlanningNotice = interruptedPlanning
+    ? 'Planning was interrupted before Claude finished. Your request is filled in below: run it again, or cancel to discard it.'
+    : null;
+
+  const handleClosePlanPanel = (close: () => void) => {
+    close();
+    setPlanError(null);
+    if (interruptedPlanning && projectId) {
+      setInterruptedPlanning(null);
+      discardPlan(projectId).catch(() => {});
+    }
+  };
+
+  const runPlanner = async (request: () => ReturnType<typeof planMarkers>) => {
     if (!projectId) return;
     if (editingRegionMarkerId || editingNewMarkerRegion) {
       setPlanError('Finish or cancel the current area edit first.');
@@ -408,34 +463,44 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     setPlanning(true);
     setPlanError(null);
     try {
-      const { proposals, droppedCount } = await planMarkersFromIdea(projectId, idea);
-      setReviewItems(
-        proposals.map((p) => ({
-          key: crypto.randomUUID(),
-          included: true,
-          start: p.start,
-          end: p.end,
-          prompt: p.prompt,
-          region: p.region,
-          allowImage: false,
-          assets: p.assets ?? [],
-        }))
-      );
-      setDroppedCount(droppedCount);
-      setEditingPlanItemKey(null);
-      setIdeaPanelOpen(false);
-      selectMarker(null);
-      setNewMarkerPanelVisible(false);
-      setPlanReviewOpen(true);
+      const { plan } = await request();
+      if (!abortRef.current.signal.aborted) openPlanReview(plan, false);
     } catch (err) {
-      setPlanError(err instanceof Error ? err.message : String(err));
+      if (err instanceof StoppedError) setInterruptedPlanning(null);
+      else setPlanError(err instanceof Error ? err.message : String(err));
     } finally {
       setPlanning(false);
+      markStopping('plan', false);
     }
   };
+
+  const handlePlanMarkers = (context: string) => runPlanner(() => planMarkers(projectId!, context));
+
+  const handlePlanFromIdea = (idea: string) => runPlanner(() => planMarkersFromIdea(projectId!, idea));
+
+  // Review edits are saved to the runner shortly after they stop, so a crash does not lose them.
+  // While applying, the runner records progress in the plan itself.
+  useEffect(() => {
+    if (!projectId || !planReviewOpen || applyingPlan) return;
+    const serialized = JSON.stringify(reviewItems);
+    if (serialized === savedPlanItemsRef.current) return;
+    const timer = setTimeout(() => {
+      savePlan(projectId, reviewItems)
+        .then(() => {
+          savedPlanItemsRef.current = serialized;
+        })
+        .catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [reviewItems, planReviewOpen, applyingPlan, projectId]);
+
+  // Items "Edit all areas" changes: the selected ones that have not been generated yet.
+  const isBulkAreaTarget = (item: ReviewItem) => item.included && !isItemDone(item, markers);
 
   const handleReviewItemChange = (key: string, patch: Partial<ReviewItem>) => {
-    setReviewItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
+    setReviewItems((prev) =>
+      prev.map((it) => (key === ALL_AREAS_KEY ? isBulkAreaTarget(it) : it.key === key) ? { ...it, ...patch } : it)
+    );
   };
 
   const handleReviewItemRemove = (key: string) => {
@@ -448,6 +513,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     setReviewItems([]);
     setPlanError(null);
     setEditingPlanItemKey(null);
+    setPlanSource(null);
+    setPlanInterrupted(false);
+    savedPlanItemsRef.current = '';
+    if (projectId) discardPlan(projectId).catch(() => {});
   };
 
   const handleStartEditPlanItemRegion = (key: string) => {
@@ -471,24 +540,37 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   // truth instead of two.
   const handleApplyPlan = async () => {
     if (!projectId) return;
-    const approved = reviewItems.filter((i) => i.included);
+    const approved = reviewItems.filter(isBulkAreaTarget);
     if (approved.length === 0) return;
-    if (
-      approved.length >= 5 &&
-      !window.confirm(
-        `Generate ${approved.length} animations? Each one is a separate Claude run (up to 3 attempts each) and takes a minute or two. On pay-as-you-go API billing a run typically costs roughly $0.05–0.20; subscription plans draw on your plan's allowance.`
-      )
-    ) {
-      return;
-    }
     markEdited();
     setEditingPlanItemKey(null);
+    setPlanInterrupted(false);
     setApplyingPlan(true);
+    // Make sure the runner has the latest edits before it starts recording progress in the plan.
+    await savePlan(projectId, reviewItems)
+      .then(() => {
+        savedPlanItemsRef.current = JSON.stringify(reviewItems);
+      })
+      .catch(() => {});
+    let planRemaining = false;
     try {
       await applyMarkerPlan(
         projectId,
-        approved.map((i) => ({ start: i.start, end: i.end, prompt: i.prompt, region: i.region, allowImage: i.allowImage, assets: i.assets })),
+        approved.map((i) => ({
+          start: i.start,
+          end: i.end,
+          prompt: i.prompt,
+          region: i.region,
+          allowImage: i.allowImage,
+          assets: i.assets,
+          key: i.key,
+          markerId: i.markerId,
+        })),
         (e) => {
+          if (e.event === 'done') {
+            planRemaining = !!(e.data as { planRemaining?: boolean }).planRemaining;
+            return;
+          }
           const d = e.data as {
             index: number;
             markerId?: string;
@@ -496,9 +578,29 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             phase?: string;
             error?: string;
             success?: boolean;
+            cancelled?: boolean;
+            removed?: boolean;
           };
           const target = approved[d.index];
           if (!target) return;
+
+          if (e.event === 'item-start') {
+            // A fresh attempt replaces whatever an interrupted earlier one left for this item.
+            setReviewItems((prev) => prev.map((it) => (it.key === target.key ? { ...it, markerId: undefined, error: undefined } : it)));
+            return;
+          }
+          if (e.event === 'item-done' && d.cancelled) {
+            const markerId = d.markerId;
+            if (markerId) {
+              setRunState((prev) => {
+                const next = { ...prev };
+                delete next[markerId];
+                return next;
+              });
+            }
+            if (d.removed) setReviewItems((prev) => prev.map((it) => (it.key === target.key ? { ...it, markerId: undefined } : it)));
+            return;
+          }
 
           if (e.event === 'item-created' && d.markerId) {
             const markerId = d.markerId;
@@ -528,12 +630,23 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         },
         abortRef.current.signal
       );
+    } catch (err) {
+      notify('error', `Generating the plan failed: ${describeError(err)}`);
+      planRemaining = true;
     } finally {
+      markStopping('apply', false);
       if (!abortRef.current.signal.aborted) {
-        refreshProject(projectId);
+        await refreshProject(projectId).catch(() => {});
         setReloadToken((t) => t + 1);
         setApplyingPlan(false);
-        setPlanReviewOpen(false);
+        // Anything left to generate (stopped, skipped, failed) keeps the plan open, as the runner saved it.
+        const { plan } = planRemaining ? await getPlan(projectId).catch(() => ({ plan: null })) : { plan: null };
+        if (plan) openPlanReview(plan, false);
+        else {
+          setPlanReviewOpen(false);
+          setPlanSource(null);
+          savedPlanItemsRef.current = '';
+        }
       }
     }
   };
@@ -619,6 +732,40 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     }
   };
 
+  // Markers visible at `seconds` whose region contains the point, smallest region first — so a
+  // small callout on top of a full-screen marker is what a click lands on.
+  const markersAt = (point: StagePoint, seconds: number) =>
+    markers
+      .filter((m) => {
+        const r = m.region ?? FULL_SCREEN_REGION;
+        return (
+          seconds >= m.start &&
+          seconds < m.end &&
+          point.x >= r.x &&
+          point.x <= r.x + r.width &&
+          point.y >= r.y &&
+          point.y <= r.y + r.height
+        );
+      })
+      .sort((a, b) => {
+        const ra = a.region ?? FULL_SCREEN_REGION;
+        const rb = b.region ?? FULL_SCREEN_REGION;
+        return ra.width * ra.height - rb.width * rb.height || a.start - b.start;
+      });
+
+  // Clicking a marker on the picture selects it and goes straight into area editing, since
+  // pointing at it on the video is already the gesture of "this thing, here". Clicking again on
+  // the same spot (after the edit auto-saves) cycles through overlapping markers.
+  const handleStageMarkerClick = (point: StagePoint, seconds: number) => {
+    const hits = markersAt(point, seconds);
+    if (hits.length === 0) return false;
+    const current = hits.findIndex((m) => m.marker_id === selectedMarkerId);
+    const markerId = hits[(current + 1) % hits.length].marker_id;
+    selectMarker(markerId);
+    handleStartEditRegion(markerId);
+    return true;
+  };
+
   // A plain click on the timeline (moving the playhead, not selecting a marker or
   // dragging out a new range) means the user is just scrubbing — the right panel should
   // go fully blank rather than keep showing whatever was selected or drafted before.
@@ -645,9 +792,16 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const handleSaveRegion = async () => {
     if (!projectId || !editingRegionMarkerId || !regionDraft) return;
-    markEdited();
     const marker = markers.find((m) => m.marker_id === editingRegionMarkerId);
     const before = marker?.region ?? FULL_SCREEN_REGION;
+    // Clicking a marker on the preview opens this editor, so clicking away untouched is common —
+    // don't turn that into a save and an overlay reload.
+    const unchanged = (['x', 'y', 'width', 'height'] as const).every((k) => Math.abs(before[k] - regionDraft[k]) <= 0.002);
+    if (unchanged) {
+      handleCancelEditRegion();
+      return;
+    }
+    markEdited();
     // Only a size change (not a plain move) can break a layout designed for the old
     // regionWidth/regionHeight, so a reposition alone doesn't need to flag anything.
     const resized =
@@ -829,7 +983,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const activeRegionDraft = editingNewMarkerRegion
     ? newMarkerRegion ?? FULL_SCREEN_REGION
     : editingPlanItemKey
-    ? reviewItems.find((i) => i.key === editingPlanItemKey)?.region ?? FULL_SCREEN_REGION
+    ? reviewItems.find((i) => (editingPlanItemKey === ALL_AREAS_KEY ? isBulkAreaTarget(i) : i.key === editingPlanItemKey))?.region ??
+      FULL_SCREEN_REGION
     : editingRegionMarkerId
     ? regionDraft
     : null;
@@ -926,6 +1081,16 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             >
               {planning ? 'Planning…' : 'Plan markers'}
             </button>
+            {planning && (
+              <button
+                onClick={() => requestStop('plan')}
+                disabled={stopping.has('plan')}
+                className="btn btn-sm btn-danger"
+                title="Stop Claude and throw this plan away"
+              >
+                {stopping.has('plan') ? 'Stopping…' : 'Stop planning'}
+              </button>
+            )}
             <button
               onClick={() => {
                 selectMarker(null);
@@ -1054,6 +1219,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 regionDraft={activeRegionDraft}
                 onRegionDraftChange={handleRegionDraftChange}
                 onRegionCommit={editingRegionMarkerId ? handleSaveRegion : undefined}
+                hasMarkerAt={(point, seconds) => markersAt(point, seconds).length > 0}
+                onMarkerClick={handleStageMarkerClick}
               />
               <Timeline
                 markers={markers}
@@ -1105,15 +1272,20 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             <MarkerPlanReview
               projectId={projectId}
               assets={assets}
+              markers={markers}
               onUploadAssets={handleUploadAssets}
               items={reviewItems}
+              source={planSource}
               droppedCount={droppedCount}
+              interrupted={planInterrupted}
               applying={applyingPlan}
+              stopping={stopping.has('apply')}
               runState={runState}
               onChange={handleReviewItemChange}
               onRemove={handleReviewItemRemove}
-              onCancel={handleCancelPlanReview}
+              onDiscard={handleCancelPlanReview}
               onApply={handleApplyPlan}
+              onStop={() => requestStop('apply')}
               editingRegionKey={editingPlanItemKey}
               onStartEditRegion={handleStartEditPlanItemRegion}
               onDoneEditRegion={handleDoneEditPlanItemRegion}
@@ -1123,25 +1295,35 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           {projectId && !planReviewOpen && !selectedMarker && planPanelOpen && (
             <PlanMarkersPanel
               planning={planning}
+              stopping={stopping.has('plan')}
               error={planError}
+              initial={interruptedPlanning?.kind === 'transcript' ? interruptedPlanning.context : undefined}
+              notice={interruptedPlanningNotice}
+              onStop={() => requestStop('plan')}
               onSubmit={handlePlanMarkers}
-              onCancel={() => {
-                setPlanPanelOpen(false);
-                setNewMarkerPanelVisible(true);
-                setPlanError(null);
-              }}
+              onCancel={() =>
+                handleClosePlanPanel(() => {
+                  setPlanPanelOpen(false);
+                  setNewMarkerPanelVisible(true);
+                })
+              }
             />
           )}
           {projectId && !planReviewOpen && !selectedMarker && ideaPanelOpen && (
             <IdeaPlanPanel
               planning={planning}
+              stopping={stopping.has('plan')}
               error={planError}
+              initial={interruptedPlanning?.kind === 'idea' ? interruptedPlanning.idea : undefined}
+              notice={interruptedPlanningNotice}
+              onStop={() => requestStop('plan')}
               onSubmit={handlePlanFromIdea}
-              onCancel={() => {
-                setIdeaPanelOpen(false);
-                setNewMarkerPanelVisible(true);
-                setPlanError(null);
-              }}
+              onCancel={() =>
+                handleClosePlanPanel(() => {
+                  setIdeaPanelOpen(false);
+                  setNewMarkerPanelVisible(true);
+                })
+              }
             />
           )}
           {projectId && !planReviewOpen && !selectedMarker && !ideaPanelOpen && !planPanelOpen && newMarkerPanelVisible && (
@@ -1176,6 +1358,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                   : []
               }
               onRegenerate={triggerRegenerate}
+              onStop={(markerId) => requestStop(`regenerate:${markerId}`)}
+              stopping={stopping.has(`regenerate:${selectedMarker.marker_id}`)}
               onDelete={handleDeleteMarker}
               regionStale={staleRegionMarkers.has(selectedMarker.marker_id)}
               regionEditing={editingRegionMarkerId === selectedMarker?.marker_id}

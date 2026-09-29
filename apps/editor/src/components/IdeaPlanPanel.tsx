@@ -2,17 +2,24 @@ import React, { useState } from 'react';
 
 interface Props {
   planning: boolean;
+  stopping: boolean;
   error: string | null;
+  // Text to start from, e.g. what was asked for when an earlier plan was interrupted.
+  initial?: string;
+  // Shown above the form, e.g. to say an earlier plan was interrupted.
+  notice?: string | null;
+  onStop: () => void;
   onSubmit: (idea: string) => void;
   onCancel: () => void;
 }
 
-export const IdeaPlanPanel: React.FC<Props> = ({ planning, error, onSubmit, onCancel }) => {
-  const [idea, setIdea] = useState('');
+export const IdeaPlanPanel: React.FC<Props> = ({ planning, stopping, error, initial, notice, onStop, onSubmit, onCancel }) => {
+  const [idea, setIdea] = useState(initial ?? '');
   const canSubmit = idea.trim().length > 0 && !planning;
 
   return (
     <div className="panel">
+      {notice && <div className="panel-hint plan-interrupted">{notice}</div>}
       <div className="panel-hint">
         Describe what the video should cover. Claude will design a full sequence of correlated markers spanning the
         whole duration, not just one.
@@ -39,9 +46,15 @@ export const IdeaPlanPanel: React.FC<Props> = ({ planning, error, onSubmit, onCa
           <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
             {planning ? 'Designing…' : 'Design markers'}
           </button>
-          <button type="button" className="btn btn-sm" onClick={onCancel} disabled={planning}>
-            Cancel
-          </button>
+          {planning ? (
+            <button type="button" className="btn btn-sm btn-danger" onClick={onStop} disabled={stopping} title="Stop Claude and throw this plan away">
+              {stopping ? 'Stopping…' : 'Stop'}
+            </button>
+          ) : (
+            <button type="button" className="btn btn-sm" onClick={onCancel}>
+              Cancel
+            </button>
+          )}
         </div>
       </form>
       {error && <div className="field-error">{error}</div>}

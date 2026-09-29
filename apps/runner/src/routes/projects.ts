@@ -31,22 +31,23 @@ import { validAssetIds } from '../lib/assets.js';
 import { syncAssetModule } from '../lib/assetModule.js';
 import { regenerateRegistry } from '../lib/registry.js';
 import { generateMarkerWithRetry } from '../lib/generateMarker.js';
-import { planMarkers, planMarkersFromIdea } from '../lib/planner.js';
+import { planMarkers, planMarkersFromIdea, type PlanMarkersResult } from '../lib/planner.js';
+import { startJob, stopJobs, runningJobs, type JobTag } from '../lib/jobs.js';
+import {
+  readPlan,
+  clearPlan,
+  startPlanning,
+  savePlanProposals,
+  savePlanItems,
+  setPlanState,
+  updatePlanItem,
+  type PlanSource,
+} from '../lib/planStore.js';
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
 import { transcribeProject, readTranscript, writeTranscript, transcriptForRange, type TranscriptSegment } from '../lib/transcript.js';
 
 export const projectsRouter = Router();
-
-// Aborts when the browser goes away before the response finished (tab closed, app quit, request
-// cancelled), so a Claude run nobody is waiting for does not keep running and spending.
-function abortOnClose(res: import('express').Response): AbortSignal {
-  const controller = new AbortController();
-  res.on('close', () => {
-    if (!res.writableFinished) controller.abort();
-  });
-  return controller.signal;
-}
 
 const toNameList = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
@@ -97,6 +98,7 @@ projectsRouter.delete('/projects/:id', (req, res) => {
   if (path.dirname(dir) !== path.resolve(PROJECTS_ROOT)) {
     return res.status(400).json({ error: 'invalid project id' });
   }
+  stopJobs(id);
   try {
     // Retries cover Windows briefly holding handles on just-used media files.
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -240,14 +242,41 @@ projectsRouter.put('/projects/:id/transcript', (req, res) => {
   res.json({ segments });
 });
 
+// Plans are written to the project's plan file as they go (see planStore.ts). Stopping throws the
+// plan away; the editor going away mid-plan leaves it marked as planning so it can be retried.
+async function runPlan(
+  id: string,
+  source: PlanSource,
+  res: import('express').Response,
+  plan: (signal: AbortSignal) => Promise<PlanMarkersResult>
+): Promise<void> {
+  if (!readProject(id)) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const job = startJob(id, 'plan', res);
+  startPlanning(id, source);
+  try {
+    const result = await plan(job.signal);
+    res.json({ ...result, plan: savePlanProposals(id, source, result.proposals, result.droppedCount) });
+  } catch (err) {
+    if (job.stoppedByUser()) {
+      clearPlan(id);
+      if (!res.headersSent) res.status(499).json({ error: 'Stopped.', cancelled: true });
+      return;
+    }
+    if (!job.signal.aborted) clearPlan(id);
+    writeLog('error', 'route.error', { route: `plan-${source.kind}`, project: id, error: err });
+    if (!res.headersSent) res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  } finally {
+    job.finish();
+  }
+}
+
 projectsRouter.post('/projects/:id/markers/plan', async (req, res) => {
   const { context } = req.body as { context?: unknown };
-  try {
-    res.json(await planMarkers(req.params.id, typeof context === 'string' ? context : undefined, abortOnClose(res)));
-  } catch (err) {
-    writeLog('error', 'route.error', { route: 'plan-markers', project: req.params.id, error: err });
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
-  }
+  const trimmed = typeof context === 'string' && context.trim() ? context.trim() : undefined;
+  await runPlan(req.params.id, { kind: 'transcript', context: trimmed }, res, (signal) => planMarkers(req.params.id, trimmed, signal));
 });
 
 projectsRouter.post('/projects/:id/markers/plan-from-idea', async (req, res) => {
@@ -255,12 +284,42 @@ projectsRouter.post('/projects/:id/markers/plan-from-idea', async (req, res) => 
   if (typeof idea !== 'string' || !idea.trim()) {
     return res.status(400).json({ error: 'idea must be a non-empty string' });
   }
+  await runPlan(req.params.id, { kind: 'idea', idea: idea.trim() }, res, (signal) => planMarkersFromIdea(req.params.id, idea, signal));
+});
+
+// The saved plan, if any, and which Claude work is running for the project right now. A plan still
+// in "planning" or "applying" with nothing of that kind running was interrupted.
+projectsRouter.get('/projects/:id/plan', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  res.json({ plan: readPlan(req.params.id), running: runningJobs(req.params.id) });
+});
+
+// Saves the edits made while reviewing the plan.
+projectsRouter.put('/projects/:id/plan', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
   try {
-    res.json(await planMarkersFromIdea(req.params.id, idea, abortOnClose(res)));
+    const plan = savePlanItems(req.params.id, (req.body as { items?: unknown }).items);
+    if (!plan) return res.status(404).json({ error: 'no plan' });
+    res.json({ plan });
   } catch (err) {
-    writeLog('error', 'route.error', { route: 'plan-markers-from-idea', project: req.params.id, error: err });
-    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+projectsRouter.delete('/projects/:id/plan', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  stopJobs(req.params.id, 'plan');
+  clearPlan(req.params.id);
+  res.status(204).end();
+});
+
+// Stops Claude work for the project: one kind (plan, apply, regenerate:<markerId>) or all of it.
+projectsRouter.post('/projects/:id/stop', (req, res) => {
+  const tag = (req.body as { tag?: unknown } | undefined)?.tag;
+  if (tag !== undefined && (typeof tag !== 'string' || !/^(plan|apply|regenerate:[\w-]+)$/.test(tag))) {
+    return res.status(400).json({ error: 'invalid tag' });
+  }
+  res.json({ stopped: stopJobs(req.params.id, tag as JobTag | undefined) });
 });
 
 interface ApplyMarkerInput {
@@ -270,6 +329,35 @@ interface ApplyMarkerInput {
   region?: MarkerRegion | null;
   allowSkills?: string[];
   assets?: string[];
+  // The saved plan item this came from, so progress is recorded in the plan file.
+  key?: string;
+  // A marker an interrupted earlier apply created for this item but never finished.
+  markerId?: string;
+}
+
+// Removes a marker and its code; used for markers an apply created but did not finish.
+function discardMarker(id: string, markerId: string): void {
+  try {
+    deleteMarker(id, markerId);
+  } catch {
+    // already gone
+  }
+  fs.rmSync(markerFile(id, markerId), { force: true });
+}
+
+// Whether the saved plan still has items to generate. A plan with none left is done and removed.
+function settlePlan(id: string): boolean {
+  const plan = readPlan(id);
+  if (!plan) return false;
+  const markers = readMarkers(id);
+  const remaining = plan.items.some((i) => {
+    if (!i.included) return false;
+    const marker = i.markerId ? markers.find((m) => m.marker_id === i.markerId) : undefined;
+    return !marker || marker.status === 'draft';
+  });
+  if (remaining) setPlanState(id, 'review');
+  else clearPlan(id);
+  return remaining;
 }
 
 projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
@@ -286,7 +374,9 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
   };
 
   const results: { markerId?: string; success: boolean }[] = [];
-  const signal = abortOnClose(res);
+  const job = startJob(id, 'apply', res);
+  const signal = job.signal;
+  if (readPlan(id)) setPlanState(id, 'applying');
 
   try {
     const { fps, durationInFrames } = readCompositionConfig(id);
@@ -296,6 +386,13 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
       if (signal.aborted) break;
       const input = inputs[index];
       send('item-start', { index, total: inputs.length });
+
+      // Left behind by an apply that was interrupted: start the item over from a clean marker.
+      if (input.markerId) {
+        const leftover = readMarkers(id).find((m) => m.marker_id === input.markerId);
+        if (leftover && leftover.status === 'draft') discardMarker(id, leftover.marker_id);
+        updatePlanItem(id, input.key, { markerId: undefined });
+      }
 
       const { start, end, prompt } = input;
       const region = input.region ?? null;
@@ -307,12 +404,15 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
         validTiming && readMarkers(id).some((m) => start! < m.end && end! > m.start);
 
       if (!validTiming || !validRegion || !validPrompt || overlapsExisting) {
-        send('item-done', { index, success: false, error: 'Invalid or overlapping marker — skipped.' });
+        const error = 'Invalid or overlapping marker — skipped.';
+        updatePlanItem(id, input.key, { error });
+        send('item-done', { index, success: false, error });
         results.push({ success: false });
         continue;
       }
 
       const marker = addMarker(id, { start: start!, end: end!, prompt: prompt!, region: region ?? undefined, assets: validAssetIds(id, input.assets) });
+      updatePlanItem(id, input.key, { markerId: marker.marker_id, error: undefined });
       send('item-created', { index, markerId: marker.marker_id });
 
       const { width: compositionWidth, height: compositionHeight } = readCompositionConfig(id);
@@ -349,15 +449,31 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
         },
       });
 
+      if (result.cancelled) {
+        // Stopping throws away the half-made marker and puts its plan item back to pending. When the
+        // editor just went away, the marker is left for the saved plan to pick up again.
+        const removed = job.stoppedByUser();
+        if (removed) {
+          discardMarker(id, marker.marker_id);
+          updatePlanItem(id, input.key, { markerId: undefined });
+          regenerateRegistry(id);
+        }
+        send('item-done', { index, markerId: marker.marker_id, success: false, cancelled: true, removed });
+        break;
+      }
+
       send('item-done', { index, markerId: marker.marker_id, success: result.success, error: result.error });
       results.push({ markerId: marker.marker_id, success: result.success });
     }
 
-    send('done', { completed: results.length, total: inputs.length, results });
+    // An editor that went away leaves the plan marked as applying, which is how it shows up as interrupted.
+    const planRemaining = signal.aborted && !job.stoppedByUser() ? !!readPlan(id) : settlePlan(id);
+    send('done', { completed: results.length, total: inputs.length, results, cancelled: signal.aborted, planRemaining });
   } catch (err) {
     writeLog('error', 'route.error', { route: 'apply-markers', project: id, error: err });
-    send('done', { completed: results.length, total: inputs.length, results, error: err instanceof Error ? err.message : String(err) });
+    send('done', { completed: results.length, total: inputs.length, results, planRemaining: settlePlan(id), error: err instanceof Error ? err.message : String(err) });
   } finally {
+    job.finish();
     res.end();
   }
 });
@@ -381,6 +497,7 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
+  const job = startJob(id, `regenerate:${markerId}`, res);
   try {
     const marker = findMarker(id, markerId);
     const file = markerFile(id, markerId);
@@ -409,18 +526,19 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
       regionWidth,
       regionHeight,
       isFullScreen,
-      signal: abortOnClose(res),
+      signal: job.signal,
       onEvent: (e) => {
         if (e.type === 'claude') send('claude', e.raw);
         else send('progress', { attempt: e.attempt, phase: e.phase, error: e.error });
       },
     });
 
-    send('done', { success: result.success, code: result.code, error: result.error });
+    send('done', { success: result.success, code: result.code, error: result.error, cancelled: result.cancelled });
   } catch (err) {
     writeLog('error', 'route.error', { route: 'regenerate', project: id, marker: markerId, error: err });
     send('done', { success: false, error: err instanceof Error ? err.message : String(err) });
   } finally {
+    job.finish();
     res.end();
   }
 });

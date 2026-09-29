@@ -165,6 +165,10 @@ function logClaudeEvent(ctx: LogFields, event: unknown): void {
 }
 
 export function runClaudeHeadless(opts: RunClaudeOptions): Promise<RunClaudeResult> {
+  // Stopped while it was still waiting for the project lock; there is nothing to start.
+  if (opts.signal?.aborted) {
+    return Promise.resolve({ success: false, exitCode: null, failure: classifyClaudeFailure({ exitCode: null, text: '', cancelled: true }) });
+  }
   const env = { ...process.env };
   for (const key of opts.envExclude ?? []) delete env[key];
   const ctx = opts.logContext ?? {};

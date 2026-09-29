@@ -26,6 +26,7 @@ fs.writeFileSync(
     'if "%MODE%"=="signedout" goto signedout',
     'if "%MODE%"=="hang" goto hang',
     'if "%MODE%"=="version" goto version',
+    'if "%MODE%"=="plan" goto plan',
     ':ok',
     'echo {"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.01}',
     'exit /b 0',
@@ -37,6 +38,9 @@ fs.writeFileSync(
     'exit /b 0',
     ':version',
     'echo 2.1.0 (Claude Code)',
+    'exit /b 0',
+    ':plan',
+    'echo {"type":"result","subtype":"success","is_error":false,"result":"[{\\"start\\":0.5,\\"end\\":2,\\"prompt\\":\\"Title card\\",\\"region\\":null},{\\"start\\":3,\\"end\\":5,\\"prompt\\":\\"Big number\\",\\"region\\":null}]","total_cost_usd":0.01}',
     'exit /b 0',
   ].join('\r\n')
 );
@@ -172,6 +176,83 @@ test('closing the browser mid-run stops Claude', { skip }, async () => {
   // the marker keeps the status it had before the cancelled run
   const marker = ((await (await api(`/projects/${id}`)).json()) as { markers: { status: string }[] }).markers[0];
   assert.equal(marker.status, 'draft');
+});
+
+const markerCode = (id: string, markerId: string) =>
+  fs.readFileSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '03_remotion_code', `marker_${markerId}.tsx`), 'utf-8');
+const getPlan = async (id: string) => (await (await api(`/projects/${id}/plan`)).json()) as { plan: any; running: string[] };
+const stop = (id: string, tag?: string) => api(`/projects/${id}/stop`, { method: 'POST', headers: json, body: JSON.stringify({ tag }) });
+
+test('Stop ends a regenerate at once and puts the marker back as it was', { skip }, async () => {
+  setMode('hang');
+  const id = await newProject();
+  await api(`/projects/${id}/markers`, { method: 'POST', headers: json, body: JSON.stringify({ start: 0, end: 2, prompt: 'hello' }) });
+  const before = markerCode(id, 'm1');
+  const started = Date.now();
+  const run = sse(`/projects/${id}/markers/m1/regenerate`, { feedback: 'x' });
+  await sleep(1500);
+  assert.equal(((await (await stop(id, 'regenerate:m1')).json()) as { stopped: number }).stopped, 1);
+  const { events } = await run;
+  const done = events.find((e) => e.event === 'done')!;
+  assert.equal(done.data.cancelled, true);
+  assert.ok(Date.now() - started < 15_000, 'it must not wait for the hung process');
+  assert.equal(markerCode(id, 'm1'), before);
+  assert.deepEqual((await getPlan(id)).running, []);
+});
+
+test('a plan is saved as soon as it exists, keeps review edits, and is removed once applied', { skip }, async () => {
+  setMode('plan');
+  const id = await newProject();
+  const planned = (await (await api(`/projects/${id}/markers/plan-from-idea`, { method: 'POST', headers: json, body: JSON.stringify({ idea: 'two beats' }) })).json()) as any;
+  assert.equal(planned.plan.items.length, 2);
+
+  const saved = await getPlan(id);
+  assert.equal(saved.plan.state, 'review');
+  assert.deepEqual(saved.plan.source, { kind: 'idea', idea: 'two beats' });
+
+  const region = { x: 0.1, y: 0.1, width: 0.5, height: 0.5 };
+  const edited = saved.plan.items.map((i: any) => ({ ...i, region }));
+  assert.equal((await api(`/projects/${id}/plan`, { method: 'PUT', headers: json, body: JSON.stringify({ items: edited }) })).status, 200);
+  assert.deepEqual((await getPlan(id)).plan.items.map((i: any) => i.region), [region, region]);
+
+  setMode('ok');
+  const { events } = await sse(`/projects/${id}/markers/apply`, { markers: edited });
+  const done = events.find((e) => e.event === 'done')!;
+  assert.equal(done.data.planRemaining, false, JSON.stringify(events));
+  assert.equal((await getPlan(id)).plan, null);
+});
+
+test('Stop during apply removes the half-made marker and keeps the rest of the plan', { skip }, async () => {
+  setMode('plan');
+  const id = await newProject();
+  const { plan } = (await (await api(`/projects/${id}/markers/plan-from-idea`, { method: 'POST', headers: json, body: JSON.stringify({ idea: 'two beats' }) })).json()) as any;
+  setMode('hang');
+  const run = sse(`/projects/${id}/markers/apply`, { markers: plan.items });
+  for (let i = 0; i < 40 && (await getPlan(id)).plan.items[0].markerId === undefined; i++) await sleep(250);
+  assert.equal((await getPlan(id)).plan.state, 'applying');
+  await sleep(1000);
+  await stop(id, 'apply');
+  const { events } = await run;
+  assert.ok(events.some((e) => e.event === 'item-done' && e.data.cancelled && e.data.removed));
+  assert.equal(events.find((e) => e.event === 'done')!.data.planRemaining, true);
+  const after = await getPlan(id);
+  assert.equal(after.plan.state, 'review');
+  assert.ok(after.plan.items.every((i: any) => i.markerId === undefined));
+  const project = (await (await api(`/projects/${id}`)).json()) as { markers: unknown[] };
+  assert.equal(project.markers.length, 0, 'the unfinished marker is gone');
+});
+
+test('planning cut off by the editor going away is kept so it can be retried', { skip }, async () => {
+  setMode('hang');
+  const id = await newProject();
+  await sse(`/projects/${id}/markers/plan-from-idea`, { idea: 'resume me' }, { abortAfterMs: 1500 });
+  for (let i = 0; i < 40 && (await getPlan(id)).running.length > 0; i++) await sleep(250);
+  const { plan, running } = await getPlan(id);
+  assert.deepEqual(running, []);
+  assert.equal(plan.state, 'planning');
+  assert.deepEqual(plan.source, { kind: 'idea', idea: 'resume me' });
+  assert.equal((await api(`/projects/${id}/plan`, { method: 'DELETE' })).status, 204);
+  assert.equal((await getPlan(id)).plan, null);
 });
 
 test('a hung Claude run is stopped by the timeout and reported', { skip }, async () => {
