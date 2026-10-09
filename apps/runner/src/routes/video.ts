@@ -4,7 +4,10 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { inputDir } from '../lib/paths.js';
-import { readProject, baseLayerOf } from '../lib/scaffold.js';
+import { readProject, baseLayerOf, updateProjectSettings } from '../lib/scaffold.js';
+import { musicSettings, musicFilePath, removeMusicFiles, speechIntervals, DUCK_LEVEL, RAMP_SEC } from '../lib/music.js';
+import { runCommand } from '../lib/proc.js';
+import { ffprobeBin } from '../lib/bin.js';
 import { findRawVideo, removeExistingRawVideo } from '../lib/video.js';
 import { updateCompositionConfig } from '../lib/composition.js';
 import { assetFilePath } from '../lib/images.js';
@@ -103,6 +106,111 @@ videoRouter.get('/projects/:id/overlay.js', async (req, res) => {
   } catch (err) {
     res.status(err instanceof InvalidIdError ? 400 : 500).json({ error: err instanceof Error ? err.message : String(err) });
   }
+});
+
+// ---------------------------------------------------------------- background music (see music.ts)
+
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.flac', '.webm']);
+const MAX_MUSIC_BYTES = 200 * 1024 * 1024;
+
+const musicUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, _file, cb) => {
+      if (!readProject(req.params.id)) cb(new Error('Project not found'), '');
+      else cb(null, inputDir(req.params.id));
+    },
+    filename: (_req, _file, cb) => cb(null, `upload_${crypto.randomBytes(4).toString('hex')}.part`),
+  }),
+  limits: { fileSize: MAX_MUSIC_BYTES },
+  fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('audio/') || AUDIO_EXTENSIONS.has(path.extname(file.originalname).toLowerCase())),
+});
+
+// The music, plus what the preview needs to duck it the same way the export does.
+const musicState = (id: string) => ({ music: musicSettings(id), intervals: speechIntervals(id), duckLevel: DUCK_LEVEL, rampSec: RAMP_SEC });
+
+videoRouter.get('/projects/:id/music', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  res.json(musicState(req.params.id));
+});
+
+// Replaces the project's music. Like a video upload, it only takes over once ffprobe has confirmed
+// the file has audio, and a replaced file is deleted.
+videoRouter.post('/projects/:id/music', (req, res) => {
+  const id = req.params.id;
+  try {
+    assertSafeId('project id', id);
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+  if (!readProject(id)) return res.status(404).json({ error: 'not found' });
+  musicUpload.single('music')(req, res, async (err) => {
+    if (err) {
+      const tooLarge = (err as { code?: string }).code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({ error: tooLarge ? 'That file is larger than 200 MB.' : err.message });
+    }
+    const uploaded = req.file;
+    if (!uploaded) return res.status(400).json({ error: 'An audio file is required (form field "music"): mp3, wav, m4a, ogg, opus or flac.' });
+    try {
+      const probe = await runCommand(ffprobeBin(), ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', uploaded.path], { timeoutMs: 30_000 });
+      const parsed = JSON.parse(probe.stdout || '{}') as { streams?: unknown[]; format?: { duration?: string } };
+      const durationSec = Number.parseFloat(parsed.format?.duration ?? '');
+      if (!parsed.streams?.length || !Number.isFinite(durationSec) || durationSec <= 0) {
+        fs.rmSync(uploaded.path, { force: true });
+        return res.status(400).json({ error: 'This file could not be read as audio.' });
+      }
+      const rawExt = path.extname(uploaded.originalname).toLowerCase();
+      const ext = AUDIO_EXTENSIONS.has(rawExt) ? rawExt : '.mp3';
+      const file = `music-${crypto.randomBytes(4).toString('hex')}${ext}`;
+      fs.renameSync(uploaded.path, path.join(inputDir(id), file));
+      const previous = musicSettings(id);
+      updateProjectSettings(id, {
+        music: {
+          file,
+          name: path.basename(uploaded.originalname).slice(0, 120),
+          durationSec: Math.round(durationSec * 100) / 100,
+          volume: previous?.volume ?? 0.35,
+          loop: previous?.loop ?? true,
+          duck: previous?.duck ?? true,
+        },
+      });
+      removeMusicFiles(id, file);
+      res.status(201).json(musicState(id));
+    } catch (e) {
+      fs.rmSync(uploaded.path, { force: true });
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+});
+
+videoRouter.patch('/projects/:id/music', (req, res) => {
+  const id = req.params.id;
+  const music = musicSettings(id);
+  if (!music) return res.status(404).json({ error: 'no music' });
+  const { volume, loop, duck } = req.body as { volume?: unknown; loop?: unknown; duck?: unknown };
+  if (volume !== undefined && (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1)) {
+    return res.status(400).json({ error: 'volume must be a number from 0 to 1' });
+  }
+  if ((loop !== undefined && typeof loop !== 'boolean') || (duck !== undefined && typeof duck !== 'boolean')) {
+    return res.status(400).json({ error: 'loop and duck must be true or false' });
+  }
+  updateProjectSettings(id, {
+    music: { ...music, ...(volume !== undefined && { volume }), ...(loop !== undefined && { loop }), ...(duck !== undefined && { duck }) },
+  });
+  res.json(musicState(id));
+});
+
+videoRouter.delete('/projects/:id/music', (req, res) => {
+  const id = req.params.id;
+  if (!readProject(id)) return res.status(404).json({ error: 'not found' });
+  updateProjectSettings(id, { music: undefined });
+  removeMusicFiles(id);
+  res.status(204).end();
+});
+
+videoRouter.get('/projects/:id/music/file', (req, res) => {
+  const file = musicFilePath(req.params.id);
+  if (!file) return res.status(404).json({ error: 'no music' });
+  res.sendFile(file);
 });
 
 videoRouter.get('/projects/:id/video', (req, res) => {

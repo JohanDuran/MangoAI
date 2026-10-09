@@ -1,6 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { RegionOverlay } from './RegionOverlay';
+import { duckFactor } from '../audioMix';
 import { BASE, type BaseLayer, type MarkerRegion } from '../api/client';
 
 interface Props {
@@ -23,6 +24,8 @@ interface Props {
   // The voiceover: clips played from `start` seconds for `duration` seconds, at voiceVolume (0-1).
   voiceClips?: VoiceClip[];
   voiceVolume?: number;
+  // Background music, ducked under the speech intervals the runner reports.
+  music?: PreviewMusic | null;
   // Hit-testing for click-to-select on the picture. `point` is normalized (0–1) to the stage, and
   // `seconds` is the playhead at the moment of the click/hover.
   hasMarkerAt?: (point: StagePoint, seconds: number) => boolean;
@@ -34,6 +37,17 @@ export interface VoiceClip {
   url: string;
   start: number;
   duration: number;
+}
+
+export interface PreviewMusic {
+  url: string;
+  volume: number;
+  loop: boolean;
+  duration: number;
+  duck: boolean;
+  intervals: [number, number][];
+  duckLevel: number;
+  rampSec: number;
 }
 
 // Off by more than this, a playing voice clip is moved back in line with the picture.
@@ -72,6 +86,7 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     overlayVolume = 1,
     voiceClips = NO_CLIPS,
     voiceVolume = 1,
+    music = null,
     hasMarkerAt,
     onMarkerClick,
   },
@@ -287,6 +302,20 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     }
   }, [voiceKey]);
 
+  // The background music plays the same way, from 0 (looped when set), turned down under speech.
+  const musicAudioRef = useRef<HTMLAudioElement | null>(null);
+  const musicRef = useRef(music);
+  musicRef.current = music;
+  useEffect(() => {
+    musicAudioRef.current?.pause();
+    musicAudioRef.current = null;
+    if (!music?.url) return;
+    const el = new Audio(music.url);
+    el.preload = 'auto';
+    musicAudioRef.current = el;
+    return () => el.pause();
+  }, [music?.url]);
+
   useEffect(() => {
     const audios = voiceAudioRef.current;
     let raf = 0;
@@ -296,6 +325,27 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
       const player = playerRef.current;
       const playing = withVideo ? !!video && !video.paused && !video.ended : !!player?.isPlaying();
       const t = withVideo ? video?.currentTime ?? 0 : (player?.getCurrentFrame() ?? 0) / fps;
+
+      const m = musicRef.current;
+      const musicEl = musicAudioRef.current;
+      if (m && musicEl) {
+        const length = m.duration > 0 ? m.duration : Infinity;
+        const at = m.loop ? t % length : t;
+        if (!playing || (!m.loop && t >= length)) {
+          if (!musicEl.paused) musicEl.pause();
+        } else {
+          const gain = m.duck ? duckFactor(m.intervals, t, m.duckLevel, m.rampSec) : 1;
+          musicEl.volume = Math.max(0, Math.min(1, m.volume * gain));
+          if (musicEl.playbackRate !== rate) musicEl.playbackRate = rate;
+          if (musicEl.paused) {
+            musicEl.currentTime = at;
+            musicEl.play().catch(() => {});
+          } else if (Math.abs(musicEl.currentTime - at) > VOICE_DRIFT_SECONDS * Math.max(1, rate) && Math.abs(musicEl.currentTime - at) < length - 0.5) {
+            // (A jump of about one full length is the loop wrapping around, not drift.)
+            musicEl.currentTime = at;
+          }
+        }
+      }
       for (const c of clips) {
         const el = audios.get(c.id);
         if (!el) continue;
@@ -319,6 +369,7 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     return () => {
       cancelAnimationFrame(raf);
       for (const el of audios.values()) el.pause();
+      musicAudioRef.current?.pause();
     };
   }, [fps]);
 

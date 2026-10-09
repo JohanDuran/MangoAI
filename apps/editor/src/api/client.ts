@@ -190,6 +190,50 @@ export const saveCaptions = (id: string, settings: CaptionSettings) =>
 
 export const captionsSrtUrl = (id: string) => `${BASE}/projects/${id}/captions.srt`;
 
+// Background music, played from the start (looped by default) and turned down under speech.
+export interface MusicSettings {
+  file: string;
+  name: string;
+  durationSec: number;
+  volume: number;
+  loop: boolean;
+  duck: boolean;
+}
+
+export interface MusicState {
+  music: MusicSettings | null;
+  // When someone speaks, as the runner sees it (the export ducks the music in these stretches).
+  intervals: [number, number][];
+  duckLevel: number;
+  rampSec: number;
+}
+
+export const getMusic = (id: string) => fetch(`${BASE}/projects/${id}/music`).then((r) => json<MusicState>(r));
+
+export const uploadMusic = (id: string, file: File) => {
+  const form = new FormData();
+  form.append('music', file);
+  return fetch(`${BASE}/projects/${id}/music`, { method: 'POST', body: form }).then(async (r) => {
+    if (!r.ok) throw new Error(await errorText(r));
+    return (await r.json()) as MusicState;
+  });
+};
+
+export const updateMusic = (id: string, patch: Partial<Pick<MusicSettings, 'volume' | 'loop' | 'duck'>>) =>
+  fetch(`${BASE}/projects/${id}/music`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).then((r) => json<MusicState>(r));
+
+export const deleteMusic = (id: string) =>
+  fetch(`${BASE}/projects/${id}/music`, { method: 'DELETE' }).then(async (r) => {
+    if (!r.ok) throw new Error(await errorText(r));
+  });
+
+// The file name changes with each upload, so the browser never plays a cached older track.
+export const musicFileUrl = (id: string, music: MusicSettings) => `${BASE}/projects/${id}/music/file?f=${music.file}`;
+
 export const getProject =(id: string) =>
   fetch(`${BASE}/projects/${id}`).then((r) =>
     json<{ project: Project; markers: Marker[]; hasVideo: boolean; composition: CompositionConfig; baseLayer: BaseLayer }>(r)
@@ -254,6 +298,8 @@ export interface ExportStatus {
     // The voiceover written beside an overlay-only export.
     narration?: string;
     voices?: { markerId: string; file: string }[];
+    // The ducked music, written beside an overlay-only export.
+    music?: string;
     // captions.srt, written with every export while captions are on.
     captions?: string;
   };

@@ -8,6 +8,9 @@ import {
   saveVoiceVolume,
   getVoices,
   getCaptions,
+  getMusic,
+  musicFileUrl,
+  type MusicState,
   saveMarkerNarration,
   generateMarkerNarration,
   playableNarration,
@@ -59,6 +62,7 @@ import { MarkerPlanReview, ALL_AREAS_KEY, isItemDone, type ReviewItem } from './
 import { PlanMarkersPanel } from './components/PlanMarkersPanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { CaptionsDialog } from './components/CaptionsDialog';
+import { MusicDialog } from './components/MusicDialog';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { StatusButton, StatusDashboard, useStatus } from './components/StatusDashboard';
 import { ConnectionBanner } from './components/ConnectionBanner';
@@ -172,6 +176,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [planPanelOpen, setPlanPanelOpen] = useState(false);
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
   const [captionsOpen, setCaptionsOpen] = useState(false);
+  const [musicOpen, setMusicOpen] = useState(false);
+  const [musicState, setMusicState] = useState<MusicState | null>(null);
   // Burned-in captions are part of the overlay, so text changes reload the preview while they are on.
   const [captionsBurned, setCaptionsBurned] = useState(false);
   const [planning, setPlanning] = useState(false);
@@ -316,6 +322,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       getCaptions(projectId)
         .then((c) => setCaptionsBurned(c.settings.mode === 'burn'))
         .catch(() => {});
+      setMusicState(null);
+      getMusic(projectId)
+        .then(setMusicState)
+        .catch(() => {});
       restorePlan(projectId).catch(() => {});
     } else {
       savedVolumeRef.current = null;
@@ -348,6 +358,19 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     }, 400);
     return () => clearTimeout(timer);
   }, [overlayVolume, projectId]);
+
+  // The music is ducked under speech, which moves with the markers, their voices and the transcript;
+  // the runner works the stretches out, so they are fetched again when any of those change.
+  const hasMusic = !!musicState?.music;
+  useEffect(() => {
+    if (!projectId || !hasMusic) return;
+    const timer = setTimeout(() => {
+      getMusic(projectId)
+        .then(setMusicState)
+        .catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [projectId, hasMusic, markers, transcript]);
 
   // Same for the voiceover volume.
   useEffect(() => {
@@ -1078,7 +1101,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         setExportedPath(r.outputs[0]?.file ?? r.outputDir ?? null);
       } else {
         setExportStatus(
-          `Export complete — saved to ${r.output}${r.narration ? `, voiceover track to ${r.narration}` : ''}${r.captions ? `, captions to ${r.captions}` : ''}`
+          `Export complete — saved to ${r.output}${r.narration ? `, voiceover track to ${r.narration}` : ''}${r.music ? `, music to ${r.music}` : ''}${r.captions ? `, captions to ${r.captions}` : ''}`
         );
         setExportedPath(r.output ?? null);
       }
@@ -1259,6 +1282,13 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               </button>
             )}
             <button
+              onClick={() => setMusicOpen(true)}
+              className={`btn btn-sm${hasMusic ? ' btn-primary' : ''}`}
+              title="A background music track, turned down while someone speaks"
+            >
+              Music
+            </button>
+            <button
               onClick={() => setCaptionsOpen(true)}
               className={`btn btn-sm${captionsBurned ? ' btn-primary' : ''}`}
               title="Captions from the voiceover or the transcript: burn them into the video or save a subtitle file"
@@ -1437,6 +1467,20 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 overlayVolume={overlayVolume}
                 voiceClips={voiceClips}
                 voiceVolume={voiceVolume}
+                music={
+                  projectId && musicState?.music
+                    ? {
+                        url: musicFileUrl(projectId, musicState.music),
+                        volume: musicState.music.volume,
+                        loop: musicState.music.loop,
+                        duration: musicState.music.durationSec,
+                        duck: musicState.music.duck,
+                        intervals: musicState.intervals,
+                        duckLevel: musicState.duckLevel,
+                        rampSec: musicState.rampSec,
+                      }
+                    : null
+                }
                 regionDraft={activeRegionDraft}
                 onRegionDraftChange={handleRegionDraftChange}
                 onRegionCommit={editingRegionMarkerId ? handleSaveRegion : undefined}
@@ -1619,6 +1663,17 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           )}
         </div>
       </div>
+      {musicOpen && projectId && (
+        <MusicDialog
+          projectId={projectId}
+          state={musicState}
+          onChange={(next) => {
+            markEdited();
+            setMusicState(next);
+          }}
+          onClose={() => setMusicOpen(false)}
+        />
+      )}
       {captionsOpen && projectId && (
         <CaptionsDialog
           projectId={projectId}

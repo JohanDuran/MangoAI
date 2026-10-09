@@ -8,6 +8,7 @@ import { regenerateRegistry } from './registry.js';
 import { defaultSkillNames } from './skills.js';
 import { DEFAULT_BASE_LAYER, type BaseLayer } from './baseLayer.js';
 import type { CaptionSettings } from './captions.js';
+import type { MusicSettings } from './music.js';
 
 // Bump when the on-disk project layout changes and add a step to migrate.ts.
 export const CURRENT_SCHEMA_VERSION = 1;
@@ -34,6 +35,8 @@ export interface Project {
   baseLayer?: BaseLayer;
   // Caption settings (see captions.ts). Absent means captions are off.
   captions?: CaptionSettings;
+  // Background music (see music.ts). Absent means none.
+  music?: MusicSettings;
 }
 
 const slugify = (name: string) =>
@@ -184,7 +187,7 @@ export function voiceVolume(id: string): number {
   return readProject(id)?.voiceVolume ?? 1;
 }
 
-export function updateProjectSettings(id: string, change: Partial<Pick<Project, 'voiceVolume' | 'voice' | 'captions'>>): Project {
+export function updateProjectSettings(id: string, change: Partial<Pick<Project, 'voiceVolume' | 'voice' | 'captions' | 'music'>>): Project {
   const project = readProject(id);
   if (!project) throw new Error(`Project ${id} not found`);
   const next = { ...project, ...change };
