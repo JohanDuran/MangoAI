@@ -82,11 +82,16 @@ dependencies).
 
 - **Not tested on a clean machine** without Claude Code, ffmpeg or Node. The release workflow installs and smoke-tests on a fresh
   GitHub runner, which is the closest thing; a VM pass before the first public link is still recommended.
-- **The GitHub workflows have never run.** The first tag push will show any problem.
-- **Remotion licensing.** Remotion is free for individuals and companies of up to three people. Distributing an app that bundles it to
-  companies larger than that may require them (or you) to hold a Remotion license. This is stated in the README, license page and notices;
-  please read https://www.remotion.dev/license and decide before sharing widely.
-- **`apps/desktop/build/license.txt` is a draft** written for this preview. Replace it with what you actually want.
+- **The GitHub workflows have never run on GitHub.** On 2026-10-09 both were reproduced locally from a fresh clone: CI's steps
+  (`npm ci`, typecheck, editor build, tests) pass, and the release build produces the installer, whose unpacked app passes
+  `--smoke-test` including a real export. That pass found and fixed one blocker: `apps/desktop/build/` (license, NSIS include,
+  afterPack hook) was git-ignored, so a checkout could not build the installer. The silent install step itself was not run here.
+- **Remotion licensing.** Remotion is free for individuals and companies of up to three people. Whether companies larger than that who
+  install this free desktop app need their own license is not addressed by Remotion's terms; see `docs/remotion-license-notes.md`
+  for a summary and a draft question to Remotion. Decide before sharing widely.
+- **`apps/desktop/build/license.txt` is a draft** written for this preview (now also covering AI-generated voiceovers). Replace it with
+  what you actually want.
+- **Not done, needs you:** the public releases repository, its `RELEASES_REPO_TOKEN` secret and `RELEASES_REPO` variable, and the first push.
 - **macOS** is not built. Windows-only paths: NSIS, `ffmpeg.exe` names in `main.ts`, `taskkill`, the `.cmd` handling.
 - **Size**: 273 MB download. Possible savings later: drop `@rspack` if Remotion does not need it, ship one ffmpeg binary, or download the
   Chrome shell on first export instead of shipping it.
