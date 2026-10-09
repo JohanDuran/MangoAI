@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { runClaudeHeadless, buildRegeneratePrompt, withProjectLock } from './claude.js';
 import { validateMarkerFile } from './validate.js';
 import { smokeRenderFrames } from './render.js';
+import { writeSmokeEntry } from './registry.js';
 import { readCompositionConfig } from './composition.js';
 import path from 'node:path';
 import { logAttempt } from './debug.js';
@@ -84,13 +85,16 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
       libraryAssets: projectAssets.library,
     });
 
-    // Installing skills and running Claude happen under the same lock, so a queued run for
-    // another marker can never change the skills folder underneath this one.
+    // Installing skills and running Claude happen under the same lock. Runs with the same skills go
+    // side by side; a run needing other skills waits, so the folder never changes under a run.
     const queuedAt = Date.now();
-    const { result, config } = await withProjectLock(opts.projectId, async () => {
+    const enabled = enabledSkillNames(opts.projectId);
+    const optedIn = opts.allowSkills.filter((s) => enabled.includes(s));
+    const kind = `generate:${[...enabled].sort().join(',')}|${[...optedIn].sort().join(',')}`;
+    const { result, config } = await withProjectLock(opts.projectId, kind, async () => {
       const config = prepareClaudeCall({
         projectId: opts.projectId,
-        enabled: enabledSkillNames(opts.projectId),
+        enabled,
         optedIn: opts.allowSkills,
       });
       log('info', 'marker.attempt', {
@@ -145,7 +149,10 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
       const startFrame = Math.round((marker?.start ?? 0) * fps);
       const endFrame = Math.round((marker?.end ?? 1) * fps);
       const frames = [startFrame + 1, Math.round((startFrame + endFrame) / 2), endFrame - 2].map((f) => Math.min(Math.max(0, f), durationInFrames - 1));
-      const smoke = await smokeRenderFrames(path.join(path.dirname(opts.file), 'Root.tsx'), [...new Set(frames)], path.join(path.dirname(opts.file), '..', '05_debug', 'smoke'));
+      const entry = writeSmokeEntry(opts.projectId, opts.markerId);
+      const smoke = await smokeRenderFrames(entry, [...new Set(frames)], path.join(path.dirname(opts.file), '..', '05_debug', 'smoke', opts.markerId)).finally(() =>
+        fs.rmSync(entry, { force: true })
+      );
       if (smoke.skipped) log('warn', 'marker.render_check_skipped', { ...ctx, attempt, reason: clip(smoke.error, 300) });
       else if (!smoke.ok) {
         log('warn', 'marker.render_check_failed', { ...ctx, attempt, error: clip(smoke.error, 600) });

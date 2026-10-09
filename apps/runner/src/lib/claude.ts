@@ -6,23 +6,59 @@ import { findClaude, quoteForCmd } from './bin.js';
 import { spawnHidden, killTree } from './proc.js';
 import { recordClaudeRun } from './usage.js';
 
-// Claude runs for one project are executed one at a time. A second request waits for the first
-// instead of killing it: two generations for different markers used to kill each other's
-// process, and two runs can never race on the same project files.
-const queues = new Map<string, Promise<void>>();
+// Claude runs for one project share its folder, including the skills installed into it before each
+// run. Runs with the same `kind` (the same skills setup) go side by side, up to MANGO_PARALLEL_RUNS
+// (default 3) at once; each marker writes only its own file. A run of another kind waits until the
+// running ones finish, and later runs queue behind it, first come first served. A waiting request is
+// never killed: two generations used to kill each other's process.
+export const maxParallelRuns = () => Math.max(1, Math.floor(Number(process.env.MANGO_PARALLEL_RUNS)) || 3);
 
-export function withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
-  const previous = queues.get(projectId) ?? Promise.resolve();
-  const run = previous.then(fn, fn);
-  const tail = run.then(
-    () => undefined,
-    () => undefined
-  );
-  queues.set(projectId, tail);
-  void tail.then(() => {
-    if (queues.get(projectId) === tail) queues.delete(projectId);
+interface ProjectRuns {
+  kind: string;
+  active: number;
+  queue: { kind: string; start: () => void }[];
+}
+const runs = new Map<string, ProjectRuns>();
+
+function startWaiting(projectId: string): void {
+  const p = runs.get(projectId);
+  if (!p) return;
+  while (p.queue.length > 0) {
+    const next = p.queue[0];
+    if (p.active >= maxParallelRuns() || (p.active > 0 && p.kind !== next.kind)) break;
+    p.queue.shift();
+    p.kind = next.kind;
+    p.active++;
+    next.start();
+  }
+  if (p.active === 0 && p.queue.length === 0) runs.delete(projectId);
+}
+
+export function withProjectLock<T>(projectId: string, kind: string, fn: () => Promise<T>): Promise<T> {
+  let p = runs.get(projectId);
+  if (!p) runs.set(projectId, (p = { kind, active: 0, queue: [] }));
+  const project = p;
+  return new Promise<T>((resolve, reject) => {
+    project.queue.push({
+      kind,
+      start: () => {
+        Promise.resolve()
+          .then(fn)
+          .then(resolve, reject)
+          .finally(() => {
+            project.active--;
+            startWaiting(projectId);
+          });
+      },
+    });
+    startWaiting(projectId);
   });
-  return run;
+}
+
+// How many Claude runs are going for a project, and how many are waiting.
+export function projectRunCounts(projectId: string): { active: number; waiting: number } {
+  const p = runs.get(projectId);
+  return { active: p?.active ?? 0, waiting: p?.queue.length ?? 0 };
 }
 
 // Runs still in flight, so a shutdown (or a timeout) can end them instead of leaving orphans.

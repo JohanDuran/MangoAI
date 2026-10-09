@@ -164,6 +164,20 @@ export function skillPublicFile(skillName: string, relativePath: string): string
 
 const mcpServerKey = (skillName: string) => skillName.replace(/[^A-Za-z0-9]/g, '_');
 
+// Writes only when the content differs. Runs with the same skills share the installed files, and an
+// unconditional rewrite could let a running Claude read a file in the moment it is truncated.
+function writeIfChanged(file: string, content: string | Buffer): void {
+  const wanted = typeof content === 'string' ? Buffer.from(content) : content;
+  try {
+    if (fs.readFileSync(file).equals(wanted)) return;
+  } catch {
+    // missing: write it
+  }
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  fs.writeFileSync(tmp, wanted);
+  fs.renameSync(tmp, file);
+}
+
 function installSkills(id: string, active: Skill[]): void {
   const root = path.join(projectDir(id), '.claude', 'skills');
   fs.mkdirSync(root, { recursive: true });
@@ -181,12 +195,12 @@ function installSkills(id: string, active: Skill[]): void {
     const text = fs
       .readFileSync(path.join(skill.dir, 'SKILL.md'), 'utf-8')
       .replaceAll('{{SKILL_URL}}', `${runnerUrl()}/skills/${skill.name}/public`);
-    fs.writeFileSync(path.join(target, 'SKILL.md'), text);
+    writeIfChanged(path.join(target, 'SKILL.md'), text);
     for (const file of skill.manifest.files ?? []) {
       fs.mkdirSync(path.dirname(path.join(target, file)), { recursive: true });
-      fs.copyFileSync(path.join(skill.dir, file), path.join(target, file));
+      writeIfChanged(path.join(target, file), fs.readFileSync(path.join(skill.dir, file)));
     }
-    fs.writeFileSync(path.join(target, MANAGED_MARKER), 'managed by the MangoAI runner; regenerated before every Claude call\n');
+    writeIfChanged(path.join(target, MANAGED_MARKER), 'managed by the MangoAI runner; regenerated before every Claude call\n');
   }
 }
 
@@ -244,7 +258,7 @@ export function prepareClaudeCall(opts: { projectId: string; enabled: string[]; 
   let mcpConfigPath: string | undefined;
   if (Object.keys(servers).length > 0) {
     mcpConfigPath = path.join(projectDir(opts.projectId), '.claude', 'mcp.generated.json');
-    fs.writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: servers }, null, 2));
+    writeIfChanged(mcpConfigPath, JSON.stringify({ mcpServers: servers }, null, 2));
   }
 
   const activeKeys = new Set(active.flatMap((s) => s.manifest.env ?? []));

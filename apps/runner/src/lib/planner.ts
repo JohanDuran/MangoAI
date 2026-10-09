@@ -197,7 +197,7 @@ export async function planMarkers(id: string, context?: string, signal?: AbortSi
     context: context?.trim() || undefined,
   });
 
-  const { text, success, failure } = await withProjectLock(id, () =>
+  const { text, success, failure } = await withProjectLock(id, 'plan', () =>
     runClaudeHeadlessCapturingText({
       cwd: projectDir(id),
       prompt,
@@ -245,7 +245,7 @@ export async function planMarkersFromIdea(
     narration,
   });
 
-  const { text, success, failure } = await withProjectLock(id, () =>
+  const { text, success, failure } = await withProjectLock(id, 'plan', () =>
     runClaudeHeadlessCapturingText({
       cwd: projectDir(id),
       prompt,

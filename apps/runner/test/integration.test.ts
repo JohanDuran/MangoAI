@@ -27,7 +27,12 @@ fs.writeFileSync(
     'if "%MODE%"=="hang" goto hang',
     'if "%MODE%"=="version" goto version',
     'if "%MODE%"=="plan" goto plan',
+    'if "%MODE%"=="slow" goto slow',
     ':ok',
+    'echo {"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.01}',
+    'exit /b 0',
+    ':slow',
+    'ping -n 4 127.0.0.1 >nul',
     'echo {"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.01}',
     'exit /b 0',
     ':signedout',
@@ -240,6 +245,35 @@ test('Stop during apply removes the half-made marker and keeps the rest of the p
   assert.ok(after.plan.items.every((i: any) => i.markerId === undefined));
   const project = (await (await api(`/projects/${id}`)).json()) as { markers: unknown[] };
   assert.equal(project.markers.length, 0, 'the unfinished marker is gone');
+});
+
+test('applying a plan generates several markers at once', { skip }, async () => {
+  setMode('slow');
+  const id = await newProject();
+  const markers = [0, 2, 4].map((start) => ({ start, end: start + 1.5, prompt: `beat at ${start}`, region: null }));
+  const began = Date.now();
+  const { events } = await sse(`/projects/${id}/markers/apply`, { markers });
+  const seconds = (Date.now() - began) / 1000;
+  const done = events.filter((e) => e.event === 'item-done');
+  assert.equal(done.length, 3, JSON.stringify(events));
+  assert.ok(done.every((e) => e.data.success), JSON.stringify(done));
+  // Each stand-in run takes about 3 s: one after another would be at least 9 s.
+  assert.ok(seconds < 7.5, `took ${seconds.toFixed(1)} s`);
+  setMode('ok');
+});
+
+test('Stop during a parallel apply removes every unfinished marker', { skip }, async () => {
+  setMode('hang');
+  const id = await newProject();
+  const markers = [0, 2, 4, 6].map((start) => ({ start, end: start + 1.5, prompt: `beat at ${start}`, region: null }));
+  const run = sse(`/projects/${id}/markers/apply`, { markers });
+  await sleep(2500);
+  await stop(id, 'apply');
+  const { events } = await run;
+  assert.equal(events.filter((e) => e.event === 'item-done' && e.data.cancelled && e.data.removed).length, 4, JSON.stringify(events));
+  const project = (await (await api(`/projects/${id}`)).json()) as { markers: unknown[] };
+  assert.equal(project.markers.length, 0);
+  setMode('ok');
 });
 
 test('planning cut off by the editor going away is kept so it can be retried', { skip }, async () => {

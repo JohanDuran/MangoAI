@@ -45,6 +45,7 @@ import { validAssetIds } from '../lib/assets.js';
 import { syncAssetModule } from '../lib/assetModule.js';
 import { regenerateRegistry } from '../lib/registry.js';
 import { generateMarkerWithRetry } from '../lib/generateMarker.js';
+import { maxParallelRuns } from '../lib/claude.js';
 import { planMarkers, planMarkersFromIdea, type PlanMarkersResult } from '../lib/planner.js';
 import { startJob, stopJobs, runningJobs, type JobTag } from '../lib/jobs.js';
 import {
@@ -492,8 +493,12 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
     const { fps, durationInFrames } = readCompositionConfig(id);
     const durationSeconds = durationInFrames / fps;
 
-    // A voice longer than its planned marker lengthens it and moves every later marker back by as
-    // much (see narration.ts); the plan items still to be made move back by the same total.
+    // Two passes. First, in order, every item is checked, created and voiced: that is quick, and the
+    // timing has to settle in order, since a voice longer than its planned marker lengthens it and
+    // moves every later marker back by as much (see narration.ts) — the plan items still to be made
+    // move back by the same total. Then the slow part, Claude writing the animations, runs for
+    // several markers at once (see withProjectLock).
+    const created: { index: number; input: ApplyMarkerInput; markerId: string; narration: string }[] = [];
     let shift = 0;
     for (let index = 0; index < inputs.length; index++) {
       if (signal.aborted) break;
@@ -546,58 +551,74 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
           if (!signal.aborted) send('item-voice', { index, markerId: marker.marker_id, error: err instanceof Error ? err.message : String(err) });
         }
       }
+      created.push({ index, input, markerId: marker.marker_id, narration });
+    }
 
+    // Stopping throws away the half-made markers and puts their plan items back to pending. When the
+    // editor just went away, they are left for the saved plan to pick up again.
+    const cancelItem = (item: (typeof created)[number]) => {
+      const removed = job.stoppedByUser();
+      if (removed) {
+        discardMarker(id, item.markerId);
+        updatePlanItem(id, item.input.key, { markerId: undefined });
+      }
+      send('item-done', { index: item.index, markerId: item.markerId, success: false, cancelled: true, removed });
+    };
+
+    const generate = async (item: (typeof created)[number]) => {
+      const { index, input, markerId, narration } = item;
+      // Read back: the voice may have lengthened the marker.
+      const marker = findMarker(id, markerId);
+      const region = marker.region ?? null;
       const { width: compositionWidth, height: compositionHeight } = readCompositionConfig(id);
-      const isFullScreen = !region;
       const effectiveRegion = region ?? { x: 0, y: 0, width: 1, height: 1 };
-      const regionWidth = Math.round(effectiveRegion.width * compositionWidth);
-      const regionHeight = Math.round(effectiveRegion.height * compositionHeight);
-      const transcript = transcriptForRange(id, start!, end!)
+      const transcript = transcriptForRange(id, marker.start, marker.end)
         .map((s) => s.text)
         .join(' ');
 
       const result = await generateMarkerWithRetry({
         projectId: id,
-        markerId: marker.marker_id,
+        markerId,
         cwd: projectDir(id),
-        file: markerFile(id, marker.marker_id),
-        prompt: prompt!,
+        file: markerFile(id, markerId),
+        prompt: marker.prompt,
         feedback: '',
         transcript: transcript || undefined,
         narration: narration || undefined,
         allowSkills: toNameList(input.allowSkills),
         compositionWidth,
         compositionHeight,
-        regionWidth,
-        regionHeight,
-        isFullScreen,
+        regionWidth: Math.round(effectiveRegion.width * compositionWidth),
+        regionHeight: Math.round(effectiveRegion.height * compositionHeight),
+        isFullScreen: !region,
         signal,
         onEvent: (e) => {
           // Raw claude stream events aren't forwarded here (the frontend doesn't consume
           // them for the single-marker flow either) — just the progress phases, tagged by
           // which item they belong to since multiple markers stream over one connection.
           if (e.type === 'progress') {
-            send('progress', { index, markerId: marker.marker_id, attempt: e.attempt, phase: e.phase, error: e.error });
+            send('progress', { index, markerId, attempt: e.attempt, phase: e.phase, error: e.error });
           }
         },
       });
 
-      if (result.cancelled) {
-        // Stopping throws away the half-made marker and puts its plan item back to pending. When the
-        // editor just went away, the marker is left for the saved plan to pick up again.
-        const removed = job.stoppedByUser();
-        if (removed) {
-          discardMarker(id, marker.marker_id);
-          updatePlanItem(id, input.key, { markerId: undefined });
-          regenerateRegistry(id);
-        }
-        send('item-done', { index, markerId: marker.marker_id, success: false, cancelled: true, removed });
-        break;
-      }
+      if (result.cancelled) return cancelItem(item);
+      send('item-done', { index, markerId, success: result.success, error: result.error });
+      results.push({ markerId, success: result.success });
+    };
 
-      send('item-done', { index, markerId: marker.marker_id, success: result.success, error: result.error });
-      results.push({ markerId: marker.marker_id, success: result.success });
-    }
+    // A few workers take the created markers in order. Items no worker reached before a stop are
+    // cancelled the same way as the ones that were running.
+    let next = 0;
+    const worker = async () => {
+      while (next < created.length) {
+        const item = created[next++];
+        if (signal.aborted) cancelItem(item);
+        else await generate(item);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(maxParallelRuns(), created.length) }, worker));
+    regenerateRegistry(id);
 
     // An editor that went away leaves the plan marked as applying, which is how it shows up as interrupted.
     const planRemaining = signal.aborted && !job.stoppedByUser() ? !!readPlan(id) : settlePlan(id);
