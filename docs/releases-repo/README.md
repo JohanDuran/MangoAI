@@ -29,9 +29,9 @@ provide, and the app checks for both on first start and shows you how to fix any
 | You need | Why | Where to get it |
 |---|---|---|
 | **Claude Code CLI**, installed and signed in | Claude designs the animations. MangoAI runs the CLI on your machine, using your own Claude plan. | [Claude Code setup](https://docs.claude.com/en/docs/claude-code/setup), then run `claude` once and sign in |
-| **OpenAI API key** (optional) | Transcribing your video (Whisper) and optional AI image generation | [platform.openai.com/api-keys](https://platform.openai.com/api-keys). Paste it into MangoAI's Status panel; it is stored encrypted for your Windows account |
+| **OpenAI API key** (optional) | Transcribing your video (Whisper), AI voiceovers, and optional AI image generation | [platform.openai.com/api-keys](https://platform.openai.com/api-keys). Paste it into MangoAI's Status panel; it is stored encrypted for your Windows account |
 
-Without the OpenAI key you can still use everything except transcription and image generation.
+Without the OpenAI key you can still use everything except transcription, voiceovers and image generation.
 
 ## Your data and privacy
 
@@ -40,6 +40,8 @@ Without the OpenAI key you can still use everything except transcription and ima
 - Your prompts, transcript text and images go to the services you connected (Anthropic through the Claude CLI, and
   OpenAI), under your own accounts and their terms. You pay for that usage yourself.
 - The OpenAI key is encrypted with Windows' per-user storage and is never written into a project or a log.
+- Voiceovers are AI-generated voices from OpenAI. OpenAI's usage policies require you to tell your viewers that the
+  voice is AI-generated (for example in the video or its description).
 
 ## Something went wrong?
 

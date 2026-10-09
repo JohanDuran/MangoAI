@@ -163,6 +163,11 @@ export const VoiceoverSection: React.FC<Props> = ({ projectId, marker, voices, d
           </button>
         </div>
       )}
+      {audio && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4 }}>
+          This is an AI-generated voice. OpenAI's terms ask you to tell viewers so, for example in the video or its description.
+        </div>
+      )}
       {error && <div className="field-error">{error}</div>}
     </div>
   );

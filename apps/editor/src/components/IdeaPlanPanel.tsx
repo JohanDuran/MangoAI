@@ -104,7 +104,7 @@ export const IdeaPlanPanel: React.FC<Props> = ({
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>
           <input type="checkbox" checked={narration} onChange={(e) => onNarrationChange(e.target.checked)} disabled={planning} />
-          Write a voiceover: Claude adds a spoken line to each marker, read aloud by an OpenAI voice
+          Write a voiceover: Claude adds a spoken line to each marker, read aloud by an AI voice from OpenAI (tell your viewers it is AI-generated)
         </label>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="submit" className="btn btn-primary" disabled={!canSubmit}>

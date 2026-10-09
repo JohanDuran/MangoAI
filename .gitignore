@@ -9,3 +9,5 @@ apps/runner/proyectos/*
 apps/runner/logs/
 build/
 release/
+# Installer resources (license, NSIS include, afterPack hook) are source, not build output.
+!apps/desktop/build/
