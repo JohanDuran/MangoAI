@@ -39,6 +39,7 @@ import {
   deleteMarker,
   isValidRegion,
   setMarkerAssets,
+  setMarkerStyle,
   type MarkerRegion,
 } from '../lib/markers.js';
 import { validAssetIds } from '../lib/assets.js';
@@ -61,6 +62,7 @@ import {
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
 import { captionCues, captionSettings, isValidCaptionSettings, toSrt } from '../lib/captions.js';
+import { listPresets, savePreset, deletePreset, readPreset, isPresetId } from '../lib/presets.js';
 import { transcribeProject, readTranscript, writeTranscript, transcriptForRange, type TranscriptSegment } from '../lib/transcript.js';
 
 export const projectsRouter = Router();
@@ -183,6 +185,61 @@ projectsRouter.get('/projects/:id/captions.srt', (req, res) => {
   const name = `${project.name.replace(/[^\w .-]+/g, '').trim() || 'captions'}.srt`;
   res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
   res.type('application/x-subrip').send(toSrt(cues));
+});
+
+// ---------------------------------------------------------------- style presets (see presets.ts)
+
+projectsRouter.get('/presets', (_req, res) => {
+  res.json({ presets: listPresets() });
+});
+
+projectsRouter.post('/presets', (req, res) => {
+  const { projectId, markerId, name } = req.body as { projectId?: unknown; markerId?: unknown; name?: unknown };
+  if (typeof projectId !== 'string' || typeof markerId !== 'string' || typeof name !== 'string') {
+    return res.status(400).json({ error: 'projectId, markerId and name are required' });
+  }
+  if (!readProject(projectId) || !readMarkers(projectId).some((m) => m.marker_id === markerId)) return res.status(404).json({ error: 'not found' });
+  try {
+    res.status(201).json({ preset: savePreset(projectId, markerId, name) });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+projectsRouter.delete('/presets/:presetId', (req, res) => {
+  if (!deletePreset(req.params.presetId)) return res.status(404).json({ error: 'not found' });
+  res.status(204).end();
+});
+
+const presetOrNull = (v: unknown): string | null | undefined => (v === null ? null : isPresetId(v) && readPreset(v) ? v : undefined);
+
+// The style new markers in the project start with (null for none). Existing markers keep theirs.
+projectsRouter.put('/projects/:id/style', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const presetId = presetOrNull((req.body as { presetId?: unknown }).presetId);
+  if (presetId === undefined) return res.status(400).json({ error: 'presetId must be an existing preset or null' });
+  updateProjectSettings(req.params.id, { stylePreset: presetId ?? undefined });
+  res.json({ stylePreset: presetId });
+});
+
+projectsRouter.put('/projects/:id/markers/:markerId/style', (req, res) => {
+  const { id, markerId } = req.params;
+  if (!readMarkers(id).some((m) => m.marker_id === markerId)) return res.status(404).json({ error: 'not found' });
+  const presetId = presetOrNull((req.body as { presetId?: unknown }).presetId);
+  if (presetId === undefined) return res.status(400).json({ error: 'presetId must be an existing preset or null' });
+  res.json(setMarkerStyle(id, markerId, presetId));
+});
+
+// Gives the marker the area its style was saved with.
+projectsRouter.post('/projects/:id/markers/:markerId/style/apply-area', (req, res) => {
+  const { id, markerId } = req.params;
+  const marker = readMarkers(id).find((m) => m.marker_id === markerId);
+  if (!marker) return res.status(404).json({ error: 'not found' });
+  const preset = marker.stylePreset ? readPreset(marker.stylePreset) : null;
+  if (!preset) return res.status(400).json({ error: 'This marker has no style.' });
+  const updated = updateMarkerRegion(id, markerId, preset.region ?? null);
+  regenerateRegistry(id);
+  res.json(updated);
 });
 
 projectsRouter.get('/voices', (_req, res) => {

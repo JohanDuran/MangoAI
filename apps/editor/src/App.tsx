@@ -10,6 +10,13 @@ import {
   getCaptions,
   getMusic,
   musicFileUrl,
+  listPresets,
+  savePreset,
+  deletePreset,
+  setProjectStyle,
+  setMarkerStyle,
+  applyStyleArea,
+  type StylePreset,
   type MusicState,
   saveMarkerNarration,
   generateMarkerNarration,
@@ -63,6 +70,7 @@ import { PlanMarkersPanel } from './components/PlanMarkersPanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
 import { CaptionsDialog } from './components/CaptionsDialog';
 import { MusicDialog } from './components/MusicDialog';
+import { StylesDialog } from './components/StylesDialog';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { StatusButton, StatusDashboard, useStatus } from './components/StatusDashboard';
 import { ConnectionBanner } from './components/ConnectionBanner';
@@ -178,6 +186,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [captionsOpen, setCaptionsOpen] = useState(false);
   const [musicOpen, setMusicOpen] = useState(false);
   const [musicState, setMusicState] = useState<MusicState | null>(null);
+  // Saved styles (shared by all projects) and the one this project's new markers start with.
+  const [presets, setPresets] = useState<StylePreset[]>([]);
+  const [projectStyle, setProjectStyleState] = useState<string | null>(null);
+  const [stylesOpen, setStylesOpen] = useState(false);
   // Burned-in captions are part of the overlay, so text changes reload the preview while they are on.
   const [captionsBurned, setCaptionsBurned] = useState(false);
   const [planning, setPlanning] = useState(false);
@@ -315,6 +327,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         savedVoiceVolumeRef.current = { projectId, volume: voiceVol };
         setVoiceVolume(voiceVol);
         setProjectVoice(project.voice ?? null);
+        setProjectStyleState(project.stylePreset ?? null);
         setAutoDescribe(!!project.autoDescribeImages);
         setBaseLayer(baseLayer);
       });
@@ -386,6 +399,37 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     }, 400);
     return () => clearTimeout(timer);
   }, [voiceVolume, projectId]);
+
+  const refreshPresets = () =>
+    listPresets()
+      .then((r) => setPresets(r.presets))
+      .catch(() => {});
+
+  useEffect(() => {
+    refreshPresets();
+  }, []);
+
+  const handleSetMarkerStyle = async (markerId: string, presetId: string | null) => {
+    if (!projectId) return;
+    markEdited();
+    await setMarkerStyle(projectId, markerId, presetId);
+    await refreshProject(projectId);
+  };
+
+  const handleApplyStyleArea = async (markerId: string) => {
+    if (!projectId) return;
+    markEdited();
+    await applyStyleArea(projectId, markerId);
+    await refreshProject(projectId);
+    setStaleRegionMarkers((prev) => new Set(prev).add(markerId));
+    setReloadToken((t) => t + 1);
+  };
+
+  const handleSaveStyle = async (markerId: string, name: string) => {
+    if (!projectId) return;
+    await savePreset(projectId, markerId, name);
+    await refreshPresets();
+  };
 
   useEffect(() => {
     getVoices()
@@ -1282,6 +1326,13 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               </button>
             )}
             <button
+              onClick={() => setStylesOpen(true)}
+              className={`btn btn-sm${projectStyle ? ' btn-primary' : ''}`}
+              title="Saved looks that new animations can match, shared by all your projects"
+            >
+              Styles
+            </button>
+            <button
               onClick={() => setMusicOpen(true)}
               className={`btn btn-sm${hasMusic ? ' btn-primary' : ''}`}
               title="A background music track, turned down while someone speaks"
@@ -1659,10 +1710,34 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               voices={voices}
               defaultVoice={defaultVoice}
               onGenerateVoice={handleGenerateVoice}
+              presets={presets}
+              onSetStyle={handleSetMarkerStyle}
+              onApplyStyleArea={handleApplyStyleArea}
+              onSaveStyle={handleSaveStyle}
             />
           )}
         </div>
       </div>
+      {stylesOpen && projectId && (
+        <StylesDialog
+          presets={presets}
+          projectStyle={projectStyle}
+          onSetProjectStyle={async (presetId) => {
+            markEdited();
+            await setProjectStyle(projectId, presetId);
+            setProjectStyleState(presetId);
+          }}
+          onDelete={async (presetId) => {
+            await deletePreset(presetId);
+            if (projectStyle === presetId) {
+              await setProjectStyle(projectId, null).catch(() => {});
+              setProjectStyleState(null);
+            }
+            await refreshPresets();
+          }}
+          onClose={() => setStylesOpen(false)}
+        />
+      )}
       {musicOpen && projectId && (
         <MusicDialog
           projectId={projectId}

@@ -37,6 +37,8 @@ export interface Project {
   captions?: CaptionSettings;
   // Background music (see music.ts). Absent means none.
   music?: MusicSettings;
+  // The style preset new markers start with (see presets.ts).
+  stylePreset?: string;
 }
 
 const slugify = (name: string) =>
@@ -119,6 +121,7 @@ export function writeProject(project: Project): void {
 
 export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[] }): Marker {
   const markers = readMarkers(id);
+  const projectStyle = readProject(id)?.stylePreset;
   // Based on the highest existing numeric suffix, not the array length — deleting a
   // marker must not free up its id for reuse (it may still be referenced in
   // 05_debug/code_history, and reusing it would confuse "which generation is this").
@@ -135,6 +138,8 @@ export function addMarker(id: string, input: { start: number; end: number; promp
     status: 'draft',
     ...(input.region ? { region: input.region } : {}),
     ...(input.assets && input.assets.length > 0 ? { assets: input.assets } : {}),
+    // New markers start with the project's style, so a whole video looks consistent.
+    ...(projectStyle ? { stylePreset: projectStyle } : {}),
   };
   markers.push(marker);
   writeMarkers(id, markers);
@@ -187,7 +192,7 @@ export function voiceVolume(id: string): number {
   return readProject(id)?.voiceVolume ?? 1;
 }
 
-export function updateProjectSettings(id: string, change: Partial<Pick<Project, 'voiceVolume' | 'voice' | 'captions' | 'music'>>): Project {
+export function updateProjectSettings(id: string, change: Partial<Pick<Project, 'voiceVolume' | 'voice' | 'captions' | 'music' | 'stylePreset'>>): Project {
   const project = readProject(id);
   if (!project) throw new Error(`Project ${id} not found`);
   const next = { ...project, ...change };

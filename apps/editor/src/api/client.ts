@@ -21,6 +21,8 @@ export interface Project {
   voice?: string;
   autoDescribeImages?: boolean;
   baseLayer?: BaseLayer;
+  // The style preset new markers start with.
+  stylePreset?: string;
 }
 
 export interface CompositionConfig {
@@ -50,6 +52,8 @@ export interface Marker {
   // Ids of library images attached to this marker.
   assets?: string[];
   narration?: MarkerNarration;
+  // The style preset the next generation matches.
+  stylePreset?: string;
 }
 
 // A spoken line played from the marker's start. audio is the generated speech and what it was
@@ -663,3 +667,48 @@ export interface StatusReport {
 }
 
 export const getStatus = () => fetch(`${BASE}/status`).then((r) => json<StatusReport>(r));
+
+// Style presets: a finished marker's look (its code as a reference for Claude, and its area), saved
+// for reuse in any project.
+export interface StylePreset {
+  id: string;
+  name: string;
+  createdAt: string;
+  fromProject: string;
+  region?: MarkerRegion;
+}
+
+export const listPresets = () => fetch(`${BASE}/presets`).then((r) => json<{ presets: StylePreset[] }>(r));
+
+export const savePreset = (projectId: string, markerId: string, name: string) =>
+  fetch(`${BASE}/presets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId, markerId, name }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(await errorText(r));
+    return ((await r.json()) as { preset: StylePreset }).preset;
+  });
+
+export const deletePreset = (presetId: string) =>
+  fetch(`${BASE}/presets/${presetId}`, { method: 'DELETE' }).then(async (r) => {
+    if (!r.ok) throw new Error(await errorText(r));
+  });
+
+// The style new markers in the project start with; null for none.
+export const setProjectStyle = (id: string, presetId: string | null) =>
+  fetch(`${BASE}/projects/${id}/style`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ presetId }),
+  }).then((r) => json<{ stylePreset: string | null }>(r));
+
+export const setMarkerStyle = (id: string, markerId: string, presetId: string | null) =>
+  fetch(`${BASE}/projects/${id}/markers/${markerId}/style`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ presetId }),
+  }).then((r) => json<Marker>(r));
+
+export const applyStyleArea = (id: string, markerId: string) =>
+  fetch(`${BASE}/projects/${id}/markers/${markerId}/style/apply-area`, { method: 'POST' }).then((r) => json<Marker>(r));

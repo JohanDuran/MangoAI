@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { getMarkerCode, type Asset, type Marker, type MarkerRegion, type TranscriptSegment, type VoiceOptions } from '../api/client';
+import { getMarkerCode, type Asset, type Marker, type MarkerRegion, type TranscriptSegment, type VoiceOptions, type StylePreset } from '../api/client';
 import { VoiceoverSection } from './VoiceoverSection';
+import { StyleSection } from './StyleSection';
 import { AssetPicker } from './AssetPicker';
 import type { MarkerRunState } from '../App';
 import { displayStatus } from '../status';
@@ -30,6 +31,10 @@ interface Props {
   voices: VoiceOptions | null;
   defaultVoice: string;
   onGenerateVoice: (markerId: string, text: string, voice: string) => Promise<void>;
+  presets: StylePreset[];
+  onSetStyle: (markerId: string, presetId: string | null) => Promise<void>;
+  onApplyStyleArea: (markerId: string) => Promise<void>;
+  onSaveStyle: (markerId: string, name: string) => Promise<void>;
 }
 
 export const MarkerInspector: React.FC<Props> = ({
@@ -54,6 +59,10 @@ export const MarkerInspector: React.FC<Props> = ({
   voices,
   defaultVoice,
   onGenerateVoice,
+  presets,
+  onSetStyle,
+  onApplyStyleArea,
+  onSaveStyle,
 }) => {
   const [code, setCode] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -208,6 +217,15 @@ export const MarkerInspector: React.FC<Props> = ({
         voices={voices}
         defaultVoice={defaultVoice}
         onGenerate={onGenerateVoice}
+      />
+
+      <StyleSection
+        marker={marker}
+        presets={presets}
+        onSetStyle={onSetStyle}
+        onApplyArea={onApplyStyleArea}
+        onSaveStyle={onSaveStyle}
+        disabled={generating}
       />
 
       <label className="field-label">Images for context</label>

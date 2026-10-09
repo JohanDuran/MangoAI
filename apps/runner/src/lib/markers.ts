@@ -25,6 +25,8 @@ export interface Marker {
   assets?: string[];
   // A spoken line played from the marker's start (see narration.ts).
   narration?: MarkerNarration;
+  // A style preset (see presets.ts) whose look the next generation should match.
+  stylePreset?: string;
 }
 
 // When a word is spoken in a voiceover take, in seconds from the start of the take (Whisper's
@@ -125,6 +127,17 @@ export function setMarkerAssets(id: string, markerId: string, assets: string[]):
   if (!marker) throw new Error(`Marker ${markerId} not found in project ${id}`);
   if (assets.length > 0) marker.assets = assets;
   else delete marker.assets;
+  writeMarkers(id, markers);
+  return marker;
+}
+
+// null clears the marker's style. Like its images, this takes effect the next time it is generated.
+export function setMarkerStyle(id: string, markerId: string, presetId: string | null): Marker {
+  const markers = readMarkers(id);
+  const marker = markers.find((m) => m.marker_id === markerId);
+  if (!marker) throw new Error(`Marker ${markerId} not found in project ${id}`);
+  if (presetId) marker.stylePreset = presetId;
+  else delete marker.stylePreset;
   writeMarkers(id, markers);
   return marker;
 }
