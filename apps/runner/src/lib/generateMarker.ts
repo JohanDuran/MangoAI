@@ -20,6 +20,8 @@ export interface GenerateMarkerOptions {
   prompt: string;
   feedback: string;
   transcript?: string;
+  // The marker's voiceover line, which the visuals should support.
+  narration?: string;
   // Skills marked optIn in their skill.json (paid or slow tools) are only available to Claude
   // when listed here.
   allowSkills: string[];
@@ -71,6 +73,7 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
       feedback: opts.feedback,
       priorError,
       transcript: opts.transcript,
+      narration: opts.narration,
       optedInSkills: opts.allowSkills,
       compositionWidth: opts.compositionWidth,
       compositionHeight: opts.compositionHeight,

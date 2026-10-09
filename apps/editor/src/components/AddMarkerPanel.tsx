@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import type { Asset, MarkerRegion } from '../api/client';
+import type { Asset, MarkerRegion, VoiceOptions } from '../api/client';
+import { estimateSpeechSeconds } from './VoiceoverSection';
 import { AssetPicker } from './AssetPicker';
+import { VoiceSampleButton } from './VoiceSampleButton';
 import { formatRegion } from '../format';
 
 interface Props {
@@ -12,12 +14,14 @@ interface Props {
   end: number;
   onStartChange: (seconds: number) => void;
   onEndChange: (seconds: number) => void;
-  onAdd: (input: { start: number; end: number; prompt: string; allowImage: boolean; assets: string[] }) => void;
+  onAdd: (input: { start: number; end: number; prompt: string; allowImage: boolean; assets: string[]; narration?: { text: string; voice: string } }) => void;
   region: MarkerRegion | null;
   editingRegion: boolean;
   onStartEditRegion: () => void;
   onDoneEditRegion: () => void;
   onResetRegion: () => void;
+  voices: VoiceOptions | null;
+  defaultVoice: string;
 }
 
 const fmt = (seconds: number) => seconds.toFixed(1);
@@ -37,8 +41,13 @@ export const AddMarkerPanel: React.FC<Props> = ({
   onStartEditRegion,
   onDoneEditRegion,
   onResetRegion,
+  voices,
+  defaultVoice,
 }) => {
   const [prompt, setPrompt] = useState('');
+  const [narration, setNarration] = useState('');
+  const [voice, setVoice] = useState<string | null>(null);
+  const spokenSeconds = estimateSpeechSeconds(narration);
   const [allowImage, setAllowImage] = useState(false);
   const [attached, setAttached] = useState<string[]>([]);
   const canAdd = prompt.trim().length > 0 && end > start;
@@ -105,8 +114,16 @@ export const AddMarkerPanel: React.FC<Props> = ({
         onSubmit={(e) => {
           e.preventDefault();
           if (!canAdd) return;
-          onAdd({ start, end, prompt, allowImage, assets: attached });
+          onAdd({
+            start,
+            end,
+            prompt,
+            allowImage,
+            assets: attached,
+            ...(narration.trim() && { narration: { text: narration.trim(), voice: voice ?? defaultVoice } }),
+          });
           setPrompt('');
+          setNarration('');
           setAllowImage(false);
           setAttached([]);
         }}
@@ -119,6 +136,37 @@ export const AddMarkerPanel: React.FC<Props> = ({
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
+        <textarea
+          className="field-textarea"
+          rows={2}
+          maxLength={voices?.maxChars ?? 4096}
+          placeholder="Voiceover (optional): words a voice reads aloud from the start"
+          value={narration}
+          onChange={(e) => setNarration(e.target.value)}
+        />
+        {narration.trim() && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 11.5, color: 'var(--text-faint)' }}>
+            <select
+              className="field-select"
+              style={{ width: 'auto', padding: '5px 8px' }}
+              value={voice ?? defaultVoice}
+              onChange={(e) => setVoice(e.target.value)}
+              aria-label="Voice"
+              title="Voice"
+            >
+              {(voices?.voices ?? [defaultVoice]).map((v) => (
+                <option key={v} value={v}>
+                  {v[0].toUpperCase() + v.slice(1)}
+                </option>
+              ))}
+            </select>
+            <VoiceSampleButton voice={voice ?? defaultVoice} disabled={!voices} />
+            <span style={{ color: spokenSeconds > end - start ? 'var(--mango)' : undefined }}>
+              About {spokenSeconds.toFixed(1)}s when spoken · marker {Math.max(0, end - start).toFixed(1)}s
+              {spokenSeconds > end - start ? ' (consider a longer range)' : ''}
+            </span>
+          </div>
+        )}
         <button type="submit" className="btn btn-primary" disabled={!canAdd}>
           Add marker &amp; generate
         </button>

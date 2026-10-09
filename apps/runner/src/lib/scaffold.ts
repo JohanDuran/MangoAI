@@ -22,6 +22,10 @@ export interface Project {
   skills?: string[];
   // Volume of sounds played by the overlay animations, 0 (muted) to 1. Absent means 1.
   overlayVolume?: number;
+  // Volume of the markers' voiceover, 0 (muted) to 1. Absent means 1.
+  voiceVolume?: number;
+  // The voice last picked for a voiceover, used for new lines (and lines from a plan).
+  voice?: string;
   // Describe newly uploaded images with Claude automatically (costs a small Claude call each).
   autoDescribeImages?: boolean;
   // What the timeline is built on top of. Absent means 'video' (projects created before this
@@ -171,6 +175,18 @@ export function setOverlayVolume(id: string, volume: number): void {
   const project = readProject(id);
   if (!project) throw new Error(`Project ${id} not found`);
   writeProject({ ...project, overlayVolume: volume });
+}
+
+export function voiceVolume(id: string): number {
+  return readProject(id)?.voiceVolume ?? 1;
+}
+
+export function updateProjectSettings(id: string, change: Pick<Project, 'voiceVolume' | 'voice'>): Project {
+  const project = readProject(id);
+  if (!project) throw new Error(`Project ${id} not found`);
+  const next = { ...project, ...change };
+  writeProject(next);
+  return next;
 }
 
 const CLAUDE_MD_VERSION = /^<!-- mangoai-claude-md: \d+ -->/;

@@ -12,7 +12,9 @@ import type { ProposedMarker } from './planner.js';
 //   review    The plan is waiting for the user to edit and apply it.
 //   applying  Markers are (or were, if nothing is running any more) being generated from it.
 // The file is removed once every item has become a marker, or when the user discards the plan.
-export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string };
+// An idea plan may carry the area every proposed marker is confined to (absent means Claude decides)
+// and whether Claude was asked for voiceover lines.
+export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean };
 
 export interface PlanItem {
   key: string;
@@ -23,6 +25,8 @@ export interface PlanItem {
   region: MarkerRegion | null;
   allowImage: boolean;
   assets: string[];
+  // Voiceover line spoken from the marker's start; absent or empty for none.
+  narration?: string;
   // Set once applying created a marker for this item.
   markerId?: string;
   // Why applying skipped this item, if it did.
@@ -81,6 +85,7 @@ export function savePlanProposals(id: string, source: PlanSource, proposals: Pro
       region: p.region,
       allowImage: false,
       assets: p.assets,
+      ...(p.narration ? { narration: p.narration } : {}),
     })),
   });
 }
@@ -98,6 +103,7 @@ const isPlanItem = (v: unknown): v is PlanItem => {
     typeof i.allowImage === 'boolean' &&
     Array.isArray(i.assets) &&
     i.assets.every((a) => typeof a === 'string') &&
+    (i.narration === undefined || typeof i.narration === 'string') &&
     (i.markerId === undefined || typeof i.markerId === 'string') &&
     (i.error === undefined || typeof i.error === 'string')
   );

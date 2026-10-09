@@ -20,11 +20,25 @@ interface Props {
   onRegionDraftChange?: (region: MarkerRegion) => void;
   onRegionCommit?: () => void;
   overlayVolume?: number;
+  // The voiceover: clips played from `start` seconds for `duration` seconds, at voiceVolume (0-1).
+  voiceClips?: VoiceClip[];
+  voiceVolume?: number;
   // Hit-testing for click-to-select on the picture. `point` is normalized (0–1) to the stage, and
   // `seconds` is the playhead at the moment of the click/hover.
   hasMarkerAt?: (point: StagePoint, seconds: number) => boolean;
   onMarkerClick?: (point: StagePoint, seconds: number) => boolean;
 }
+
+export interface VoiceClip {
+  id: string;
+  url: string;
+  start: number;
+  duration: number;
+}
+
+// Off by more than this, a playing voice clip is moved back in line with the picture.
+const VOICE_DRIFT_SECONDS = 0.3;
+const NO_CLIPS: VoiceClip[] = [];
 
 export interface StagePoint {
   x: number;
@@ -56,6 +70,8 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     onRegionDraftChange,
     onRegionCommit,
     overlayVolume = 1,
+    voiceClips = NO_CLIPS,
+    voiceVolume = 1,
     hasMarkerAt,
     onMarkerClick,
   },
@@ -244,6 +260,67 @@ export const DualLayerPreview = forwardRef<DualLayerPreviewHandle, Props>(functi
     if (!player) return;
     player.setVolume(overlayVolume);
   }, [overlayVolume, Overlay]);
+
+  // The voiceover plays through plain <audio> elements rather than the overlay Player, so its volume
+  // is independent of the animation sounds. Each frame, every clip that should be sounding is
+  // started (or nudged back in line) and every other one is paused.
+  const voiceAudioRef = useRef(new Map<string, HTMLAudioElement>());
+  const voiceStateRef = useRef({ clips: voiceClips, volume: voiceVolume, rate: playbackRate, hasVideo });
+  voiceStateRef.current = { clips: voiceClips, volume: voiceVolume, rate: playbackRate, hasVideo };
+
+  // Keyed by an id that changes with each new take, so a regenerated line loads its new audio.
+  const voiceKey = voiceClips.map((c) => c.id).join('|');
+  useEffect(() => {
+    const audios = voiceAudioRef.current;
+    const wanted = new Set(voiceStateRef.current.clips.map((c) => c.id));
+    for (const [id, el] of audios) {
+      if (!wanted.has(id)) {
+        el.pause();
+        audios.delete(id);
+      }
+    }
+    for (const c of voiceStateRef.current.clips) {
+      if (audios.has(c.id)) continue;
+      const el = new Audio(c.url);
+      el.preload = 'auto';
+      audios.set(c.id, el);
+    }
+  }, [voiceKey]);
+
+  useEffect(() => {
+    const audios = voiceAudioRef.current;
+    let raf = 0;
+    const tick = () => {
+      const { clips, volume, rate, hasVideo: withVideo } = voiceStateRef.current;
+      const video = videoRef.current;
+      const player = playerRef.current;
+      const playing = withVideo ? !!video && !video.paused && !video.ended : !!player?.isPlaying();
+      const t = withVideo ? video?.currentTime ?? 0 : (player?.getCurrentFrame() ?? 0) / fps;
+      for (const c of clips) {
+        const el = audios.get(c.id);
+        if (!el) continue;
+        const offset = t - c.start;
+        if (!playing || offset < 0 || offset >= c.duration) {
+          if (!el.paused) el.pause();
+          continue;
+        }
+        el.volume = Math.max(0, Math.min(1, volume));
+        if (el.playbackRate !== rate) el.playbackRate = rate;
+        if (el.paused) {
+          if (el.ended || Math.abs(el.currentTime - offset) > VOICE_DRIFT_SECONDS) el.currentTime = offset;
+          el.play().catch(() => {});
+        } else if (Math.abs(el.currentTime - offset) > VOICE_DRIFT_SECONDS * Math.max(1, rate)) {
+          el.currentTime = offset;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const el of audios.values()) el.pause();
+    };
+  }, [fps]);
 
   const [overMarker, setOverMarker] = useState(false);
 

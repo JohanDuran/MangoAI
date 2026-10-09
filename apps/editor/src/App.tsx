@@ -5,6 +5,13 @@ import {
   listProjects,
   getProject,
   saveOverlayVolume,
+  saveVoiceVolume,
+  getVoices,
+  saveMarkerNarration,
+  generateMarkerNarration,
+  playableNarration,
+  narrationUrl,
+  type VoiceOptions,
   addMarker,
   deleteMarker,
   exportProject,
@@ -123,12 +130,17 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [transcribeError, setTranscribeError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [overlayVolume, setOverlayVolume] = useState(1);
+  const [voiceVolume, setVoiceVolume] = useState(1);
+  // The voices OpenAI offers, and the one this project last used.
+  const [voices, setVoices] = useState<VoiceOptions | null>(null);
+  const [projectVoice, setProjectVoice] = useState<string | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [autoDescribe, setAutoDescribe] = useState(false);
   const [describingIds, setDescribingIds] = useState<string[]>([]);
   // The volume last loaded from or saved to the server, so loading a project does not write it back.
   const savedVolumeRef = useRef<{ projectId: string; volume: number } | null>(null);
+  const savedVoiceVolumeRef = useRef<{ projectId: string; volume: number } | null>(null);
   const [editingRegionMarkerId, setEditingRegionMarkerId] = useState<string | null>(null);
   const [regionDraft, setRegionDraft] = useState<MarkerRegion | null>(null);
   // Markers whose animation area was resized (not just moved) after it was already
@@ -147,6 +159,14 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [inspectorWidth, setInspectorWidth] = useState(340);
   const [planReviewOpen, setPlanReviewOpen] = useState(false);
   const [ideaPanelOpen, setIdeaPanelOpen] = useState(false);
+  // The idea being written and the area every marker designed from it goes in (null = Claude
+  // picks per marker). Kept here so hiding the panel to work on the timeline doesn't lose them.
+  const [ideaDraft, setIdeaDraft] = useState('');
+  const [ideaRegion, setIdeaRegion] = useState<MarkerRegion | null>(null);
+  const [editingIdeaRegion, setEditingIdeaRegion] = useState(false);
+  // Whether "Design from idea" also writes voiceover lines. Until the user picks, it is on for
+  // projects without a video (they have no speech of their own) and off otherwise.
+  const [ideaNarration, setIdeaNarration] = useState<boolean | null>(null);
   const [planPanelOpen, setPlanPanelOpen] = useState(false);
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
   const [planning, setPlanning] = useState(false);
@@ -280,6 +300,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         const volume = project.overlayVolume ?? 1;
         savedVolumeRef.current = { projectId, volume };
         setOverlayVolume(volume);
+        const voiceVol = project.voiceVolume ?? 1;
+        savedVoiceVolumeRef.current = { projectId, volume: voiceVol };
+        setVoiceVolume(voiceVol);
+        setProjectVoice(project.voice ?? null);
         setAutoDescribe(!!project.autoDescribeImages);
         setBaseLayer(baseLayer);
       });
@@ -287,6 +311,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       restorePlan(projectId).catch(() => {});
     } else {
       savedVolumeRef.current = null;
+      savedVoiceVolumeRef.current = null;
+      setProjectVoice(null);
       setMarkers([]);
       setVideoUrl(null);
       setComposition(DEFAULT_COMPOSITION);
@@ -314,6 +340,48 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     }, 400);
     return () => clearTimeout(timer);
   }, [overlayVolume, projectId]);
+
+  // Same for the voiceover volume.
+  useEffect(() => {
+    const saved = savedVoiceVolumeRef.current;
+    if (!projectId || !saved || saved.projectId !== projectId || saved.volume === voiceVolume) return;
+    const timer = setTimeout(() => {
+      markEdited();
+      saveVoiceVolume(projectId, voiceVolume)
+        .then(() => {
+          savedVoiceVolumeRef.current = { projectId, volume: voiceVolume };
+        })
+        .catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [voiceVolume, projectId]);
+
+  useEffect(() => {
+    getVoices()
+      .then(setVoices)
+      .catch(() => {});
+  }, []);
+
+  const defaultVoice = projectVoice ?? voices?.defaultVoice ?? 'marin';
+
+  // Saves a marker's voiceover line and turns it into speech; an empty line removes the voiceover.
+  // Rejects with the reason so the inspector can show it.
+  const handleGenerateVoice = async (markerId: string, text: string, voice: string) => {
+    if (!projectId) return;
+    markEdited();
+    try {
+      await saveMarkerNarration(projectId, markerId, text, voice);
+      if (text.trim()) {
+        setProjectVoice(voice);
+        const before = markers.find((m) => m.marker_id === markerId);
+        const after = await generateMarkerNarration(projectId, markerId);
+        // A voice longer than its marker lengthens it (and can push later markers back).
+        if (after.end !== before?.end) setReloadToken((t) => t + 1);
+      }
+    } finally {
+      await refreshProject(projectId).catch(() => {});
+    }
+  };
 
   const handleTranscribe = async () => {
     if (!projectId) return;
@@ -417,7 +485,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     setPlanInterrupted(interrupted);
     setEditingPlanItemKey(null);
     setPlanPanelOpen(false);
-    setIdeaPanelOpen(false);
+    closeIdeaPanel();
     setInterruptedPlanning(null);
     selectMarker(null);
     setNewMarkerPanelVisible(false);
@@ -434,8 +502,12 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       setInterruptedPlanning(plan.source);
       selectMarker(null);
       setNewMarkerPanelVisible(false);
-      if (plan.source.kind === 'idea') setIdeaPanelOpen(true);
-      else setPlanPanelOpen(true);
+      if (plan.source.kind === 'idea') {
+        setIdeaDraft(plan.source.idea);
+        setIdeaRegion(plan.source.region ?? null);
+        setIdeaNarration(!!plan.source.narration);
+        setIdeaPanelOpen(true);
+      } else setPlanPanelOpen(true);
       return;
     }
     openPlanReview(plan, plan.state === 'applying' && !running.includes('apply'));
@@ -476,7 +548,36 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const handlePlanMarkers = (context: string) => runPlanner(() => planMarkers(projectId!, context));
 
-  const handlePlanFromIdea = (idea: string) => runPlanner(() => planMarkersFromIdea(projectId!, idea));
+  const ideaNarrationOn = ideaNarration ?? baseLayer.type !== 'video';
+
+  const handlePlanFromIdea = (idea: string) => {
+    setEditingIdeaRegion(false);
+    const region = ideaRegion && !isFullScreenRegion(ideaRegion) ? ideaRegion : undefined;
+    return runPlanner(() => planMarkersFromIdea(projectId!, idea, { region, narration: ideaNarrationOn }));
+  };
+
+  // Hides the idea panel (the draft and area stay for when it is reopened). Planning carries on
+  // regardless; the toolbar keeps its Stop button.
+  const closeIdeaPanel = () => {
+    setIdeaPanelOpen(false);
+    setEditingIdeaRegion(false);
+  };
+
+  // Picking a marker or dragging out a new range on the timeline/preview means the user moved on
+  // from the planning form, so it gives way to that marker's inspector or the new-marker panel.
+  const hidePlanningPanels = () => {
+    closeIdeaPanel();
+    setPlanPanelOpen(false);
+  };
+
+  const handleStartEditIdeaRegion = () => {
+    setEditingRegionMarkerId(null);
+    setRegionDraft(null);
+    setEditingNewMarkerRegion(false);
+    setEditingPlanItemKey(null);
+    setEditingIdeaRegion(true);
+    setIdeaRegion((prev) => prev ?? FULL_SCREEN_REGION);
+  };
 
   // Review edits are saved to the runner shortly after they stop, so a crash does not lose them.
   // While applying, the runner records progress in the plan itself.
@@ -563,6 +664,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           region: i.region,
           allowImage: i.allowImage,
           assets: i.assets,
+          narration: i.narration?.trim() || undefined,
           key: i.key,
           markerId: i.markerId,
         })),
@@ -584,6 +686,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           const target = approved[d.index];
           if (!target) return;
 
+          if (e.event === 'item-voice') {
+            notify('error', `The voiceover for one marker could not be generated (${d.error ?? 'unknown error'}). Select the marker to try again.`);
+            return;
+          }
           if (e.event === 'item-start') {
             // A fresh attempt replaces whatever an interrupted earlier one left for this item.
             setReviewItems((prev) => prev.map((it) => (it.key === target.key ? { ...it, markerId: undefined, error: undefined } : it)));
@@ -613,7 +719,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               ...prev,
               [markerId]: {
                 phase: 'generating',
-                log: [...(prev[markerId]?.log ?? []), `attempt ${d.attempt}: ${d.phase}${d.error ? ` — ${d.error}` : ''}`],
+                log: [
+                  ...(prev[markerId]?.log ?? []),
+                  d.phase === 'voice' ? 'generating the voiceover' : `attempt ${d.attempt}: ${d.phase}${d.error ? ` — ${d.error}` : ''}`,
+                ],
               },
             }));
           } else if (e.event === 'item-done') {
@@ -623,6 +732,11 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 ...prev,
                 [markerId]: { phase: 'done', log: prev[markerId]?.log ?? [], success: !!d.success, error: d.error },
               }));
+              // Show each finished animation right away instead of after the whole batch.
+              if (d.success) {
+                refreshProject(projectId);
+                setReloadToken((t) => t + 1);
+              }
             } else {
               setReviewItems((prev) => prev.map((it) => (it.key === target.key ? { ...it, error: d.error } : it)));
             }
@@ -681,14 +795,41 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     setExportSucceeded(false);
   };
 
-  const handleAddMarker = async (input: { start: number; end: number; prompt: string; allowImage: boolean; assets: string[] }) => {
+  const handleAddMarker = async (input: {
+    start: number;
+    end: number;
+    prompt: string;
+    allowImage: boolean;
+    assets: string[];
+    narration?: { text: string; voice: string };
+  }) => {
     if (!projectId) return;
     markEdited();
     const region = newMarkerRegion && !isFullScreenRegion(newMarkerRegion) ? newMarkerRegion : undefined;
-    const marker = await addMarker(projectId, { ...input, region });
+    const { narration, ...markerInput } = input;
+    const marker = await addMarker(projectId, { ...markerInput, region });
+    // Saved before generating, so Claude designs the animation around the line.
+    let withVoice = false;
+    if (narration) {
+      try {
+        await saveMarkerNarration(projectId, marker.marker_id, narration.text, narration.voice);
+        setProjectVoice(narration.voice);
+        withVoice = true;
+      } catch (err) {
+        notify('error', `The voiceover line was not saved: ${describeError(err)}`);
+      }
+    }
     refreshProject(projectId);
     selectMarker(marker.marker_id);
     triggerRegenerate(marker.marker_id, input.prompt, input.allowImage);
+    if (withVoice) {
+      generateMarkerNarration(projectId, marker.marker_id)
+        .then((after) => {
+          if (after.end !== marker.end) setReloadToken((t) => t + 1);
+        })
+        .catch((err) => notify('error', `The voiceover could not be generated: ${describeError(err)}`))
+        .finally(() => refreshProject(projectId).catch(() => {}));
+    }
     setPendingStart(input.end);
     setPendingEnd(input.end + 3);
     setNewMarkerRegion(null);
@@ -761,6 +902,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     if (hits.length === 0) return false;
     const current = hits.findIndex((m) => m.marker_id === selectedMarkerId);
     const markerId = hits[(current + 1) % hits.length].marker_id;
+    hidePlanningPanels();
     selectMarker(markerId);
     handleStartEditRegion(markerId);
     return true;
@@ -776,6 +918,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const handleStartEditRegion = (markerId: string) => {
     setEditingNewMarkerRegion(false);
+    setEditingIdeaRegion(false);
     const marker = markers.find((m) => m.marker_id === markerId);
     setEditingRegionMarkerId(markerId);
     setRegionDraft(marker?.region ?? FULL_SCREEN_REGION);
@@ -821,6 +964,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const handleStartEditNewMarkerRegion = () => {
     setEditingRegionMarkerId(null);
     setRegionDraft(null);
+    setEditingIdeaRegion(false);
     setEditingNewMarkerRegion(true);
     setNewMarkerRegion((prev) => prev ?? FULL_SCREEN_REGION);
   };
@@ -908,10 +1052,13 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       const r = final.result;
       if (r.outputs) {
         const n = r.outputs.length;
-        setExportStatus(`Export complete — ${n} marker clip${n === 1 ? '' : 's'} saved to ${r.outputDir}`);
+        const v = r.voices?.length ?? 0;
+        setExportStatus(
+          `Export complete — ${n} marker clip${n === 1 ? '' : 's'}${v > 0 ? ` and ${v} voiceover file${v === 1 ? '' : 's'}` : ''} saved to ${r.outputDir}`
+        );
         setExportedPath(r.outputs[0]?.file ?? r.outputDir ?? null);
       } else {
-        setExportStatus(`Export complete — saved to ${r.output}`);
+        setExportStatus(`Export complete — saved to ${r.output}${r.narration ? `, voiceover track to ${r.narration}` : ''}`);
         setExportedPath(r.output ?? null);
       }
       setExportSucceeded(true);
@@ -975,6 +1122,14 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   }, [status.report]);
 
   const selectedMarker = markers.find((m) => m.marker_id === selectedMarkerId) ?? null;
+
+  // The voiceover the preview plays: each marker's current take, from the marker's start.
+  const voiceClips = projectId
+    ? markers.flatMap((m) => {
+        const audio = playableNarration(m);
+        return audio ? [{ id: `${m.marker_id}:${audio.file}`, url: narrationUrl(projectId, audio.file), start: m.start, duration: audio.durationSec }] : [];
+      })
+    : [];
   const durationSeconds = composition.durationInFrames / composition.fps;
 
   // Only one region overlay is ever active: the new-marker draft takes priority (it has
@@ -982,6 +1137,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   // (also unsaved), otherwise whichever existing marker is being edited.
   const activeRegionDraft = editingNewMarkerRegion
     ? newMarkerRegion ?? FULL_SCREEN_REGION
+    : editingIdeaRegion
+    ? ideaRegion ?? FULL_SCREEN_REGION
     : editingPlanItemKey
     ? reviewItems.find((i) => (editingPlanItemKey === ALL_AREAS_KEY ? isBulkAreaTarget(i) : i.key === editingPlanItemKey))?.region ??
       FULL_SCREEN_REGION
@@ -990,6 +1147,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     : null;
   const handleRegionDraftChange = (region: MarkerRegion) => {
     if (editingNewMarkerRegion) setNewMarkerRegion(region);
+    else if (editingIdeaRegion) setIdeaRegion(region);
     else if (editingPlanItemKey) handleReviewItemChange(editingPlanItemKey, { region: isFullScreenRegion(region) ? null : region });
     else setRegionDraft(region);
   };
@@ -1096,6 +1254,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 selectMarker(null);
                 setNewMarkerPanelVisible(false);
                 setPlanError(null);
+                setPlanPanelOpen(false);
                 setIdeaPanelOpen(true);
               }}
               disabled={planning}
@@ -1119,6 +1278,23 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               />
               <span className="volume-value">{overlayVolume === 0 ? 'Muted' : `${Math.round(overlayVolume * 100)}%`}</span>
             </label>
+            {markers.some((m) => m.narration) && (
+              <label
+                className="volume-control"
+                title="Volume of the markers' voiceover. Drag to 0 to mute it. Applies to the preview and to the export."
+              >
+                <span>Voice</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={Math.round(voiceVolume * 100)}
+                  onChange={(e) => setVoiceVolume(Number(e.target.value) / 100)}
+                />
+                <span className="volume-value">{voiceVolume === 0 ? 'Muted' : `${Math.round(voiceVolume * 100)}%`}</span>
+              </label>
+            )}
             <label
               className="volume-control"
               title="Export each marker's animation as its own file instead of one file spanning the whole timeline — lighter, and easier to drop individual clips into another editor."
@@ -1216,6 +1392,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 onTimeUpdate={setCurrentTime}
                 onPlayingChange={setIsPlaying}
                 overlayVolume={overlayVolume}
+                voiceClips={voiceClips}
+                voiceVolume={voiceVolume}
                 regionDraft={activeRegionDraft}
                 onRegionDraftChange={handleRegionDraftChange}
                 onRegionCommit={editingRegionMarkerId ? handleSaveRegion : undefined}
@@ -1235,13 +1413,17 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 onPlayPause={handlePlayPause}
                 onStop={handleStop}
                 onSeek={handleSeek}
-                onSelect={selectMarker}
+                onSelect={(markerId) => {
+                  hidePlanningPanels();
+                  selectMarker(markerId);
+                }}
                 onDeselectAll={handleTimelineDeselect}
                 onRangeSelect={(start, end) => {
                   // Starting a new pending range is the user saying "I'm making a new
                   // marker" — keeping the old one selected would leave the inspector's
                   // (and its Animation area) showing a different marker than the one
                   // about to be created, which reads as if it applies to the new one.
+                  hidePlanningPanels();
                   selectMarker(null);
                   setNewMarkerPanelVisible(true);
                   setPendingStart(start);
@@ -1249,6 +1431,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 }}
                 onMarkerTimingChange={handleMarkerTimingChange}
                 onEditRegion={(markerId) => {
+                  hidePlanningPanels();
                   selectMarker(markerId);
                   handleStartEditRegion(markerId);
                 }}
@@ -1314,13 +1497,21 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               planning={planning}
               stopping={stopping.has('plan')}
               error={planError}
-              initial={interruptedPlanning?.kind === 'idea' ? interruptedPlanning.idea : undefined}
+              idea={ideaDraft}
+              onIdeaChange={setIdeaDraft}
               notice={interruptedPlanningNotice}
+              region={ideaRegion}
+              editingRegion={editingIdeaRegion}
+              onStartEditRegion={handleStartEditIdeaRegion}
+              onDoneEditRegion={() => setEditingIdeaRegion(false)}
+              onResetRegion={() => setIdeaRegion(null)}
+              narration={ideaNarrationOn}
+              onNarrationChange={setIdeaNarration}
               onStop={() => requestStop('plan')}
               onSubmit={handlePlanFromIdea}
               onCancel={() =>
                 handleClosePlanPanel(() => {
-                  setIdeaPanelOpen(false);
+                  closeIdeaPanel();
                   setNewMarkerPanelVisible(true);
                 })
               }
@@ -1342,6 +1533,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               onStartEditRegion={handleStartEditNewMarkerRegion}
               onDoneEditRegion={handleDoneEditNewMarkerRegion}
               onResetRegion={handleResetNewMarkerRegion}
+              voices={voices}
+              defaultVoice={defaultVoice}
             />
           )}
           {projectId && !planReviewOpen && selectedMarker && (
@@ -1368,6 +1561,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               onCancelEditRegion={handleCancelEditRegion}
               onResetRegionDraft={handleResetRegionDraft}
               onSaveRegion={handleSaveRegion}
+              voices={voices}
+              defaultVoice={defaultVoice}
+              onGenerateVoice={handleGenerateVoice}
             />
           )}
         </div>

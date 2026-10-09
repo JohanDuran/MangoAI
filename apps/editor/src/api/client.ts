@@ -15,6 +15,10 @@ export interface Project {
   name: string;
   createdAt: string;
   overlayVolume?: number;
+  // Volume (0 to 1) of the voiceover; absent means 1.
+  voiceVolume?: number;
+  // The voice last picked for a voiceover line.
+  voice?: string;
   autoDescribeImages?: boolean;
   baseLayer?: BaseLayer;
 }
@@ -45,7 +49,31 @@ export interface Marker {
   region?: MarkerRegion;
   // Ids of library images attached to this marker.
   assets?: string[];
+  narration?: MarkerNarration;
 }
+
+// A spoken line played from the marker's start. audio is the generated speech and what it was
+// made from; when that differs from text/voice, the speech is out of date and is not played.
+export interface MarkerNarration {
+  text: string;
+  voice: string;
+  audio?: { file: string; text: string; voice: string; durationSec: number };
+}
+
+// The speech that will actually play for a marker, if any.
+// A marker is kept at least this much longer than its voice (narration.ts on the runner).
+export const VOICE_TAIL_SEC = 0.2;
+
+// The shortest a marker may be: its voice is never cut, so the marker must hold it.
+export const minMarkerSeconds = (m: Marker) => {
+  const audio = playableNarration(m);
+  return audio ? audio.durationSec + VOICE_TAIL_SEC : 0;
+};
+
+export const playableNarration = (m: Marker) => {
+  const n = m.narration;
+  return n?.audio && n.audio.text === n.text && n.audio.voice === n.voice ? n.audio : null;
+};
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -81,6 +109,58 @@ export const saveOverlayVolume = (id: string, volume: number) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ volume }),
   }).then((r) => json<{ volume: number }>(r));
+
+export const saveVoiceVolume = (id: string, volume: number) =>
+  fetch(`${BASE}/projects/${id}/voice-volume`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ volume }),
+  }).then((r) => json<{ volume: number }>(r));
+
+export interface VoiceOptions {
+  voices: string[];
+  defaultVoice: string;
+  maxChars: number;
+}
+
+export const getVoices = () => fetch(`${BASE}/voices`).then((r) => json<VoiceOptions>(r));
+
+// An error response's message, for showing to the user.
+async function errorText(r: Response): Promise<string> {
+  const body = await r.text();
+  try {
+    return (JSON.parse(body) as { error?: string }).error ?? body;
+  } catch {
+    return body || `${r.status} ${r.statusText}`;
+  }
+}
+
+// Saves a marker's voiceover line (empty removes it). Does not generate the speech.
+export const saveMarkerNarration = (id: string, markerId: string, text: string, voice: string) =>
+  fetch(`${BASE}/projects/${id}/markers/${markerId}/narration`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice }),
+  }).then(async (r) => {
+    if (!r.ok) throw new Error(await errorText(r));
+    return (await r.json()) as Marker;
+  });
+
+// Turns the saved line into speech with OpenAI (billed to the user's key; an unchanged line is reused).
+export const generateMarkerNarration = (id: string, markerId: string) =>
+  fetch(`${BASE}/projects/${id}/markers/${markerId}/narration/generate`, { method: 'POST' }).then(async (r) => {
+    if (!r.ok) throw new Error(await errorText(r));
+    return (await r.json()) as Marker;
+  });
+
+// A short sample of a voice (the first listen to each voice is a small OpenAI request).
+export const getVoiceSample = (voice: string) =>
+  fetch(`${BASE}/voices/${encodeURIComponent(voice)}/sample`).then(async (r) => {
+    if (!r.ok) throw new Error(await errorText(r));
+    return r.blob();
+  });
+
+export const narrationUrl = (id: string, file: string) => `${BASE}/projects/${id}/voice/${file}`;
 
 export const getProject =(id: string) =>
   fetch(`${BASE}/projects/${id}`).then((r) =>
@@ -139,7 +219,14 @@ export interface ExportStatus {
   phase: 'preparing' | 'bundling' | 'rendering' | 'mixing' | 'finishing' | null;
   percent: number;
   message: string;
-  result?: { output?: string; outputDir?: string; outputs?: { markerId: string; file: string }[] };
+  result?: {
+    output?: string;
+    outputDir?: string;
+    outputs?: { markerId: string; file: string }[];
+    // The voiceover written beside an overlay-only export.
+    narration?: string;
+    voices?: { markerId: string; file: string }[];
+  };
   error?: string;
 }
 
@@ -273,6 +360,7 @@ export interface ProposedMarker {
   prompt: string;
   region: MarkerRegion | null;
   assets?: string[];
+  narration?: string;
 }
 
 // A proposed marker as saved in the project's plan file, with the edits made while reviewing it.
@@ -285,13 +373,17 @@ export interface PlanItem {
   region: MarkerRegion | null;
   allowImage: boolean;
   assets: string[];
+  // Voiceover line spoken from the marker's start; absent or empty for none.
+  narration?: string;
   // Set once applying the plan created a marker for this item.
   markerId?: string;
   // Why applying skipped this item, if it did.
   error?: string;
 }
 
-export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string };
+// region on an idea plan is the area every proposed marker was confined to; narration says whether
+// Claude was asked for voiceover lines.
+export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean };
 
 // Saved on the runner from the moment planning starts, so a crash or reload does not lose it.
 export interface StoredPlan {
@@ -325,11 +417,13 @@ export const planMarkers = (id: string, context?: string) =>
     body: JSON.stringify({ context }),
   }).then(planResult);
 
-export const planMarkersFromIdea = (id: string, idea: string) =>
+// Without a region Claude picks each marker's area itself. With narration it also writes a
+// voiceover line for each marker.
+export const planMarkersFromIdea = (id: string, idea: string, opts: { region?: MarkerRegion; narration?: boolean } = {}) =>
   fetch(`${BASE}/projects/${id}/markers/plan-from-idea`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idea }),
+    body: JSON.stringify({ idea, region: opts.region, narration: opts.narration }),
   }).then(planResult);
 
 // running lists the Claude work in progress for the project ('plan', 'apply', 'regenerate:<id>').
@@ -364,6 +458,7 @@ export interface ApplyMarkerInput {
   region: MarkerRegion | null;
   allowImage: boolean;
   assets?: string[];
+  narration?: string;
   // The saved plan item this comes from.
   key?: string;
   // A marker left unfinished by an interrupted earlier apply of this item.

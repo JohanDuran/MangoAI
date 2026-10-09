@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import type { Marker } from '../api/client';
+import { minMarkerSeconds, playableNarration, type Marker } from '../api/client';
 import type { MarkerRunState } from '../App';
 import { displayStatus } from '../status';
 
@@ -104,6 +104,8 @@ export const Timeline: React.FC<Props> = ({
     const startX = e.clientX;
     const origStart = marker.start;
     const origEnd = marker.end;
+    // A marker is never trimmed shorter than its voice.
+    const minLength = Math.max(MIN_MARKER_DURATION, minMarkerSeconds(marker));
     let latestStart = origStart;
     let latestEnd = origEnd;
     // A plain click on the chip (select + seek, handled by the chip's own onClick) also
@@ -128,10 +130,10 @@ export const Timeline: React.FC<Props> = ({
         latestStart = newStart;
         latestEnd = newEnd;
       } else if (mode === 'trim-start') {
-        latestStart = Math.max(0, Math.min(origStart + deltaSeconds, origEnd - MIN_MARKER_DURATION));
+        latestStart = Math.max(0, Math.min(origStart + deltaSeconds, origEnd - minLength));
         latestEnd = origEnd;
       } else {
-        latestEnd = Math.min(duration, Math.max(origEnd + deltaSeconds, origStart + MIN_MARKER_DURATION));
+        latestEnd = Math.min(duration, Math.max(origEnd + deltaSeconds, origStart + minLength));
         latestStart = origStart;
       }
       setMovingMarker({ id: marker.marker_id, start: latestStart, end: latestEnd });
@@ -270,8 +272,27 @@ export const Timeline: React.FC<Props> = ({
               <div className="timeline-chip-edge" onMouseDown={(e) => beginMarkerDrag(e, m, 'trim-start')} />
               <span className="timeline-chip-label" onMouseDown={(e) => beginMarkerDrag(e, m, 'move')}>
                 {m.marker_id}
+                {m.narration && (
+                  <svg className="timeline-chip-voice" viewBox="0 0 16 16" aria-label="has a voiceover">
+                    <path d="M2 6h3l4-3v10l-4-3H2z" fill="currentColor" />
+                    <path d="M11 5.5a3.5 3.5 0 0 1 0 5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+                  </svg>
+                )}
               </span>
               <div className="timeline-chip-edge" onMouseDown={(e) => beginMarkerDrag(e, m, 'trim-end')} />
+              {(() => {
+                // How much of the marker the voice takes; past the end it is drawn as overrunning.
+                const audio = playableNarration(m);
+                if (!audio) return null;
+                const share = audio.durationSec / Math.max(0.1, effEnd - effStart);
+                return (
+                  <div
+                    className={`timeline-chip-voicebar${share > 1.01 ? ' overrun' : ''}`}
+                    style={{ width: `${Math.min(100, share * 100)}%` }}
+                    title={`Voiceover ${audio.durationSec.toFixed(1)}s`}
+                  />
+                );
+              })()}
             </div>
           );
         })}

@@ -75,7 +75,7 @@ async function splitAudio(audioPath: string, dir: string): Promise<string[]> {
 }
 
 // Turns an OpenAI failure into something the user can act on.
-export function explainOpenAIError(status: number, body: string): string {
+export function explainOpenAIError(status: number, body: string, what = 'transcription'): string {
   let detail = '';
   try {
     detail = (JSON.parse(body) as { error?: { message?: string; code?: string } }).error?.message ?? '';
@@ -83,10 +83,10 @@ export function explainOpenAIError(status: number, body: string): string {
     detail = body.slice(0, 200);
   }
   if (status === 401) return 'OpenAI rejected your API key. Enter it again in the Status panel.';
-  if (status === 403) return 'OpenAI refused the request (403). The key may lack access to transcription.';
+  if (status === 403) return `OpenAI refused the request (403). The key may lack access to ${what}.`;
   if (status === 429) return /quota|billing|credit/i.test(detail) ? 'Your OpenAI account is out of credit. Add credit or check billing, then try again.' : 'OpenAI is rate limiting this key. Wait a minute and try again.';
   if (status >= 500) return `OpenAI is having problems (${status}). Try again in a few minutes.`;
-  return `OpenAI transcription failed (${status})${detail ? `: ${detail}` : ''}`;
+  return `OpenAI ${what} failed (${status})${detail ? `: ${detail}` : ''}`;
 }
 
 class RetryableError extends Error {}

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { projectDir } from '../lib/paths.js';
-import { readProject, overlayVolume, baseLayerOf } from '../lib/scaffold.js';
+import { readProject, overlayVolume, voiceVolume, baseLayerOf } from '../lib/scaffold.js';
+import { narrationClips } from '../lib/narration.js';
 import { synthesizeBaseClip } from '../lib/baseClip.js';
 import { log as writeLog, clip } from '../lib/log.js';
 import { syncAssetModule } from '../lib/assetModule.js';
@@ -22,6 +23,10 @@ export interface ExportResult {
   output?: string;
   outputDir?: string;
   outputs?: { markerId: string; file: string }[];
+  // The voiceover, written beside an overlay-only export: one track for the whole timeline, or
+  // one file per marker for a per-marker export.
+  narration?: string;
+  voices?: { markerId: string; file: string }[];
 }
 
 export interface ExportStatus {
@@ -85,6 +90,44 @@ function runFfmpeg(args: string[], signal: AbortSignal, cwd?: string): Promise<{
   });
 }
 
+type VoiceClip = ReturnType<typeof narrationClips>[number];
+
+// Filter steps placing each voice clip at its marker's start on the timeline, cut at the end of the
+// video. `firstInput` is the ffmpeg input index of the first clip; labels are [vo0], [vo1], ...
+function voiceFilters(clips: VoiceClip[], firstInput: number, totalSeconds: number, volume: number): { parts: string[]; labels: string[] } {
+  const parts: string[] = [];
+  const labels: string[] = [];
+  clips.forEach((c, i) => {
+    const room = Math.max(0.05, totalSeconds - c.start);
+    parts.push(`[${firstInput + i}:a]aresample=48000,atrim=end=${room.toFixed(3)},adelay=${Math.round(c.start * 1000)}:all=1,volume=${volume}[vo${i}]`);
+    labels.push(`[vo${i}]`);
+  });
+  return { parts, labels };
+}
+
+// The whole voiceover as one track as long as the video, for an overlay-only export. Silence where
+// no marker speaks, so it lines up when dropped at 0 in another editor.
+export async function writeNarrationTrack(clips: VoiceClip[], totalSeconds: number, volume: number, out: string, signal: AbortSignal): Promise<{ code: number | null; log: string }> {
+  const { parts, labels } = voiceFilters(clips, 1, totalSeconds, volume);
+  parts.push(`[0:a]${labels.join('')}amix=inputs=${labels.length + 1}:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95[a]`);
+  return runFfmpeg(
+    [
+      '-y',
+      '-f', 'lavfi', '-t', totalSeconds.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo',
+      ...clips.flatMap((c) => ['-i', c.file]),
+      '-filter_complex', parts.join(';'),
+      '-map', '[a]',
+      '-c:a', 'pcm_s16le',
+      out,
+    ],
+    signal
+  );
+}
+
+// One marker's voice, at the project's voice volume, for a per-marker export.
+const writeVoiceFile = (clip: VoiceClip, volume: number, out: string, signal: AbortSignal) =>
+  runFfmpeg(['-y', '-i', clip.file, '-af', `volume=${volume}`, '-c:a', 'pcm_s16le', out], signal);
+
 async function hasAudioStream(file: string): Promise<boolean> {
   const result = await runCommand(ffprobeBin(), ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file], { timeoutMs: 30_000 });
   return result.stdout.trim().length > 0;
@@ -124,6 +167,9 @@ async function execute(id: string, body: { includeVideo?: boolean; perMarker?: b
   // A transparent base has no video to composite onto — the overlay-only alpha render below is
   // already the correct deliverable for it, so a "combined" export request degrades to that.
   const includeVideo = !!body.includeVideo && baseLayer.type !== 'transparent' && !perMarker;
+  const totalSeconds = durationInFrames / fps;
+  const clips = narrationClips(id);
+  const voiceVol = voiceVolume(id);
 
   if (perMarker) {
     const markerDir = path.join(dir, '04_output', 'by_marker');
@@ -175,8 +221,18 @@ async function execute(id: string, body: { includeVideo?: boolean; perMarker?: b
       throw new ExportError('Export cancelled.');
     }
     if (failure) throw new ExportError(failure);
-    writeLog('info', 'export.done', { project: id, output: markerDir, count: outputs.length });
-    return { outputDir: markerDir, outputs };
+    const voices: { markerId: string; file: string }[] = [];
+    if (voiceVol > 0) {
+      for (const c of clips) {
+        const file = path.join(markerDir, `${c.markerId}_voice.wav`);
+        const made = await writeVoiceFile(c, voiceVol, file, signal);
+        if (cancelled()) throw new ExportError('Export cancelled.');
+        if (made.code !== 0) throw new ExportError(`Could not write the voiceover for ${c.markerId}: ${made.log.slice(-600)}`);
+        voices.push({ markerId: c.markerId, file });
+      }
+    }
+    writeLog('info', 'export.done', { project: id, output: markerDir, count: outputs.length, voices: voices.length });
+    return { outputDir: markerDir, outputs, ...(voices.length > 0 && { voices }) };
   }
 
   let raw: string | null = null;
@@ -262,6 +318,20 @@ async function execute(id: string, body: { includeVideo?: boolean; perMarker?: b
     throw new ExportError(failure ?? 'Render did not complete');
   }
   if (!includeVideo || !raw) {
+    const narrationFile = path.join(dir, '04_output', 'narration.wav');
+    fs.rmSync(narrationFile, { force: true });
+    if (clips.length > 0 && voiceVol > 0) {
+      set('mixing', 97, 'Writing the voiceover');
+      const made = await writeNarrationTrack(clips, totalSeconds, voiceVol, narrationFile, signal);
+      if (cancelled()) {
+        fs.rmSync(narrationFile, { force: true });
+        throw new ExportError('Export cancelled.');
+      }
+      writeLog(made.code === 0 ? 'info' : 'error', 'export.narration', { project: id, clips: clips.length, code: made.code, output: made.code === 0 ? undefined : clip(made.log.slice(-600), 600) });
+      if (made.code !== 0) throw new ExportError(`Could not write the voiceover track: ${made.log.slice(-600)}`);
+      writeLog('info', 'export.done', { project: id, output: outFile, narration: narrationFile });
+      return { output: outFile, narration: narrationFile };
+    }
     writeLog('info', 'export.done', { project: id, output: outFile });
     return { output: outFile };
   }
@@ -299,6 +369,10 @@ async function execute(id: string, body: { includeVideo?: boolean; perMarker?: b
     audioParts.push(`[${i + 1}:a]adelay=${Math.round(s.startSec * 1000)}:all=1[a${i}]`);
     audioLabels.push(`[a${i}]`);
   });
+  // The voiceover clips come after the overlay segments in the input list.
+  const voices = voiceVol > 0 ? voiceFilters(clips, segments.length + 1, totalSeconds, voiceVol) : { parts: [], labels: [] };
+  audioParts.push(...voices.parts);
+  audioLabels.push(...voices.labels);
   let audioMap: string[] = [];
   if (audioLabels.length === 1) {
     audioMap = ['-map', audioLabels[0] === '[0:a]' ? '0:a' : audioLabels[0]];
@@ -318,6 +392,7 @@ async function execute(id: string, body: { includeVideo?: boolean; perMarker?: b
       '-y',
       '-i', raw,
       ...segments.flatMap((s) => ['-i', s.file]),
+      ...(voices.labels.length > 0 ? clips.flatMap((c) => ['-i', c.file]) : []),
       '-filter_complex', [...videoParts, ...audioParts].join(';'),
       '-map', '[v]',
       ...audioMap,
@@ -338,6 +413,7 @@ async function execute(id: string, body: { includeVideo?: boolean; perMarker?: b
     ms: Date.now() - mixStarted,
     baseHasAudio,
     overlayHasAudio: segmentHasAudio.some(Boolean),
+    voices: voices.labels.length,
     output: mix.code === 0 ? undefined : clip(mix.log.slice(-800), 800),
   });
   if (cancelled()) {

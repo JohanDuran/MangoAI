@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getMarkerCode, type Asset, type Marker, type MarkerRegion, type TranscriptSegment } from '../api/client';
+import { getMarkerCode, type Asset, type Marker, type MarkerRegion, type TranscriptSegment, type VoiceOptions } from '../api/client';
+import { VoiceoverSection } from './VoiceoverSection';
 import { AssetPicker } from './AssetPicker';
 import type { MarkerRunState } from '../App';
 import { displayStatus } from '../status';
@@ -26,6 +27,9 @@ interface Props {
   onCancelEditRegion: () => void;
   onResetRegionDraft: () => void;
   onSaveRegion: () => void;
+  voices: VoiceOptions | null;
+  defaultVoice: string;
+  onGenerateVoice: (markerId: string, text: string, voice: string) => Promise<void>;
 }
 
 export const MarkerInspector: React.FC<Props> = ({
@@ -47,6 +51,9 @@ export const MarkerInspector: React.FC<Props> = ({
   onCancelEditRegion,
   onResetRegionDraft,
   onSaveRegion,
+  voices,
+  defaultVoice,
+  onGenerateVoice,
 }) => {
   const [code, setCode] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -194,6 +201,14 @@ export const MarkerInspector: React.FC<Props> = ({
           Tip: click Regenerate below so the animation redesigns itself to fit this area.
         </div>
       )}
+
+      <VoiceoverSection
+        projectId={projectId}
+        marker={marker}
+        voices={voices}
+        defaultVoice={defaultVoice}
+        onGenerate={onGenerateVoice}
+      />
 
       <label className="field-label">Images for context</label>
       <div style={{ marginBottom: 14 }}>

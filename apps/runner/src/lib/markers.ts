@@ -23,6 +23,17 @@ export interface Marker {
   region?: MarkerRegion;
   // Ids of library images (see assets.ts) the user attached to this marker.
   assets?: string[];
+  // A spoken line played from the marker's start (see narration.ts).
+  narration?: MarkerNarration;
+}
+
+export interface MarkerNarration {
+  text: string;
+  voice: string;
+  // The generated speech, if any. text/voice record what it was made from, so a line edited
+  // since then shows as out of date instead of silently playing the old words. The marker is kept
+  // at least as long as the speech (see narration.ts).
+  audio?: { file: string; text: string; voice: string; durationSec: number };
 }
 
 // Normalized 0-1 fractions of the canvas — null resets a marker to full screen.

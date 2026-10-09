@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Asset, Marker, PlanItem, PlanSource } from '../api/client';
 import { AssetPicker } from './AssetPicker';
+import { estimateSpeechSeconds } from './VoiceoverSection';
 import type { MarkerRunState } from '../App';
 import type { DisplayStatus } from '../status';
 import { StatusBadge } from './StatusBadge';
@@ -83,6 +84,8 @@ export const MarkerPlanReview: React.FC<Props> = ({
   onDoneEditRegion,
   onResetRegion,
 }) => {
+  // Claude was asked for voiceover lines, so every item gets a field even if its line came back empty.
+  const withVoiceover = source?.kind === 'idea' && !!source.narration;
   const pending = items.filter((i) => i.included && !isItemDone(i, markers));
   const doneCount = items.filter((i) => isItemDone(i, markers)).length;
   const editingAll = editingRegionKey === ALL_AREAS_KEY;
@@ -188,6 +191,32 @@ export const MarkerPlanReview: React.FC<Props> = ({
                   disabled={locked}
                   onChange={(e) => onChange(item.key, { prompt: e.target.value })}
                 />
+                {(withVoiceover || item.narration !== undefined) && (
+                  <div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 4 }}>
+                      Voiceover
+                      {item.narration?.trim() &&
+                        (() => {
+                          const spoken = estimateSpeechSeconds(item.narration);
+                          const over = spoken > item.end - item.start;
+                          return (
+                            <span style={{ color: over ? 'var(--mango)' : undefined }}>
+                              {' '}
+                              · about {spoken.toFixed(1)}s spoken, marker {(item.end - item.start).toFixed(1)}s{over ? ' (too long for the marker)' : ''}
+                            </span>
+                          );
+                        })()}
+                    </div>
+                    <textarea
+                      className="field-textarea"
+                      rows={2}
+                      value={item.narration ?? ''}
+                      disabled={locked}
+                      placeholder="No voiceover for this marker"
+                      onChange={(e) => onChange(item.key, { narration: e.target.value })}
+                    />
+                  </div>
+                )}
                 {(assets.length > 0 || item.assets.length > 0) && (
                   <div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 4 }}>

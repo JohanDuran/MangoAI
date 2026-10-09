@@ -340,6 +340,7 @@ export function buildRegeneratePrompt(opts: {
   feedback: string;
   priorError?: string;
   transcript?: string;
+  narration?: string;
   optedInSkills?: string[];
   compositionWidth: number;
   compositionHeight: number;
@@ -360,6 +361,7 @@ export function buildRegeneratePrompt(opts: {
     'First analyze this request and turn it into a concrete final brief: answer any question in it and gather any facts it needs (use WebSearch/WebFetch if useful), then build the animation from those real answers. Never use placeholder text like "Company 1".',
     opts.feedback ? `Latest feedback: ${opts.feedback}` : null,
     opts.transcript ? `What's being said in the video during this marker's time range: "${opts.transcript}"` : null,
+    opts.narration ? `A voiceover reads this line starting at the beginning of this marker (frame 0 of your component): "${opts.narration}". Make the visuals support what is said and pace them with it (a typical voice speaks about 2.5 words per second). Do not add your own voice or speech audio.` : null,
     `Current code:\n\`\`\`tsx\n${opts.currentCode}\n\`\`\``,
     describeAttachedAssets(opts.attachedAssets ?? []),
     describeLibraryAssets(opts.libraryAssets ?? []),

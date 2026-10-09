@@ -582,6 +582,30 @@ select {
   cursor: grabbing;
 }
 
+.timeline-chip-voice {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  margin-left: 4px;
+  opacity: 0.8;
+}
+
+/* How long the voiceover runs, along the bottom of the chip. */
+.timeline-chip-voicebar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.timeline-chip-voicebar.overrun {
+  background: var(--error);
+  opacity: 1;
+}
+
 .timeline-chip.status-draft {
   background: var(--draft-wash);
   border-color: var(--draft);

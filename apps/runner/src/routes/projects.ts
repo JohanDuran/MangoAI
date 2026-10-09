@@ -13,7 +13,21 @@ import {
   overlayVolume,
   setOverlayVolume,
   baseLayerOf,
+  updateProjectSettings,
 } from '../lib/scaffold.js';
+import {
+  TTS_VOICES,
+  DEFAULT_VOICE,
+  MAX_NARRATION_CHARS,
+  isValidVoice,
+  setMarkerNarration,
+  generateNarration,
+  minMarkerSeconds,
+  VOICE_TAIL_SEC,
+  removeNarrationFiles,
+  narrationFilePath,
+  voiceSample,
+} from '../lib/narration.js';
 import { isValidBaseLayer } from '../lib/baseLayer.js';
 import { discoverSkills } from '../lib/skills.js';
 import { log as writeLog, clip } from '../lib/log.js';
@@ -119,6 +133,71 @@ projectsRouter.put('/projects/:id/overlay-volume', (req, res) => {
   res.json({ volume });
 });
 
+// Volume of the markers' voiceover: 0 (muted) to 1. Used by the preview and the export.
+projectsRouter.put('/projects/:id/voice-volume', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const volume = (req.body as { volume?: unknown }).volume;
+  if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1) {
+    return res.status(400).json({ error: 'volume must be a number from 0 to 1' });
+  }
+  updateProjectSettings(req.params.id, { voiceVolume: volume });
+  res.json({ volume });
+});
+
+projectsRouter.get('/voices', (_req, res) => {
+  res.json({ voices: TTS_VOICES, defaultVoice: DEFAULT_VOICE, maxChars: MAX_NARRATION_CHARS });
+});
+
+// A short sample of a voice. The first listen to each voice is one small OpenAI request; it is
+// kept, so later listens cost nothing.
+projectsRouter.get('/voices/:voice/sample', async (req, res) => {
+  if (!isValidVoice(req.params.voice)) return res.status(404).json({ error: 'not found' });
+  try {
+    const file = await voiceSample(req.params.voice);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.type('audio/mpeg').sendFile(file);
+  } catch (err) {
+    writeLog('error', 'route.error', { route: 'voice-sample', voice: req.params.voice, error: err });
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Saves a marker's voiceover line and voice (an empty line removes it). The voice becomes the
+// project's choice for new lines. Generating the speech is a separate call, since it costs money.
+projectsRouter.put('/projects/:id/markers/:markerId/narration', (req, res) => {
+  const { id, markerId } = req.params;
+  if (!readMarkers(id).some((m) => m.marker_id === markerId)) return res.status(404).json({ error: 'not found' });
+  const { text, voice } = req.body as { text?: unknown; voice?: unknown };
+  if (typeof text !== 'string') return res.status(400).json({ error: 'text must be a string' });
+  if (!isValidVoice(voice)) return res.status(400).json({ error: `voice must be one of: ${TTS_VOICES.join(', ')}` });
+  if (text.trim().length > MAX_NARRATION_CHARS) return res.status(400).json({ error: `text must be at most ${MAX_NARRATION_CHARS} characters` });
+  updateProjectSettings(id, { voice });
+  res.json(setMarkerNarration(id, markerId, { text, voice }));
+});
+
+projectsRouter.post('/projects/:id/markers/:markerId/narration/generate', async (req, res) => {
+  const { id, markerId } = req.params;
+  if (!readMarkers(id).some((m) => m.marker_id === markerId)) return res.status(404).json({ error: 'not found' });
+  try {
+    const { marker, retimed } = await generateNarration(id, markerId);
+    if (retimed) regenerateRegistry(id);
+    res.json(marker);
+  } catch (err) {
+    // The marker may have been deleted while the speech was being made.
+    if (!readMarkers(id).some((m) => m.marker_id === markerId)) removeNarrationFiles(id, markerId);
+    writeLog('error', 'route.error', { route: 'narration', project: id, marker: markerId, error: err });
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+projectsRouter.get('/projects/:id/voice/:file', (req, res) => {
+  const file = narrationFilePath(req.params.id, req.params.file);
+  if (!file) return res.status(404).json({ error: 'not found' });
+  // A take's name includes a hash of its words and voice, so its content never changes.
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.type('audio/mpeg').sendFile(file);
+});
+
 projectsRouter.get('/skills', (_req, res) => {
   const { skills, problems } = discoverSkills();
   res.json({
@@ -167,12 +246,19 @@ projectsRouter.post('/projects/:id/markers', (req, res) => {
 });
 
 projectsRouter.patch('/projects/:id/markers/:markerId', (req, res) => {
+  const { id, markerId } = req.params;
   const { start, end } = req.body as { start?: number; end?: number };
   if (start === undefined || end === undefined || end <= start) {
     return res.status(400).json({ error: 'start and end are required, and end must be after start' });
   }
-  const marker = updateMarkerTiming(req.params.id, req.params.markerId, { start, end });
-  regenerateRegistry(req.params.id);
+  // A voice is never cut, so a marker cannot be made shorter than its speech.
+  const existing = readMarkers(id).find((m) => m.marker_id === markerId);
+  const min = existing ? minMarkerSeconds(id, existing) : 0;
+  if (end - start < min - 0.001) {
+    return res.status(400).json({ error: `This marker's voiceover is ${(min - VOICE_TAIL_SEC).toFixed(1)}s long, so the marker cannot be shorter than ${min.toFixed(1)}s. Shorten the line first.` });
+  }
+  const marker = updateMarkerTiming(id, markerId, { start, end });
+  regenerateRegistry(id);
   res.json(marker);
 });
 
@@ -185,6 +271,7 @@ projectsRouter.delete('/projects/:id/markers/:markerId', (req, res) => {
   }
   const file = markerFile(id, markerId);
   if (fs.existsSync(file)) fs.unlinkSync(file);
+  removeNarrationFiles(id, markerId);
   regenerateRegistry(id);
   res.status(204).end();
 });
@@ -280,11 +367,18 @@ projectsRouter.post('/projects/:id/markers/plan', async (req, res) => {
 });
 
 projectsRouter.post('/projects/:id/markers/plan-from-idea', async (req, res) => {
-  const { idea } = req.body as { idea?: unknown };
+  const { idea, region, narration } = req.body as { idea?: unknown; region?: unknown; narration?: unknown };
   if (typeof idea !== 'string' || !idea.trim()) {
     return res.status(400).json({ error: 'idea must be a non-empty string' });
   }
-  await runPlan(req.params.id, { kind: 'idea', idea: idea.trim() }, res, (signal) => planMarkersFromIdea(req.params.id, idea, signal));
+  if (region !== undefined && region !== null && !isValidRegion(region)) {
+    return res.status(400).json({ error: 'region must be { x, y, width, height } as fractions of the canvas' });
+  }
+  const area = region ?? undefined;
+  const withNarration = narration === true;
+  await runPlan(req.params.id, { kind: 'idea', idea: idea.trim(), ...(area && { region: area }), ...(withNarration && { narration: true }) }, res, (signal) =>
+    planMarkersFromIdea(req.params.id, idea, { region: area, narration: withNarration }, signal)
+  );
 });
 
 // The saved plan, if any, and which Claude work is running for the project right now. A plan still
@@ -329,6 +423,8 @@ interface ApplyMarkerInput {
   region?: MarkerRegion | null;
   allowSkills?: string[];
   assets?: string[];
+  // A voiceover line to speak from the marker's start.
+  narration?: string;
   // The saved plan item this came from, so progress is recorded in the plan file.
   key?: string;
   // A marker an interrupted earlier apply created for this item but never finished.
@@ -343,6 +439,7 @@ function discardMarker(id: string, markerId: string): void {
     // already gone
   }
   fs.rmSync(markerFile(id, markerId), { force: true });
+  removeNarrationFiles(id, markerId);
 }
 
 // Whether the saved plan still has items to generate. A plan with none left is done and removed.
@@ -382,10 +479,17 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
     const { fps, durationInFrames } = readCompositionConfig(id);
     const durationSeconds = durationInFrames / fps;
 
+    // A voice longer than its planned marker lengthens it and moves every later marker back by as
+    // much (see narration.ts); the plan items still to be made move back by the same total.
+    let shift = 0;
     for (let index = 0; index < inputs.length; index++) {
       if (signal.aborted) break;
       const input = inputs[index];
       send('item-start', { index, total: inputs.length });
+      if (shift > 0 && typeof input.start === 'number' && typeof input.end === 'number') {
+        input.start = Math.round((input.start + shift) * 100) / 100;
+        input.end = Math.round((input.end + shift) * 100) / 100;
+      }
 
       // Left behind by an apply that was interrupted: start the item over from a clean marker.
       if (input.markerId) {
@@ -415,6 +519,21 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
       updatePlanItem(id, input.key, { markerId: marker.marker_id, error: undefined });
       send('item-created', { index, markerId: marker.marker_id });
 
+      // The voice is made first: it is quick, and the overlay is then generated knowing the line.
+      const narration = typeof input.narration === 'string' ? input.narration.trim().slice(0, MAX_NARRATION_CHARS) : '';
+      if (narration) {
+        const voice = readProject(id)?.voice;
+        setMarkerNarration(id, marker.marker_id, { text: narration, voice: isValidVoice(voice) ? voice : DEFAULT_VOICE });
+        send('progress', { index, markerId: marker.marker_id, attempt: 0, phase: 'voice' });
+        try {
+          const voiced = await generateNarration(id, marker.marker_id, signal);
+          if (voiced.retimed) regenerateRegistry(id);
+          shift += Math.max(0, voiced.marker.end - marker.end);
+        } catch (err) {
+          if (!signal.aborted) send('item-voice', { index, markerId: marker.marker_id, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
       const { width: compositionWidth, height: compositionHeight } = readCompositionConfig(id);
       const isFullScreen = !region;
       const effectiveRegion = region ?? { x: 0, y: 0, width: 1, height: 1 };
@@ -432,6 +551,7 @@ projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
         prompt: prompt!,
         feedback: '',
         transcript: transcript || undefined,
+        narration: narration || undefined,
         allowSkills: toNameList(input.allowSkills),
         compositionWidth,
         compositionHeight,
@@ -520,6 +640,7 @@ projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, re
       prompt: marker.prompt,
       feedback: resolvedFeedback,
       transcript: transcript || undefined,
+      narration: marker.narration?.text,
       allowSkills: toNameList(allowSkills),
       compositionWidth,
       compositionHeight,

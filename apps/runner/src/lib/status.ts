@@ -146,7 +146,7 @@ async function checkOpenAI(): Promise<Omit<StatusCheck, 'ms'>> {
   const base = { id: 'openai', label: 'OpenAI' };
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return { ...base, state: 'warn', summary: 'OPENAI_API_KEY is not set', details: ['Transcription and image generation are unavailable. Add your OpenAI API key below (desktop app) or to apps/runner/.env and restart the runner.'] };
+    return { ...base, state: 'warn', summary: 'OPENAI_API_KEY is not set', details: ['Transcription, voiceovers and image generation are unavailable. Add your OpenAI API key below (desktop app) or to apps/runner/.env and restart the runner.'] };
   }
   const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
   try {
