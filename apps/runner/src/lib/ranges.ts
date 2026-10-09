@@ -1,5 +1,6 @@
 import { readMarkers } from './markers.js';
 import { readCompositionConfig } from './composition.js';
+import { captionCues, captionSettings } from './captions.js';
 
 export interface FrameRange {
   from: number;
@@ -24,12 +25,23 @@ function markerRanges(id: string): TaggedRange[] {
     .sort((a, b) => a.from - b.from);
 }
 
-// Frame ranges (inclusive) that contain any marker, merged when overlapping or separated by
-// no more than mergeGapSeconds (rendering a short blank gap is cheaper than another segment).
+// Frames where burned-in captions show; they need rendering even where no marker is.
+function captionRanges(id: string): FrameRange[] {
+  const settings = captionSettings(id);
+  if (settings.mode !== 'burn') return [];
+  const { fps, durationInFrames } = readCompositionConfig(id);
+  return captionCues(id, settings)
+    .map((c) => ({ from: Math.max(0, Math.floor(c.start * fps)), to: Math.min(durationInFrames - 1, Math.ceil(c.end * fps)) }))
+    .filter((r) => r.from <= r.to);
+}
+
+// Frame ranges (inclusive) that contain any marker or burned-in caption, merged when overlapping or
+// separated by no more than mergeGapSeconds (rendering a short blank gap is cheaper than another segment).
 export function markerFrameRanges(id: string, mergeGapSeconds = 2): FrameRange[] {
   const { fps } = readCompositionConfig(id);
   const merged: FrameRange[] = [];
-  for (const r of markerRanges(id)) {
+  const ranges = [...markerRanges(id), ...captionRanges(id)].sort((a, b) => a.from - b.from);
+  for (const r of ranges) {
     const last = merged[merged.length - 1];
     if (last && r.from <= last.to + 1 + Math.round(mergeGapSeconds * fps)) last.to = Math.max(last.to, r.to);
     else merged.push({ from: r.from, to: r.to });

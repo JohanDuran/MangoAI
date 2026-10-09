@@ -60,6 +60,7 @@ import {
 } from '../lib/planStore.js';
 import { findRawVideo } from '../lib/video.js';
 import { readCompositionConfig } from '../lib/composition.js';
+import { captionCues, captionSettings, isValidCaptionSettings, toSrt } from '../lib/captions.js';
 import { transcribeProject, readTranscript, writeTranscript, transcriptForRange, type TranscriptSegment } from '../lib/transcript.js';
 
 export const projectsRouter = Router();
@@ -158,6 +159,32 @@ projectsRouter.put('/projects/:id/voice-volume', (req, res) => {
   res.json({ volume });
 });
 
+projectsRouter.get('/projects/:id/captions', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const settings = captionSettings(req.params.id);
+  // Shown even while captions are off, so the dialog can preview what turning them on gives.
+  res.json({ settings, cues: captionCues(req.params.id, { ...settings, mode: 'srt' }) });
+});
+
+projectsRouter.put('/projects/:id/captions', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const settings = (req.body as { settings?: unknown }).settings;
+  if (!isValidCaptionSettings(settings)) return res.status(400).json({ error: 'invalid caption settings' });
+  const clean = { mode: settings.mode, source: settings.source, position: settings.position, size: settings.size };
+  updateProjectSettings(req.params.id, { captions: clean });
+  regenerateRegistry(req.params.id);
+  res.json({ settings: clean, cues: captionCues(req.params.id, { ...clean, mode: 'srt' }) });
+});
+
+projectsRouter.get('/projects/:id/captions.srt', (req, res) => {
+  const project = readProject(req.params.id);
+  if (!project) return res.status(404).json({ error: 'not found' });
+  const cues = captionCues(req.params.id, { ...captionSettings(req.params.id), mode: 'srt' });
+  const name = `${project.name.replace(/[^\w .-]+/g, '').trim() || 'captions'}.srt`;
+  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+  res.type('application/x-subrip').send(toSrt(cues));
+});
+
 projectsRouter.get('/voices', (_req, res) => {
   res.json({ voices: TTS_VOICES, defaultVoice: DEFAULT_VOICE, maxChars: MAX_NARRATION_CHARS });
 });
@@ -193,8 +220,9 @@ projectsRouter.post('/projects/:id/markers/:markerId/narration/generate', async 
   const { id, markerId } = req.params;
   if (!readMarkers(id).some((m) => m.marker_id === markerId)) return res.status(404).json({ error: 'not found' });
   try {
-    const { marker, retimed } = await generateNarration(id, markerId);
-    if (retimed) regenerateRegistry(id);
+    const { marker } = await generateNarration(id, markerId);
+    // A new take can retime markers and changes the voiceover captions.
+    regenerateRegistry(id);
     res.json(marker);
   } catch (err) {
     // The marker may have been deleted while the speech was being made.
@@ -313,6 +341,7 @@ projectsRouter.patch('/projects/:id/markers/:markerId/region', (req, res) => {
 projectsRouter.post('/projects/:id/transcript', async (req, res) => {
   try {
     const segments = await transcribeProject(req.params.id);
+    regenerateRegistry(req.params.id); // transcript captions
     res.json({ segments });
   } catch (err) {
     writeLog('error', 'route.error', { route: 'transcribe', project: req.params.id, error: err });
@@ -340,6 +369,7 @@ projectsRouter.put('/projects/:id/transcript', (req, res) => {
     return res.status(400).json({ error: 'segments must be a list of {start, end, text}' });
   }
   writeTranscript(req.params.id, segments);
+  regenerateRegistry(req.params.id); // transcript captions
   res.json({ segments });
 });
 

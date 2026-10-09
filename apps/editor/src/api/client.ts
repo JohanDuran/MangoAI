@@ -162,6 +162,34 @@ export const getVoiceSample = (voice: string) =>
 
 export const narrationUrl = (id: string, file: string) => `${BASE}/projects/${id}/voice/${file}`;
 
+// Captions: 'burn' draws them into the overlay (and writes an .srt with exports), 'srt' only writes
+// the subtitle file. 'auto' uses the voiceover when there is one, otherwise the transcript.
+export interface CaptionSettings {
+  mode: 'off' | 'burn' | 'srt';
+  source: 'auto' | 'voiceover' | 'transcript';
+  position: 'bottom' | 'top';
+  size: 'small' | 'medium' | 'large';
+}
+
+export interface CaptionCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+// cues are what the current settings give (shown even while captions are off, as a preview).
+export const getCaptions = (id: string) =>
+  fetch(`${BASE}/projects/${id}/captions`).then((r) => json<{ settings: CaptionSettings; cues: CaptionCue[] }>(r));
+
+export const saveCaptions = (id: string, settings: CaptionSettings) =>
+  fetch(`${BASE}/projects/${id}/captions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings }),
+  }).then((r) => json<{ settings: CaptionSettings; cues: CaptionCue[] }>(r));
+
+export const captionsSrtUrl = (id: string) => `${BASE}/projects/${id}/captions.srt`;
+
 export const getProject =(id: string) =>
   fetch(`${BASE}/projects/${id}`).then((r) =>
     json<{ project: Project; markers: Marker[]; hasVideo: boolean; composition: CompositionConfig; baseLayer: BaseLayer }>(r)
@@ -226,6 +254,8 @@ export interface ExportStatus {
     // The voiceover written beside an overlay-only export.
     narration?: string;
     voices?: { markerId: string; file: string }[];
+    // captions.srt, written with every export while captions are on.
+    captions?: string;
   };
   error?: string;
 }

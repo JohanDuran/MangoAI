@@ -4,6 +4,7 @@ import path from 'node:path';
 import { projectDir } from '../lib/paths.js';
 import { readProject, overlayVolume, voiceVolume, baseLayerOf } from '../lib/scaffold.js';
 import { narrationClips } from '../lib/narration.js';
+import { captionCues, toSrt } from '../lib/captions.js';
 import { synthesizeBaseClip } from '../lib/baseClip.js';
 import { log as writeLog, clip } from '../lib/log.js';
 import { syncAssetModule } from '../lib/assetModule.js';
@@ -27,6 +28,20 @@ export interface ExportResult {
   // one file per marker for a per-marker export.
   narration?: string;
   voices?: { markerId: string; file: string }[];
+  // The captions as subtitles, written with every export while captions are on.
+  captions?: string;
+}
+
+// Writes 04_output/captions.srt for the project's captions, or removes a stale one when they are off.
+function writeCaptionsFile(id: string): string | undefined {
+  const file = path.join(projectDir(id), '04_output', 'captions.srt');
+  const cues = captionCues(id);
+  if (cues.length === 0) {
+    fs.rmSync(file, { force: true });
+    return undefined;
+  }
+  fs.writeFileSync(file, toSrt(cues));
+  return file;
 }
 
 export interface ExportStatus {
@@ -433,7 +448,9 @@ async function execute(id: string, body: { includeVideo?: boolean; perMarker?: b
 async function runJob(id: string, body: Parameters<typeof execute>[1], job: Job): Promise<void> {
   const { status } = job;
   try {
-    status.result = await execute(id, body, job);
+    const result = await execute(id, body, job);
+    const captions = writeCaptionsFile(id);
+    status.result = captions ? { ...result, captions } : result;
     status.state = 'done';
     status.percent = 100;
     status.phase = null;

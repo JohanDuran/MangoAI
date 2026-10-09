@@ -7,6 +7,7 @@ import {
   saveOverlayVolume,
   saveVoiceVolume,
   getVoices,
+  getCaptions,
   saveMarkerNarration,
   generateMarkerNarration,
   playableNarration,
@@ -57,6 +58,7 @@ import { AssetLibrary } from './components/AssetLibrary';
 import { MarkerPlanReview, ALL_AREAS_KEY, isItemDone, type ReviewItem } from './components/MarkerPlanReview';
 import { PlanMarkersPanel } from './components/PlanMarkersPanel';
 import { TranscriptPanel } from './components/TranscriptPanel';
+import { CaptionsDialog } from './components/CaptionsDialog';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { StatusButton, StatusDashboard, useStatus } from './components/StatusDashboard';
 import { ConnectionBanner } from './components/ConnectionBanner';
@@ -169,6 +171,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [ideaNarration, setIdeaNarration] = useState<boolean | null>(null);
   const [planPanelOpen, setPlanPanelOpen] = useState(false);
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
+  const [captionsOpen, setCaptionsOpen] = useState(false);
+  // Burned-in captions are part of the overlay, so text changes reload the preview while they are on.
+  const [captionsBurned, setCaptionsBurned] = useState(false);
   const [planning, setPlanning] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
@@ -308,6 +313,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         setBaseLayer(baseLayer);
       });
       setNewMarkerPanelVisible(true);
+      getCaptions(projectId)
+        .then((c) => setCaptionsBurned(c.settings.mode === 'burn'))
+        .catch(() => {});
       restorePlan(projectId).catch(() => {});
     } else {
       savedVolumeRef.current = null;
@@ -376,7 +384,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         const before = markers.find((m) => m.marker_id === markerId);
         const after = await generateMarkerNarration(projectId, markerId);
         // A voice longer than its marker lengthens it (and can push later markers back).
-        if (after.end !== before?.end) setReloadToken((t) => t + 1);
+        // Burned-in voiceover captions are part of the overlay too.
+        if (after.end !== before?.end || captionsBurned) setReloadToken((t) => t + 1);
       }
     } finally {
       await refreshProject(projectId).catch(() => {});
@@ -391,6 +400,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       const { segments } = await transcribeProject(projectId);
       setTranscript(segments);
       setTranscriptPanelOpen(true);
+      if (captionsBurned) setReloadToken((t) => t + 1);
     } catch (err) {
       setTranscribeError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -402,6 +412,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     if (!projectId) return;
     const saved = await updateTranscript(projectId, segments);
     setTranscript(saved.segments);
+    if (captionsBurned) setReloadToken((t) => t + 1);
   };
 
   const handleSeek = (seconds: number) => {
@@ -1066,7 +1077,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         );
         setExportedPath(r.outputs[0]?.file ?? r.outputDir ?? null);
       } else {
-        setExportStatus(`Export complete — saved to ${r.output}${r.narration ? `, voiceover track to ${r.narration}` : ''}`);
+        setExportStatus(
+          `Export complete — saved to ${r.output}${r.narration ? `, voiceover track to ${r.narration}` : ''}${r.captions ? `, captions to ${r.captions}` : ''}`
+        );
         setExportedPath(r.output ?? null);
       }
       setExportSucceeded(true);
@@ -1245,6 +1258,13 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 View transcript
               </button>
             )}
+            <button
+              onClick={() => setCaptionsOpen(true)}
+              className={`btn btn-sm${captionsBurned ? ' btn-primary' : ''}`}
+              title="Captions from the voiceover or the transcript: burn them into the video or save a subtitle file"
+            >
+              Captions
+            </button>
             <button
               onClick={() => {
                 selectMarker(null);
@@ -1599,6 +1619,18 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           )}
         </div>
       </div>
+      {captionsOpen && projectId && (
+        <CaptionsDialog
+          projectId={projectId}
+          onClose={() => setCaptionsOpen(false)}
+          onSaved={(settings) => {
+            markEdited();
+            setCaptionsBurned(settings.mode === 'burn');
+            setReloadToken((t) => t + 1);
+          }}
+          onSeek={handleSeek}
+        />
+      )}
       {transcriptPanelOpen && projectId && (
         <TranscriptPanel
           segments={transcript}
