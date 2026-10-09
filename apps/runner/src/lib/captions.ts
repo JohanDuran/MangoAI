@@ -1,4 +1,4 @@
-import { readMarkers } from './markers.js';
+import { readMarkers, type SpokenWord } from './markers.js';
 import { readTranscript } from './transcript.js';
 import { readCompositionConfig } from './composition.js';
 import { readProject } from './scaffold.js';
@@ -84,11 +84,28 @@ export function splitIntoCues(text: string, start: number, end: number): Caption
 
 const round = (s: number) => Math.round(s * 1000) / 1000;
 
+// Moves each cue to the moment its first word is actually spoken. Only when Whisper heard as many
+// words as the line has: otherwise the words cannot be matched up and the even pacing stays.
+export function alignToWords(cues: CaptionCue[], words: SpokenWord[], offset: number, end: number): CaptionCue[] {
+  const counts = cues.map((c) => c.text.split(/\s+/).filter(Boolean).length);
+  if (counts.reduce((a, b) => a + b, 0) !== words.length) return cues;
+  const starts: number[] = [];
+  let index = 0;
+  for (const count of counts) {
+    starts.push(round(Math.min(end, offset + words[index].start)));
+    index += count;
+  }
+  return cues.map((c, i) => ({ ...c, start: starts[i], end: i + 1 < cues.length ? starts[i + 1] : round(end) })).filter((c) => c.end > c.start);
+}
+
 function voiceoverCues(id: string, durationSeconds: number): CaptionCue[] {
   return readMarkers(id).flatMap((m) => {
     const audio = playableNarration(id, m);
     if (!audio || !m.narration) return [];
-    return splitIntoCues(m.narration.text, m.start, Math.min(durationSeconds, m.start + audio.durationSec));
+    const end = Math.min(durationSeconds, m.start + audio.durationSec);
+    const cues = splitIntoCues(m.narration.text, m.start, end);
+    const words = m.narration.audio?.words;
+    return words ? alignToWords(cues, words, m.start, end) : cues;
   });
 }
 

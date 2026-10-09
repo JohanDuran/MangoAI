@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { inputDir, PROJECTS_ROOT } from './paths.js';
-import { readMarkers, writeMarkers, type Marker, type MarkerNarration } from './markers.js';
+import { readMarkers, writeMarkers, type Marker, type MarkerNarration, type SpokenWord } from './markers.js';
 import { explainOpenAIError } from './transcript.js';
 import { runCommand } from './proc.js';
 import { ffprobeBin } from './bin.js';
@@ -124,6 +124,43 @@ async function requestSpeech(text: string, voice: string, signal?: AbortSignal):
   throw lastError;
 }
 
+// When each word of a take is spoken, read back from the audio with Whisper (about $0.006 a minute).
+// Best effort: a take without timings still plays, and its captions and animation fall back to an
+// even pace, so any failure is logged and returns undefined.
+export async function spokenWords(file: string, line: string, signal?: AbortSignal): Promise<SpokenWord[] | undefined> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return undefined;
+  const baseUrl = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([fs.readFileSync(file)]), 'voice.mp3');
+    form.append('model', 'whisper-1');
+    form.append('response_format', 'verbose_json');
+    form.append('timestamp_granularities[]', 'word');
+    // The script steers Whisper to the right spellings.
+    form.append('prompt', line.slice(0, 800));
+    const timeout = AbortSignal.timeout(60_000);
+    const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+    if (!response.ok) {
+      log('warn', 'narration.words_failed', { error: explainOpenAIError(response.status, await response.text(), 'word timing') });
+      return undefined;
+    }
+    const data = (await response.json()) as { words?: { word: string; start: number; end: number }[] };
+    const words = (data.words ?? [])
+      .filter((w) => typeof w.word === 'string' && Number.isFinite(w.start) && Number.isFinite(w.end))
+      .map((w) => ({ text: w.word.trim(), start: Math.round(w.start * 100) / 100, end: Math.round(w.end * 100) / 100 }));
+    return words.length > 0 ? words : undefined;
+  } catch (err) {
+    if (!signal?.aborted) log('warn', 'narration.words_failed', { error: err });
+    return undefined;
+  }
+}
+
 async function audioDuration(file: string): Promise<number> {
   const result = await runCommand(ffprobeBin(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeoutMs: 30_000 });
   const seconds = Number.parseFloat(result.stdout.trim());
@@ -185,6 +222,8 @@ export async function generateNarration(id: string, markerId: string, signal?: A
     durationSec = Math.round((await audioDuration(file)) * 100) / 100;
     log('info', 'narration.done', { project: id, marker: markerId, voice: n.voice, chars: n.text.length, seconds: durationSec, ms: Date.now() - started });
   }
+  // Read once per take; a take made before word timing existed gets it on its next generate.
+  const words = (current && n.audio?.words) || (await spokenWords(path.join(narrationDir(id), name), n.text, signal));
 
   // Re-read: the line or the timeline may have changed while the request ran. The take is only
   // recorded if it still matches the line, and only together with the room it needs.
@@ -197,8 +236,8 @@ export async function generateNarration(id: string, markerId: string, signal?: A
   const before = timing();
   makeRoom(id, markers, target, durationSec);
   const retimed = timing() !== before;
-  if (retimed || cur.audio?.file !== name) {
-    target.narration = { ...cur, audio: { file: name, text: n.text, voice: n.voice, durationSec } };
+  if (retimed || cur.audio?.file !== name || (words && !cur.audio?.words)) {
+    target.narration = { ...cur, audio: { file: name, text: n.text, voice: n.voice, durationSec, ...(words && { words }) } };
     writeMarkers(id, markers);
     removeNarrationFiles(id, markerId, [name]);
   }

@@ -10,6 +10,7 @@ import { updateMarkerStatus, readMarkers } from './markers.js';
 import { assetsForPrompt } from './assets.js';
 import { syncAssetModule } from './assetModule.js';
 import { prepareClaudeCall } from './skills.js';
+import { playableNarration } from './narration.js';
 import { log, clip } from './log.js';
 import { enabledSkillNames, refreshClaudeMd } from './scaffold.js';
 
@@ -57,7 +58,10 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
   const ctx = { project: opts.projectId, marker: opts.markerId };
   log('info', 'marker.generate', { ...ctx, prompt: clip(opts.prompt, 200), feedback: opts.feedback ? clip(opts.feedback, 200) : undefined, allowSkills: opts.allowSkills });
 
-  const projectAssets = assetsForPrompt(opts.projectId, readMarkers(opts.projectId).find((m) => m.marker_id === opts.markerId)?.assets ?? []);
+  const thisMarker = readMarkers(opts.projectId).find((m) => m.marker_id === opts.markerId);
+  const projectAssets = assetsForPrompt(opts.projectId, thisMarker?.assets ?? []);
+  // When each word of the marker's current voice take is spoken, so the animation can hit them.
+  const narrationWords = opts.narration && thisMarker && playableNarration(opts.projectId, thisMarker) ? thisMarker.narration?.audio?.words : undefined;
   if (projectAssets.attached.length > 0) log('info', 'marker.assets', { ...ctx, attached: projectAssets.attached.map((a) => a.id), library: projectAssets.library.length });
 
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -75,6 +79,7 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
       priorError,
       transcript: opts.transcript,
       narration: opts.narration,
+      narrationWords,
       optedInSkills: opts.allowSkills,
       compositionWidth: opts.compositionWidth,
       compositionHeight: opts.compositionHeight,

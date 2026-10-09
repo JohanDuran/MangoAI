@@ -84,4 +84,44 @@ test('burned-in captions are wired into the overlay, compile, and are removed wh
   assert.equal(markerFrameRanges(project.id, 0).length, 1, 'only the marker when captions are not burned in');
 });
 
+test('voiceover captions switch when their first word is spoken, if the words match up', async () => {
+  const { alignToWords } = await import('../src/lib/captions.ts');
+  const cues = [
+    { start: 10, end: 11, text: 'one two' },
+    { start: 11, end: 12, text: 'three' },
+  ];
+  const words = [
+    { text: 'One', start: 0.2, end: 0.5 },
+    { text: 'two', start: 0.6, end: 0.9 },
+    { text: 'three.', start: 1.6, end: 1.9 },
+  ];
+  assert.deepEqual(alignToWords(cues, words, 10, 12), [
+    { start: 10.2, end: 11.6, text: 'one two' },
+    { start: 11.6, end: 12, text: 'three' },
+  ]);
+  assert.deepEqual(alignToWords(cues, words.slice(0, 2), 10, 12), cues, 'a word count mismatch keeps the even pacing');
+});
+
+test('the generation prompt carries the word timings', async () => {
+  const { buildRegeneratePrompt } = await import('../src/lib/claude.ts');
+  const prompt = buildRegeneratePrompt({
+    markerId: 'm1',
+    currentCode: '',
+    prompt: 'p',
+    feedback: '',
+    narration: 'Saving early wins.',
+    narrationWords: [
+      { text: 'Saving', start: 0, end: 0.4 },
+      { text: 'early', start: 0.45, end: 0.8 },
+      { text: 'wins.', start: 0.9, end: 1.3 },
+    ],
+    compositionWidth: 640,
+    compositionHeight: 360,
+    regionWidth: 640,
+    regionHeight: 360,
+    isFullScreen: true,
+  });
+  assert.match(prompt, /Saving 0\.00, early 0\.45, wins\. 0\.90/);
+});
+
 test.after(cleanup);

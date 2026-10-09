@@ -27,13 +27,21 @@ export interface Marker {
   narration?: MarkerNarration;
 }
 
+// When a word is spoken in a voiceover take, in seconds from the start of the take (Whisper's
+// reading of the audio, so its spelling and punctuation can differ from the line).
+export interface SpokenWord {
+  text: string;
+  start: number;
+  end: number;
+}
+
 export interface MarkerNarration {
   text: string;
   voice: string;
   // The generated speech, if any. text/voice record what it was made from, so a line edited
   // since then shows as out of date instead of silently playing the old words. The marker is kept
   // at least as long as the speech (see narration.ts).
-  audio?: { file: string; text: string; voice: string; durationSec: number };
+  audio?: { file: string; text: string; voice: string; durationSec: number; words?: SpokenWord[] };
 }
 
 // Normalized 0-1 fractions of the canvas — null resets a marker to full screen.

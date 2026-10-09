@@ -37,10 +37,19 @@ function duration(file: string): number {
 }
 
 // Replaces fetch for the duration of `run`, recording the JSON bodies sent to OpenAI.
+// Word-timing requests (Whisper) are answered with `words` and counted in `wordCalls`, not `calls`.
+let wordCalls = 0;
+let wordsResponse: () => Response = () =>
+  new Response(JSON.stringify({ words: [{ word: 'Hello', start: 0.1, end: 0.4 }, { word: 'there.', start: 0.45, end: 0.9 }] }), { status: 200 });
+
 async function withFetch(respond: (n: number) => Response, run: (calls: Record<string, unknown>[]) => Promise<void>): Promise<void> {
   const calls: Record<string, unknown>[] = [];
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
+  globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
+    if (String(url).endsWith('/audio/transcriptions')) {
+      wordCalls++;
+      return wordsResponse();
+    }
     calls.push(JSON.parse(init?.body ?? '{}'));
     return respond(calls.length);
   }) as typeof fetch;
@@ -223,6 +232,41 @@ test('plan items keep their voiceover lines through review edits', () => {
   savePlanItems(project.id, plan.items.map((i) => ({ ...i, narration: 'Edited.' })));
   assert.deepEqual(readPlan(project.id)!.items.map((i) => i.narration), ['Edited.', 'Edited.']);
   assert.throws(() => savePlanItems(project.id, [{ ...plan.items[0], narration: 5 }]), /plan items/);
+});
+
+test('word timings are read once per take, and a failed reading does not cost the voice', needsFfmpeg, async () => {
+  const m = addMarker(project.id, { start: 20, end: 25, prompt: 'w' });
+  setMarkerNarration(project.id, m.marker_id, { text: 'Hello there.', voice: 'marin' });
+  const speech = makeSpeech(1);
+  const before = wordCalls;
+  await withFetch(
+    () => new Response(speech, { status: 200 }),
+    async () => {
+      const { marker } = await generateNarration(project.id, m.marker_id);
+      assert.deepEqual(marker.narration?.audio?.words, [
+        { text: 'Hello', start: 0.1, end: 0.4 },
+        { text: 'there.', start: 0.45, end: 0.9 },
+      ]);
+      await generateNarration(project.id, m.marker_id);
+      assert.equal(wordCalls - before, 1, 'an unchanged take is not read again');
+    }
+  );
+
+  setMarkerNarration(project.id, m.marker_id, { text: 'Hello again.', voice: 'marin' });
+  const saved = wordsResponse;
+  wordsResponse = () => new Response('{"error":{"message":"boom"}}', { status: 500 });
+  try {
+    await withFetch(
+      () => new Response(speech, { status: 200 }),
+      async () => {
+        const { marker } = await generateNarration(project.id, m.marker_id);
+        assert.ok(playableNarration(project.id, marker), 'the voice is kept');
+        assert.equal(marker.narration?.audio?.words, undefined);
+      }
+    );
+  } finally {
+    wordsResponse = saved;
+  }
 });
 
 test.after(cleanup);
