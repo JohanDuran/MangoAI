@@ -61,8 +61,8 @@ jobs:
         run: |
           Get-ChildItem release\MangoAI-Setup-*.exe | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$hash  $($_.Name)" | Out-File -Encoding ascii "release\SHA256SUMS.txt"
-          }
+            "$hash  $($_.Name)"
+          } | Out-File -Encoding ascii "release\SHA256SUMS.txt"
           Get-Content release\SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
