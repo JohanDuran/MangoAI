@@ -415,6 +415,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const triggerRegenerate = async (markerId: string, feedback: string, allowImage: boolean) => {
     if (!projectId) return;
+    if (videoMissing) {
+      notify('warn', 'Upload the video first: animations are timed and sized to it.');
+      return;
+    }
     markEdited();
     setStaleRegionMarkers((prev) => {
       if (!prev.has(markerId)) return prev;
@@ -643,6 +647,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     if (!projectId) return;
     const approved = reviewItems.filter(isBulkAreaTarget);
     if (approved.length === 0) return;
+    if (videoMissing) {
+      notify('warn', 'Upload the video first: animations are timed and sized to it.');
+      return;
+    }
     markEdited();
     setEditingPlanItemKey(null);
     setPlanInterrupted(false);
@@ -1131,6 +1139,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       })
     : [];
   const durationSeconds = composition.durationInFrames / composition.fps;
+  // A video project takes its length and canvas size from the video, so nothing is designed or
+  // generated until it is uploaded (the runner refuses it too).
+  const videoMissing = baseLayer.type === 'video' && !videoUrl;
 
   // Only one region overlay is ever active: the new-marker draft takes priority (it has
   // no server-backed marker to fall back to), then a proposed marker being reviewed
@@ -1177,7 +1188,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         {projectId && (
           <>
             {baseLayer.type === 'video' && (
-              <label className="btn btn-sm" style={{ cursor: uploading ? 'not-allowed' : 'pointer' }}>
+              <label
+                className={`btn btn-sm${videoMissing ? ' btn-primary' : ''}`}
+                style={{ cursor: uploading ? 'not-allowed' : 'pointer' }}
+              >
                 {uploading ? 'Uploading…' : 'Upload video'}
                 <input
                   type="file"
@@ -1218,7 +1232,12 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             >
               Images{assets.length > 0 ? ` (${assets.length})` : ''}
             </button>
-            <button onClick={handleTranscribe} disabled={transcribing} className="btn btn-sm">
+            <button
+              onClick={handleTranscribe}
+              disabled={transcribing || videoMissing}
+              className="btn btn-sm"
+              title={videoMissing ? 'Upload the video first' : undefined}
+            >
               {transcribing ? 'Transcribing…' : transcript.length > 0 ? 'Re-transcribe' : 'Transcribe video'}
             </button>
             {transcript.length > 0 && (
@@ -1257,9 +1276,13 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
                 setPlanPanelOpen(false);
                 setIdeaPanelOpen(true);
               }}
-              disabled={planning}
+              disabled={planning || videoMissing}
               className="btn btn-sm"
-              title="Describe an idea and have Claude design a full sequence of markers to cover the video"
+              title={
+                videoMissing
+                  ? 'Upload the video first'
+                  : 'Describe an idea and have Claude design a full sequence of markers to cover the video'
+              }
             >
               Design from idea
             </button>
@@ -1517,7 +1540,15 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               }
             />
           )}
-          {projectId && !planReviewOpen && !selectedMarker && !ideaPanelOpen && !planPanelOpen && newMarkerPanelVisible && (
+          {projectId && !planReviewOpen && !selectedMarker && !ideaPanelOpen && !planPanelOpen && newMarkerPanelVisible && videoMissing && (
+            <div className="panel">
+              <div className="panel-hint">
+                Upload the video first (top bar). Markers are timed to its length and animations are laid out for its size,
+                so adding, planning and generating unlock once it is in.
+              </div>
+            </div>
+          )}
+          {projectId && !planReviewOpen && !selectedMarker && !ideaPanelOpen && !planPanelOpen && newMarkerPanelVisible && !videoMissing && (
             <AddMarkerPanel
               projectId={projectId}
               assets={assets}

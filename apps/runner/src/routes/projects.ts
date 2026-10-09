@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isExporting } from './exportJob.js';
@@ -62,6 +62,19 @@ import { readCompositionConfig } from '../lib/composition.js';
 import { transcribeProject, readTranscript, writeTranscript, transcriptForRange, type TranscriptSegment } from '../lib/transcript.js';
 
 export const projectsRouter = Router();
+
+// A project built on a video takes its length and canvas size from that video, so nothing is
+// designed or generated for it before the video exists: markers would be timed and laid out
+// against placeholder values.
+export const videoMissing = (id: string) => !!readProject(id) && baseLayerOf(id).type === 'video' && !findRawVideo(id);
+
+const requireVideo: RequestHandler = (req, res, next) => {
+  if (videoMissing(req.params.id)) {
+    res.status(409).json({ error: 'Upload the video first: markers are timed and sized to it.', code: 'video-missing' });
+    return;
+  }
+  next();
+};
 
 const toNameList = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
@@ -232,7 +245,7 @@ projectsRouter.put('/projects/:id/skills', (req, res) => {
   res.json({ enabled: setProjectSkills(req.params.id, [...new Set(enabled as string[])]).skills });
 });
 
-projectsRouter.post('/projects/:id/markers', (req, res) => {
+projectsRouter.post('/projects/:id/markers', requireVideo, (req, res) => {
   const { start, end, prompt, region, assets } = req.body as { start?: number; end?: number; prompt?: string; region?: unknown; assets?: unknown };
   if (start === undefined || end === undefined || !prompt) {
     return res.status(400).json({ error: 'start, end, and prompt are required' });
@@ -360,13 +373,13 @@ async function runPlan(
   }
 }
 
-projectsRouter.post('/projects/:id/markers/plan', async (req, res) => {
+projectsRouter.post('/projects/:id/markers/plan', requireVideo, async (req, res) => {
   const { context } = req.body as { context?: unknown };
   const trimmed = typeof context === 'string' && context.trim() ? context.trim() : undefined;
   await runPlan(req.params.id, { kind: 'transcript', context: trimmed }, res, (signal) => planMarkers(req.params.id, trimmed, signal));
 });
 
-projectsRouter.post('/projects/:id/markers/plan-from-idea', async (req, res) => {
+projectsRouter.post('/projects/:id/markers/plan-from-idea', requireVideo, async (req, res) => {
   const { idea, region, narration } = req.body as { idea?: unknown; region?: unknown; narration?: unknown };
   if (typeof idea !== 'string' || !idea.trim()) {
     return res.status(400).json({ error: 'idea must be a non-empty string' });
@@ -457,7 +470,7 @@ function settlePlan(id: string): boolean {
   return remaining;
 }
 
-projectsRouter.post('/projects/:id/markers/apply', async (req, res) => {
+projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res) => {
   const { id } = req.params;
   const inputs = (req.body.markers ?? []) as ApplyMarkerInput[];
 
@@ -604,7 +617,7 @@ projectsRouter.get('/projects/:id/markers/:markerId/code', (req, res) => {
   res.type('text/plain').send(fs.readFileSync(file, 'utf-8'));
 });
 
-projectsRouter.post('/projects/:id/markers/:markerId/regenerate', async (req, res) => {
+projectsRouter.post('/projects/:id/markers/:markerId/regenerate', requireVideo, async (req, res) => {
   const { id, markerId } = req.params;
   const { feedback, allowSkills } = req.body as { feedback?: string; allowSkills?: unknown };
 

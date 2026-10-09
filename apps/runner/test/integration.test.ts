@@ -269,6 +269,33 @@ test('a hung Claude run is stopped by the timeout and reported', { skip }, async
   assert.ok(Date.now() - started < 30_000);
 });
 
+test('a video project refuses markers, plans and generation until its video is uploaded', { skip: runnable && bins ? false : 'needs Windows and the staged ffmpeg' }, async () => {
+  const id = await newProject({ type: 'video' });
+  const refused = async (p: string, body: unknown) => {
+    const res = await api(p, { method: 'POST', headers: json, body: JSON.stringify(body) });
+    assert.equal(res.status, 409, p);
+    assert.match(((await res.json()) as { error: string }).error, /Upload the video first/);
+  };
+  await refused(`/projects/${id}/markers`, { start: 0, end: 1, prompt: 'x' });
+  await refused(`/projects/${id}/markers/plan-from-idea`, { idea: 'x' });
+  await refused(`/projects/${id}/markers/plan`, {});
+  await refused(`/projects/${id}/markers/apply`, { markers: [] });
+  await refused(`/projects/${id}/markers/m1/regenerate`, {});
+
+  const clip = path.join(root, 'gate.mp4');
+  const made = spawnSync(bins!.ffmpeg, ['-y', '-f', 'lavfi', '-i', 'testsrc=size=320x180:rate=30:duration=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', clip], { windowsHide: true });
+  assert.equal(made.status, 0);
+  const form = new FormData();
+  form.append('video', new Blob([fs.readFileSync(clip)], { type: 'video/mp4' }), 'clip.mp4');
+  assert.equal((await api(`/projects/${id}/video`, { method: 'POST', body: form })).status, 201);
+  const added = await api(`/projects/${id}/markers`, { method: 'POST', headers: json, body: JSON.stringify({ start: 0, end: 1, prompt: 'x' }) });
+  assert.equal(added.status, 201);
+
+  // Projects with no video at all are not affected.
+  const colored = await newProject({ type: 'color', color: '#000000' });
+  assert.equal((await api(`/projects/${colored}/markers`, { method: 'POST', headers: json, body: JSON.stringify({ start: 0, end: 1, prompt: 'x' }) })).status, 201);
+});
+
 test('a bad upload is refused and never replaces the current video', { skip: runnable && bins ? false : 'needs Windows and the staged ffmpeg' }, async () => {
   const id = await newProject({ type: 'video' });
   const good = path.join(root, 'good.mp4');
