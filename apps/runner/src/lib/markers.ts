@@ -3,6 +3,7 @@ import path from 'node:path';
 import { projectDir } from './paths.js';
 import { readJson, writeJsonAtomic } from './store.js';
 import { fitTimeline } from './timeline.js';
+import type { MarkerSeries } from './series.js';
 
 // Normalized 0-1 fractions of the composition canvas — resolution-independent, so a
 // region drawn on a 1080p preview still lands correctly if the video is later swapped
@@ -31,6 +32,9 @@ export interface Marker {
   // The look shared by the markers of the plan this one came from, so they stay consistent when
   // generated, and again when regenerated.
   look?: string;
+  // The series this marker belongs to: it renders the plan's shared component with these props
+  // (see series.ts), so all of the series look the same.
+  series?: MarkerSeries;
 }
 
 // When a word is spoken in a voiceover take, in seconds from the start of the take (Whisper's
@@ -146,4 +150,14 @@ export function setMarkerStyle(id: string, markerId: string, presetId: string | 
   else delete marker.stylePreset;
   writeMarkers(id, markers);
   return marker;
+}
+
+// Takes a marker out of its series, so it is designed on its own (used when the series' shared
+// component could not be built).
+export function clearMarkerSeries(id: string, markerId: string): void {
+  const markers = readMarkers(id);
+  const marker = markers.find((m) => m.marker_id === markerId);
+  if (!marker?.series) return;
+  delete marker.series;
+  writeMarkers(id, markers);
 }

@@ -9,6 +9,7 @@ import { defaultSkillNames } from './skills.js';
 import { DEFAULT_BASE_LAYER, type BaseLayer } from './baseLayer.js';
 import type { CaptionSettings } from './captions.js';
 import type { MusicSettings } from './music.js';
+import type { MarkerSeries } from './series.js';
 
 // Bump when the on-disk project layout changes and add a step to migrate.ts.
 export const CURRENT_SCHEMA_VERSION = 1;
@@ -119,7 +120,7 @@ export function writeProject(project: Project): void {
   writeJsonAtomic(path.join(projectDir(project.id), 'project.json'), project);
 }
 
-export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[]; look?: string }): Marker {
+export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[]; look?: string; series?: MarkerSeries }): Marker {
   const markers = readMarkers(id);
   const projectStyle = readProject(id)?.stylePreset;
   // Based on the highest existing numeric suffix, not the array length — deleting a
@@ -141,6 +142,7 @@ export function addMarker(id: string, input: { start: number; end: number; promp
     // New markers start with the project's style, so a whole video looks consistent.
     ...(projectStyle ? { stylePreset: projectStyle } : {}),
     ...(input.look?.trim() ? { look: input.look.trim() } : {}),
+    ...(input.series ? { series: input.series } : {}),
   };
   markers.push(marker);
   writeMarkers(id, markers);

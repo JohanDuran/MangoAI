@@ -29,6 +29,9 @@ fs.writeFileSync(
     'if "%MODE%"=="plan" goto plan',
     'if "%MODE%"=="planimage" goto planimage',
     'if "%MODE%"=="slow" goto slow',
+    'if "%MODE%"=="planseries" goto planseries',
+    'if "%MODE%"=="brief" goto brief',
+    'if "%MODE%"=="series" goto series',
     ':ok',
     'echo {"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.01}',
     'exit /b 0',
@@ -48,11 +51,57 @@ fs.writeFileSync(
     ':planimage',
     'echo {"type":"result","subtype":"success","is_error":false,"result":"[{\\"start\\":0.5,\\"end\\":2,\\"prompt\\":\\"A photo of a beach\\",\\"region\\":null,\\"generateImage\\":true},{\\"start\\":3,\\"end\\":5,\\"prompt\\":\\"Big number\\",\\"region\\":null,\\"generateImage\\":false}]","total_cost_usd":0.01}',
     'exit /b 0',
+    ':brief',
+    'echo {"type":"result","subtype":"success","is_error":false,"result":"I will look up the rates first.\\nGoal: Explain compound interest.\\nBeats:\\n1. 0-10s a growing chart","total_cost_usd":0.01}',
+    'exit /b 0',
+    ':planseries',
+    `"${process.execPath}" "%~dp0planseries.js"`,
+    'exit /b 0',
+    ':series',
+    `"${process.execPath}" "%~dp0series.js"`,
+    'exit /b 0',
     ':plan',
     'echo {"type":"result","subtype":"success","is_error":false,"result":"[{\\"start\\":0.5,\\"end\\":2,\\"prompt\\":\\"Title card\\",\\"region\\":null},{\\"start\\":3,\\"end\\":5,\\"prompt\\":\\"Big number\\",\\"region\\":null}]","total_cost_usd":0.01}',
     'exit /b 0',
   ].join('\r\n')
 );
+// A quiz planned as a series: an intro outside the template, then three questions rendering it.
+const seriesPlan = {
+  look: 'navy and mango',
+  consistency: 'series',
+  component: { name: 'quiz question', spec: 'A question card with four answers and a timer. Props: question (string), answers (string[]), correct (number).' },
+  markers: [
+    { start: 0, end: 2, prompt: 'Quiz intro title', region: null, props: null },
+    ...[1, 2, 3].map((n) => ({ start: n * 2, end: n * 2 + 2, prompt: `Question ${n}`, region: null, props: { question: `Question ${n}?`, answers: ['a', 'b', 'c', 'd'], correct: n % 4 } })),
+  ],
+};
+fs.writeFileSync(
+  path.join(path.dirname(fake), 'planseries.js'),
+  `console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: ${JSON.stringify(JSON.stringify(seriesPlan))}, total_cost_usd: 0.01 }));`
+);
+// Stands in for Claude building a marker: it does what a series lead is asked (writes the shared
+// component and a marker rendering it), and notes in calls.txt what each prompt asked for.
+fs.writeFileSync(
+  path.join(path.dirname(fake), 'series.js'),
+  `const fs = require('fs');
+const path = require('path');
+let t = '';
+process.stdin.on('data', (d) => (t += d)).on('end', () => {
+  const marker = /marker_(\\w+)\\.tsx/.exec(t)[1];
+  const shared = /Create 03_remotion_code\\/shared\\/(\\w+)\\.tsx/.exec(t);
+  const kind = shared ? 'lead' : t.includes('belongs to a series') ? 'member' : t.includes('Another marker of this set is already built') ? 'reference' : 'plain';
+  fs.appendFileSync(path.join(__dirname, 'calls.txt'), marker + ' ' + kind + '\\n');
+  if (shared) {
+    const name = shared[1];
+    fs.mkdirSync('03_remotion_code/shared', { recursive: true });
+    fs.writeFileSync('03_remotion_code/shared/' + name + '.tsx', "import React from 'react';\\nexport default function " + name + "(p: { question?: string; regionWidth: number; regionHeight: number }) {\\n  return <div style={{ width: p.regionWidth }}>{p.question}</div>;\\n}\\n");
+    fs.writeFileSync('03_remotion_code/marker_' + marker + '.tsx', "import React from 'react';\\nimport " + name + " from './shared/" + name + "';\\nexport default function M({ regionWidth = 1, regionHeight = 1 }: { regionWidth?: number; regionHeight?: number }) {\\n  return <" + name + " question=\\"lead\\" regionWidth={regionWidth} regionHeight={regionHeight} />;\\n}\\n");
+  }
+  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done', total_cost_usd: 0.01 }));
+});
+`
+);
+const callsFile = path.join(path.dirname(fake), 'calls.txt');
 const setMode = (mode: string) => fs.writeFileSync(path.join(path.dirname(fake), 'mode.txt'), mode);
 
 let server: ChildProcess | null = null;
@@ -258,8 +307,13 @@ test('the idea chat keeps the conversation and brief, and a stopped reply leaves
   assert.deepEqual(first.messages.map((m: any) => [m.role, m.text]), [['user', 'a video about compound interest'], ['assistant', 'done']]);
   assert.equal(first.brief, null);
 
+  setMode('brief');
   const briefed = await chatOf(await api(`/projects/${id}/idea-chat/brief`, { method: 'POST', headers: json, body: '{}' }));
-  assert.equal(briefed.brief, 'done');
+  assert.equal(briefed.brief, 'Goal: Explain compound interest.\nBeats:\n1. 0-10s a growing chart', 'the remark before the brief is dropped');
+  // An answer that is not a brief (here the stand-in's "done") is refused and keeps the brief there is.
+  setMode('ok');
+  assert.equal((await api(`/projects/${id}/idea-chat/brief`, { method: 'POST', headers: json, body: '{}' })).status, 500);
+  assert.equal((await chatOf(await api(`/projects/${id}/idea-chat`))).brief, briefed.brief);
   await api(`/projects/${id}/idea-chat/brief`, { method: 'PUT', headers: json, body: JSON.stringify({ brief: 'my own brief' }) });
 
   setMode('hang');
@@ -452,6 +506,50 @@ test('a bad upload is refused and never replaces the current video', { skip: run
   assert.equal(after.status, 200);
   assert.equal(fs.statSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '00_input', 'raw_video.mp4')).size, goodSize, 'the good video is still there');
   assert.equal(fs.readdirSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '00_input')).filter((f) => f.endsWith('.part')).length, 0, 'no temp upload left');
+});
+
+test('a series plan builds its shared template once, and the other questions only fill it in', { skip }, async () => {
+  setMode('planseries');
+  const id = await newProject();
+  const { plan } = (await (await api(`/projects/${id}/markers/plan-from-idea`, { method: 'POST', headers: json, body: JSON.stringify({ idea: 'a quiz' }) })).json()) as any;
+  assert.equal(plan.consistency, 'series');
+  assert.equal(plan.component.name, 'QuizQuestion');
+  assert.deepEqual(plan.items.map((i: any) => (i.props ? JSON.parse(i.props).question : null)), [null, 'Question 1?', 'Question 2?', 'Question 3?']);
+
+  setMode('series');
+  fs.rmSync(callsFile, { force: true });
+  const { events } = await sse(`/projects/${id}/markers/apply`, { markers: plan.items });
+  const done = events.filter((e) => e.event === 'item-done');
+  assert.ok(done.length === 4 && done.every((e) => e.data.success), JSON.stringify(events));
+
+  const project = (await (await api(`/projects/${id}`)).json()) as any;
+  const [intro, q1, q2, q3] = project.markers;
+  // Claude built the template with the first question, then the intro to match it; the other
+  // questions were written by the runner without asking Claude.
+  assert.deepEqual(fs.readFileSync(callsFile, 'utf-8').trim().split('\n').sort(), [`${intro.marker_id} reference`, `${q1.marker_id} lead`].sort());
+  assert.equal(intro.series, undefined);
+  for (const [m, n] of [[q2, 2], [q3, 3]] as const) {
+    assert.equal(m.series.component, 'QuizQuestion');
+    const code = fs.readFileSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '03_remotion_code', `marker_${m.marker_id}.tsx`), 'utf-8');
+    assert.match(code, /import QuizQuestion from '\.\/shared\/QuizQuestion'/);
+    assert.match(code, new RegExp(`"question": "Question ${n}\\?"`));
+  }
+  assert.ok(fs.existsSync(path.join(process.env.MANGO_PROJECTS_DIR!, id, '03_remotion_code', 'shared', 'QuizQuestion.tsx')));
+  setMode('ok');
+});
+
+test('a series whose template could not be built is made marker by marker instead', { skip }, async () => {
+  setMode('planseries');
+  const id = await newProject();
+  const { plan } = (await (await api(`/projects/${id}/markers/plan-from-idea`, { method: 'POST', headers: json, body: JSON.stringify({ idea: 'a quiz' }) })).json()) as any;
+  // The stand-in never writes the shared component, so the lead fails and the rest go on without it.
+  setMode('ok');
+  const { events } = await sse(`/projects/${id}/markers/apply`, { markers: plan.items });
+  const done = events.filter((e) => e.event === 'item-done');
+  assert.equal(done.length, 4, JSON.stringify(events));
+  assert.deepEqual(done.filter((e) => !e.data.success).length, 1, JSON.stringify(done));
+  const project = (await (await api(`/projects/${id}`)).json()) as any;
+  assert.ok(project.markers.every((m: any) => m.series === undefined));
 });
 
 test('the requirements panel reports the stand-in CLI', { skip }, async () => {

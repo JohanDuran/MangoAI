@@ -7,6 +7,7 @@ import { log } from './log.js';
 import { readAssets, validAssetIds, type Asset } from './assets.js';
 import { MAX_NARRATION_CHARS } from './narration.js';
 import { lengthIsFixed } from './timeline.js';
+import { isConsistency, pickComponentName, MAX_PROPS_CHARS, MAX_SPEC_CHARS, type Consistency, type SeriesComponent } from './series.js';
 
 export interface ProposedMarker {
   start: number;
@@ -19,6 +20,9 @@ export interface ProposedMarker {
   narration: string;
   // Whether generating the marker may create an image with AI (the image-generation skill).
   generateImage: boolean;
+  // In a series, this marker's props for the shared component as JSON text; empty when it is not
+  // one of the series' repeated markers (see series.ts).
+  props: string;
 }
 
 export interface PlanMarkersResult {
@@ -29,6 +33,9 @@ export interface PlanMarkersResult {
   movedCount: number;
   // The look every marker of the plan shares, so the video looks consistent; empty if none came back.
   look: string;
+  // How alike the markers are built (see series.ts), and the shared component of a series.
+  consistency: Consistency;
+  component?: SeriesComponent;
 }
 
 interface TimeRange {
@@ -63,6 +70,16 @@ export const areaInPixels = (area: MarkerRegion, width: number, height: number):
 const LOOK_INSTRUCTION =
   '"look" is one short paragraph describing the visual style every marker shares, so the whole video looks consistent: background treatment, a color palette as hex codes, font family and weights, text sizes relative to the area, corner radii, and the motion style (easing, how things enter and leave). Every marker is built by a separate agent from its own prompt plus this look.';
 
+const CONSISTENCY_INSTRUCTION = [
+  '"consistency" says how alike the markers are built. Unless the creator asks for variety, the markers of one video should look like they belong together:',
+  '- "series": the markers repeat one format, such as the questions of a quiz, the entries of a countdown or ranking, the steps of a recipe, or a chart or timeline revealed piece by piece. One shared component is built once and every repeated marker renders it with its own props, so they look identical apart from their content. Give "component": {"name": a PascalCase name, "spec": what it shows, its parts and layout, and every prop with its type and meaning}. Give each repeated marker "props": a JSON object with exactly those props and its real, final content (the actual question, the answers, which one is correct, the timer length...). When the format is a progression that continues across markers (a line chart growing decade by decade, a route on a map, a running total), put the whole dataset in every marker\'s props together with props saying which part this marker reveals (for example "revealFrom": 1990, "revealTo": 2000), so each marker starts exactly where the previous one ended. Markers of a series video that are not the repeated format (an intro title, a final score, an outro) get "props": null; they are built separately in the same look.',
+  '- "themed": the markers are different beats with one visual identity. They are built in the same look, each matching the first one built.',
+  '- "varied": every marker is designed on its own. Only when the creator asks for variety, randomness or a different style per marker.',
+  'Set "component" to null and every "props" to null unless "consistency" is "series".',
+].join('\n');
+
+const PLAN_SHAPE_SERIES = '"consistency": "series" | "themed" | "varied", "component": null | {"name": string, "spec": string}';
+
 const OVERLAP_RULE =
   'Markers play one after another: no two ranges may overlap each other or an existing marker, unless two markers are meant to be on screen at the same time (for example a caption over a scene). Then set "overlapsOnPurpose": true on the one that joins the other; such overlaps are kept as planned. Any other overlap is resolved by moving the later marker after the earlier one.';
 
@@ -91,15 +108,24 @@ function buildPlanPrompt(opts: {
       ? `The user uploaded these images to the project library:\n${libraryLines}\nWhen an image clearly belongs to a marker (for example a logo when that brand is mentioned, or a screenshot of the thing being discussed), list its id in that marker's "assets" array and write the prompt so it says how the image fits. Most markers need no image; never invent ids and never attach an image just to use it.`
       : null,
     LOOK_INSTRUCTION,
-    `Respond with ONLY a JSON object, no prose, no markdown code fences, shaped exactly like:\n{"look": string, "markers": [{"start": number, "end": number, "prompt": string, "region": null | {"x": number, "y": number, "width": number, "height": number}${opts.library.length > 0 ? ', "assets": string[]' : ''}, "overlapsOnPurpose": boolean}]}`,
+    CONSISTENCY_INSTRUCTION,
+    `Respond with ONLY a JSON object, no prose, no markdown code fences, shaped exactly like:\n{"look": string, ${PLAN_SHAPE_SERIES}, "markers": [{"start": number, "end": number, "prompt": string, "region": null | {"x": number, "y": number, "width": number, "height": number}${opts.library.length > 0 ? ', "assets": string[]' : ''}, "props": object | null, "overlapsOnPurpose": boolean}]}`,
     `Rules: start/end are seconds within [0, ${opts.durationSeconds.toFixed(1)}], timed to what is said. region is null for full screen, or x/y/width/height as fractions of the canvas between 0 and 1 (x+width <= 1, y+height <= 1). ${OVERLAP_RULE}`,
   ]
     .filter((part): part is string => Boolean(part))
     .join('\n\n');
 }
 
-// The planner's answer: {"look", "markers"}, or a bare list of markers from an answer that skipped the look.
-function extractPlan(text: string): { look: string; items: unknown[] } {
+interface RawPlan {
+  look: string;
+  consistency?: unknown;
+  component?: unknown;
+  items: unknown[];
+}
+
+// The planner's answer: {"look", "consistency", "component", "markers"}, or a bare list of markers
+// from an answer that skipped the rest.
+function extractPlan(text: string): RawPlan {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text)?.[1];
   const between = (open: string, close: string) => {
     const start = text.indexOf(open);
@@ -111,8 +137,10 @@ function extractPlan(text: string): { look: string; items: unknown[] } {
     try {
       const value = JSON.parse(candidate) as unknown;
       if (Array.isArray(value)) return { look: '', items: value };
-      const plan = value as { look?: unknown; markers?: unknown };
-      if (plan && Array.isArray(plan.markers)) return { look: typeof plan.look === 'string' ? plan.look.trim() : '', items: plan.markers };
+      const plan = value as { look?: unknown; consistency?: unknown; component?: unknown; markers?: unknown };
+      if (plan && Array.isArray(plan.markers)) {
+        return { look: typeof plan.look === 'string' ? plan.look.trim() : '', consistency: plan.consistency, component: plan.component, items: plan.markers };
+      }
     } catch {
       // try the next strategy
     }
@@ -124,7 +152,7 @@ function extractPlan(text: string): { look: string; items: unknown[] } {
 // and a start or end Claude got wrong is repaired rather than the marker thrown away.
 function normalizeCandidate(item: unknown, projectId: string): Candidate | null {
   if (!item || typeof item !== 'object') return null;
-  const { start, end, prompt, region, assets, narration, generateImage, overlapsOnPurpose } = item as Record<string, unknown>;
+  const { start, end, prompt, region, assets, narration, generateImage, props, overlapsOnPurpose } = item as Record<string, unknown>;
   if (typeof start !== 'number' || !Number.isFinite(start) || typeof prompt !== 'string' || !prompt.trim()) return null;
   const from = round(Math.max(0, start));
   const to = typeof end === 'number' && Number.isFinite(end) && end > from + EPSILON ? round(end) : round(from + FALLBACK_SECONDS);
@@ -136,6 +164,7 @@ function normalizeCandidate(item: unknown, projectId: string): Candidate | null 
     assets: validAssetIds(projectId, assets),
     narration: typeof narration === 'string' ? narration.trim().slice(0, MAX_NARRATION_CHARS) : '',
     generateImage: generateImage === true,
+    props: props && typeof props === 'object' && !Array.isArray(props) ? JSON.stringify(props, null, 2) : '',
     overlapsOnPurpose: overlapsOnPurpose === true,
   };
 }
@@ -233,7 +262,8 @@ function buildIdeaPlanPrompt(opts: {
       ? `The creator allows AI image generation. When a marker genuinely needs a picture that is not in the project library and cannot be drawn well in code (a photo, a realistic scene, a detailed illustration or character), set its "generateImage" to true and say in its prompt what the image should show and how the animation uses it. Each image costs time and money, so set it only where it clearly adds value, and never for text, numbers, charts, simple shapes or icons. Otherwise set it to false.`
       : null,
     `${LOOK_INSTRUCTION} Base it on the look and tone the brief describes.`,
-    `Respond with ONLY a JSON object, no prose, no markdown code fences, shaped exactly like:\n{"look": string, "markers": [{"start": number, "end": number, "prompt": string, "region": null | {"x": number, "y": number, "width": number, "height": number}${opts.library.length > 0 ? ', "assets": string[]' : ''}${opts.narration ? ', "narration": string' : ''}${opts.images ? ', "generateImage": boolean' : ''}, "overlapsOnPurpose": boolean}]}`,
+    CONSISTENCY_INSTRUCTION,
+    `Respond with ONLY a JSON object, no prose, no markdown code fences, shaped exactly like:\n{"look": string, ${PLAN_SHAPE_SERIES}, "markers": [{"start": number, "end": number, "prompt": string, "region": null | {"x": number, "y": number, "width": number, "height": number}${opts.library.length > 0 ? ', "assets": string[]' : ''}${opts.narration ? ', "narration": string' : ''}${opts.images ? ', "generateImage": boolean' : ''}, "props": object | null, "overlapsOnPurpose": boolean}]}`,
     `Rules: start/end are seconds from 0${opts.fixedLength ? ` to ${opts.durationSeconds.toFixed(1)}` : ''}. ${area ? 'region is always null here; the chosen area is applied for you.' : 'region is null for full screen, or x/y/width/height as fractions of the canvas between 0 and 1 (x+width <= 1, y+height <= 1).'} ${OVERLAP_RULE}`,
   ]
     .filter((part): part is string => Boolean(part))
@@ -242,7 +272,7 @@ function buildIdeaPlanPrompt(opts: {
 
 // fixedLength is the video's length in seconds when the project is built on an uploaded video.
 function finalizeProposals(text: string, id: string, existing: TimeRange[], fixedLength?: number): PlanMarkersResult {
-  const { look, items } = extractPlan(text);
+  const { look, items, ...raw } = extractPlan(text);
   const candidates: Candidate[] = [];
   let droppedCount = 0;
   for (const item of items) {
@@ -250,14 +280,31 @@ function finalizeProposals(text: string, id: string, existing: TimeRange[], fixe
     if (candidate) candidates.push(candidate);
     else droppedCount++;
   }
+  const design = { look, ...seriesDesign(id, raw, candidates) };
   const sequenced = sequenceProposals(candidates, existing);
-  if (fixedLength === undefined) return { proposals: sequenced.proposals, droppedCount, movedCount: sequenced.movedCount, look };
+  if (fixedLength === undefined) return { proposals: sequenced.proposals, droppedCount, movedCount: sequenced.movedCount, ...design };
   const fitted = fitProposalsToLength(sequenced.proposals, fixedLength);
   // Both lists are in start order (see sequenceProposals), so they line up item by item.
   const asPlanned = [...candidates].sort((a, b) => a.start - b.start);
   const changed = (p: ProposedMarker, i: number) => Math.abs(p.start - asPlanned[i].start) > EPSILON || Math.abs(p.end - asPlanned[i].end) > EPSILON;
   const movedCount = fitted.filter(changed).length;
-  return { proposals: fitted, droppedCount, movedCount, look };
+  return { proposals: fitted, droppedCount, movedCount, ...design };
+}
+
+// A series needs a component and at least two markers that render it; anything less is planned as
+// themed (the markers still match the first one built). Props only mean something in a series, and
+// props too long to keep are dropped (that marker is then built on its own, in the same look).
+// Defaults to themed: markers planned together should look like they belong together.
+export function seriesDesign(id: string, raw: Pick<RawPlan, 'consistency' | 'component'>, candidates: ProposedMarker[]): Pick<PlanMarkersResult, 'consistency' | 'component'> {
+  const asked = isConsistency(raw.consistency) ? raw.consistency : 'themed';
+  const c = raw.component as { name?: unknown; spec?: unknown } | null | undefined;
+  const spec = typeof c?.spec === 'string' ? c.spec.trim().slice(0, MAX_SPEC_CHARS) : '';
+  for (const x of candidates) if (x.props.length > MAX_PROPS_CHARS) x.props = '';
+  if (asked === 'series' && spec && candidates.filter((x) => x.props).length >= 2) {
+    return { consistency: 'series', component: { name: pickComponentName(id, c?.name), spec } };
+  }
+  for (const x of candidates) x.props = '';
+  return { consistency: asked === 'series' ? 'themed' : asked };
 }
 
 export async function planMarkers(id: string, context?: string, signal?: AbortSignal): Promise<PlanMarkersResult> {

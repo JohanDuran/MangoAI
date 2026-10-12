@@ -17,6 +17,7 @@ const candidate = (start: number, end: number, prompt: string, overlapsOnPurpose
   assets: [],
   narration: '',
   generateImage: false,
+  props: '',
   overlapsOnPurpose,
 });
 const times = (proposals: { start: number; end: number; prompt: string }[]) => proposals.map((p) => [p.prompt, p.start, p.end]);

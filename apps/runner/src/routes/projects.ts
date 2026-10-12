@@ -40,8 +40,10 @@ import {
   isValidRegion,
   setMarkerAssets,
   setMarkerStyle,
+  clearMarkerSeries,
   type MarkerRegion,
 } from '../lib/markers.js';
+import { parseProps, readSharedComponent, type MarkerSeries } from '../lib/series.js';
 import { validAssetIds } from '../lib/assets.js';
 import { syncAssetModule } from '../lib/assetModule.js';
 import { regenerateRegistry } from '../lib/registry.js';
@@ -67,6 +69,7 @@ import {
   startPlanning,
   savePlanProposals,
   savePlanItems,
+  parsePlanDesign,
   setPlanState,
   updatePlanItem,
   MAX_LOOK_CHARS,
@@ -525,8 +528,8 @@ projectsRouter.get('/projects/:id/plan', (req, res) => {
 projectsRouter.put('/projects/:id/plan', (req, res) => {
   if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
   try {
-    const { items, look } = req.body as { items?: unknown; look?: unknown };
-    const plan = savePlanItems(req.params.id, items, look);
+    const body = req.body as { items?: unknown; look?: unknown; consistency?: unknown; component?: unknown };
+    const plan = savePlanItems(req.params.id, body.items, parsePlanDesign(body));
     if (!plan) return res.status(404).json({ error: 'no plan' });
     res.json({ plan });
   } catch (err) {
@@ -630,6 +633,8 @@ interface ApplyMarkerInput {
   narration?: string;
   // The voice to read it in; the project's voice when absent.
   voice?: string;
+  // In a series plan, the marker's props for the shared component, as JSON text (see series.ts).
+  props?: string;
   // The saved plan item this came from, so progress is recorded in the plan file.
   key?: string;
   // A marker an interrupted earlier apply created for this item but never finished.
@@ -668,6 +673,10 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
   // The look the plan's markers share (see planner.ts): sent with the request, or the saved plan's.
   const bodyLook = (req.body as { look?: unknown }).look;
   const look = typeof bodyLook === 'string' ? bodyLook.trim().slice(0, MAX_LOOK_CHARS) : readPlan(id)?.look;
+  // How alike the markers are built (see series.ts). A plan saved before this existed is varied, as planned.
+  const plan = readPlan(id);
+  const consistency = plan?.consistency ?? 'varied';
+  const component = consistency === 'series' ? plan?.component : undefined;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -689,7 +698,7 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
     // moves every later marker back by as much (see narration.ts) — the plan items still to be made
     // move back by the same total. Then the slow part, Claude writing the animations, runs for
     // several markers at once (see withProjectLock).
-    const created: { index: number; input: ApplyMarkerInput; markerId: string; narration: string }[] = [];
+    const created: { index: number; input: ApplyMarkerInput; markerId: string; narration: string; series?: MarkerSeries }[] = [];
     let shift = 0;
     for (let index = 0; index < inputs.length; index++) {
       if (signal.aborted) break;
@@ -717,6 +726,14 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
       const validTiming = typeof start === 'number' && typeof end === 'number' && Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start;
       const validRegion = region === null || isValidRegion(region);
       const validPrompt = typeof prompt === 'string' && prompt.trim().length > 0;
+      let series: MarkerSeries | undefined;
+      let validProps = true;
+      try {
+        const props = component ? parseProps(input.props) : null;
+        if (props && component) series = { component: component.name, props };
+      } catch {
+        validProps = false;
+      }
       if (validTiming && lengthIsFixed(id)) {
         const { fps, durationInFrames } = readCompositionConfig(id);
         const videoEnd = durationInFrames / fps;
@@ -727,15 +744,21 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
         }
       }
 
-      if (!validTiming || !validRegion || !validPrompt) {
-        const error = !validPrompt ? 'This marker has no description — skipped.' : !validTiming ? 'The end must be after the start — skipped.' : 'Invalid area — skipped.';
+      if (!validTiming || !validRegion || !validPrompt || !validProps) {
+        const error = !validPrompt
+          ? 'This marker has no description — skipped.'
+          : !validTiming
+            ? 'The end must be after the start — skipped.'
+            : !validRegion
+              ? 'Invalid area — skipped.'
+              : 'The template data is not valid JSON — skipped.';
         updatePlanItem(id, input.key, { error });
         send('item-done', { index, success: false, error });
         results.push({ success: false });
         continue;
       }
 
-      const marker = addMarker(id, { start: input.start!, end: input.end!, prompt: prompt!, region: region ?? undefined, assets: validAssetIds(id, input.assets), look });
+      const marker = addMarker(id, { start: input.start!, end: input.end!, prompt: prompt!, region: region ?? undefined, assets: validAssetIds(id, input.assets), look, series });
       updatePlanItem(id, input.key, { markerId: marker.marker_id, error: undefined });
       send('item-created', { index, markerId: marker.marker_id });
 
@@ -754,7 +777,7 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
           if (!signal.aborted) send('item-voice', { index, markerId: marker.marker_id, error: err instanceof Error ? err.message : String(err) });
         }
       }
-      created.push({ index, input, markerId: marker.marker_id, narration });
+      created.push({ index, input, markerId: marker.marker_id, narration, series });
     }
 
     // Stopping throws away the half-made markers and puts their plan items back to pending. When the
@@ -768,7 +791,10 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
       send('item-done', { index: item.index, markerId: item.markerId, success: false, cancelled: true, removed });
     };
 
-    const generate = async (item: (typeof created)[number]) => {
+    // How a marker is built to match the others of the plan (see generateMarkerWithRetry).
+    type Matching = Pick<Parameters<typeof generateMarkerWithRetry>[0], 'seriesLead' | 'writeSeriesMember' | 'setReference'>;
+
+    const generate = async (item: (typeof created)[number], matching: Matching = {}): Promise<boolean> => {
       const { index, input, markerId, narration } = item;
       // Read back: the voice may have lengthened the marker.
       const marker = findMarker(id, markerId);
@@ -794,6 +820,7 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
         regionWidth: Math.round(effectiveRegion.width * compositionWidth),
         regionHeight: Math.round(effectiveRegion.height * compositionHeight),
         isFullScreen: !region,
+        ...matching,
         signal,
         onEvent: (e) => {
           // Raw claude stream events aren't forwarded here (the frontend doesn't consume
@@ -805,22 +832,62 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
         },
       });
 
-      if (result.cancelled) return cancelItem(item);
+      if (result.cancelled) {
+        cancelItem(item);
+        return false;
+      }
       send('item-done', { index, markerId, success: result.success, error: result.error });
       results.push({ markerId, success: result.success });
+      return result.success;
     };
+
+    // Markers planned together are built to match (see series.ts). Unless the plan is varied, one
+    // marker is built first and the rest follow it: in a series, the first repeated marker builds the
+    // shared component the others render; otherwise the first marker's code is what the rest match.
+    // A marker an earlier, interrupted apply of the plan already made serves the same purpose.
+    const createdIds = new Set(created.map((c) => c.markerId));
+    const earlier = readMarkers(id).filter((m) => m.status === 'ready' && !createdIds.has(m.marker_id) && plan?.items.some((i) => i.markerId === m.marker_id));
+    const sharedCode = () => (component ? readSharedComponent(id, component.name) : null);
+    let seriesBuilt = !!component && earlier.some((m) => m.series?.component === component.name) && sharedCode() !== null;
+    const referenceFrom = (markerId: string) => ({ code: fs.readFileSync(markerFile(id, markerId), 'utf-8') });
+    let setReference = component && seriesBuilt ? { code: sharedCode()! } : earlier[0] ? referenceFrom(earlier[0].marker_id) : undefined;
+
+    let queue = [...created];
+    const seriesLead = component && !seriesBuilt ? created.find((c) => c.series) : undefined;
+    const lead = consistency === 'varied' ? undefined : seriesLead ?? (setReference ? undefined : created[0]);
+    if (lead && !signal.aborted) {
+      queue = queue.filter((c) => c !== lead);
+      const allProps = readMarkers(id)
+        .filter((m) => component && m.series?.component === component.name)
+        .map((m) => m.series!.props);
+      const built = await generate(lead, lead.series && component ? { seriesLead: { component, allProps } } : { setReference });
+      if (lead.series) {
+        seriesBuilt = built;
+        if (built) setReference = { code: sharedCode() ?? fs.readFileSync(markerFile(id, lead.markerId), 'utf-8') };
+      } else if (built) setReference = referenceFrom(lead.markerId);
+    }
+    // Without its shared component a series cannot be rendered, so its markers (the failed lead too,
+    // for when it is regenerated) are designed on their own instead, matching what was built.
+    if (component && !seriesBuilt) {
+      for (const item of created.filter((c) => c.series)) {
+        clearMarkerSeries(id, item.markerId);
+        item.series = undefined;
+      }
+    }
+    const matchingFor = (item: (typeof created)[number]): Matching =>
+      item.series ? { writeSeriesMember: true } : consistency === 'varied' ? {} : { setReference };
 
     // A few workers take the created markers in order. Items no worker reached before a stop are
     // cancelled the same way as the ones that were running.
     let next = 0;
     const worker = async () => {
-      while (next < created.length) {
-        const item = created[next++];
+      while (next < queue.length) {
+        const item = queue[next++];
         if (signal.aborted) cancelItem(item);
-        else await generate(item);
+        else await generate(item, matchingFor(item));
       }
     };
-    await Promise.all(Array.from({ length: Math.min(maxParallelRuns(), created.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(maxParallelRuns(), queue.length) }, worker));
     regenerateRegistry(id);
 
     // An editor that went away leaves the plan marked as applying, which is how it shows up as interrupted.

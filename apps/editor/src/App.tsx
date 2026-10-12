@@ -49,6 +49,7 @@ import {
   stopWork,
   StoppedError,
   type StoredPlan,
+  type PlanDesign,
   type PlanSource,
   videoUrl as videoUrlFor,
   type Asset,
@@ -84,6 +85,13 @@ import { cancelExport, getExportStatus, type ExportStatus } from './api/client';
 const DEFAULT_COMPOSITION: CompositionConfig = { fps: 30, width: 1920, height: 1080, durationInFrames: 1800 };
 const DEFAULT_BASE_LAYER: BaseLayer = { type: 'video' };
 const FULL_SCREEN_REGION: MarkerRegion = { x: 0, y: 0, width: 1, height: 1 };
+
+// A plan saved before consistency existed was planned with every marker on its own.
+const planDesignOf = (plan: StoredPlan): PlanDesign => ({
+  look: plan.look ?? '',
+  consistency: plan.consistency ?? 'varied',
+  ...(plan.component && { component: plan.component }),
+});
 
 export interface MarkerRunState {
   phase: 'generating' | 'done';
@@ -204,7 +212,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [droppedCount, setDroppedCount] = useState(0);
   // How many proposals the planner moved to play one after another, and the look they all share.
   const [movedCount, setMovedCount] = useState(0);
-  const [planLook, setPlanLook] = useState('');
+  const [planDesign, setPlanDesign] = useState<PlanDesign>({ look: '', consistency: 'varied' });
   // Which proposed marker's area is being drawn on the preview, if any — mirrors
   // editingRegionMarkerId/editingNewMarkerRegion but targets a reviewItems entry directly
   // since it has no server-backed marker until the plan is applied.
@@ -580,11 +588,12 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   };
 
   const openPlanReview = (plan: StoredPlan, interrupted: boolean) => {
-    savedPlanItemsRef.current = JSON.stringify({ items: plan.items, look: plan.look ?? '' });
+    const design = planDesignOf(plan);
+    savedPlanItemsRef.current = JSON.stringify({ items: plan.items, design });
     setReviewItems(plan.items);
     setDroppedCount(plan.droppedCount);
     setMovedCount(plan.movedCount ?? 0);
-    setPlanLook(plan.look ?? '');
+    setPlanDesign(design);
     setPlanSource(plan.source);
     setPlanInterrupted(interrupted);
     setEditingPlanItemKey(null);
@@ -703,17 +712,17 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   // While applying, the runner records progress in the plan itself.
   useEffect(() => {
     if (!projectId || !planReviewOpen || applyingPlan) return;
-    const serialized = JSON.stringify({ items: reviewItems, look: planLook });
+    const serialized = JSON.stringify({ items: reviewItems, design: planDesign });
     if (serialized === savedPlanItemsRef.current) return;
     const timer = setTimeout(() => {
-      savePlan(projectId, reviewItems, planLook)
+      savePlan(projectId, reviewItems, planDesign)
         .then(() => {
           savedPlanItemsRef.current = serialized;
         })
         .catch(() => {});
     }, 400);
     return () => clearTimeout(timer);
-  }, [reviewItems, planLook, planReviewOpen, applyingPlan, projectId]);
+  }, [reviewItems, planDesign, planReviewOpen, applyingPlan, projectId]);
 
   // Items "Edit all areas" changes: the selected ones that have not been generated yet.
   const isBulkAreaTarget = (item: ReviewItem) => item.included && !isItemDone(item, markers);
@@ -772,9 +781,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     setPlanInterrupted(false);
     setApplyingPlan(true);
     // Make sure the runner has the latest edits before it starts recording progress in the plan.
-    await savePlan(projectId, reviewItems, planLook)
+    await savePlan(projectId, reviewItems, planDesign)
       .then(() => {
-        savedPlanItemsRef.current = JSON.stringify({ items: reviewItems, look: planLook });
+        savedPlanItemsRef.current = JSON.stringify({ items: reviewItems, design: planDesign });
       })
       .catch(() => {});
     let planRemaining = false;
@@ -789,6 +798,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           allowImage: i.allowImage,
           assets: i.assets,
           narration: i.narration?.trim() || undefined,
+          props: i.props?.trim() || undefined,
           // The voice picked for an idea plan; otherwise the runner uses the project's voice.
           voice: planSource?.kind === 'idea' ? planSource.voice : undefined,
           key: i.key,
@@ -869,7 +879,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           }
         },
         abortRef.current.signal,
-        planLook.trim() || undefined
+        planDesign.look.trim() || undefined
       );
     } catch (err) {
       notify('error', `Generating the plan failed: ${describeError(err)}`);
@@ -1647,8 +1657,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               droppedCount={droppedCount}
               movedCount={movedCount}
               videoLocked={baseLayer.type === 'video'}
-              look={planLook}
-              onLookChange={setPlanLook}
+              design={planDesign}
+              onDesignChange={setPlanDesign}
               interrupted={planInterrupted}
               applying={applyingPlan}
               stopping={stopping.has('apply')}

@@ -5,6 +5,7 @@ import { projectDir } from './paths.js';
 import { readJson, writeJsonAtomic } from './store.js';
 import { isValidRegion, type MarkerRegion } from './markers.js';
 import type { PlanMarkersResult } from './planner.js';
+import { isConsistency, isComponentName, MAX_PROPS_CHARS, MAX_SPEC_CHARS, type Consistency, type SeriesComponent } from './series.js';
 
 // The marker plan being worked on, kept on disk from the moment planning starts so a crash or
 // reload never loses what was asked for, the reviewed edits, or how far applying it got.
@@ -29,6 +30,9 @@ export interface PlanItem {
   assets: string[];
   // Voiceover line spoken from the marker's start; absent or empty for none.
   narration?: string;
+  // In a series plan, this marker's props for the shared component as JSON text; absent or empty
+  // when it is not one of the repeated markers.
+  props?: string;
   // Set once applying created a marker for this item.
   markerId?: string;
   // Why applying skipped this item, if it did.
@@ -45,7 +49,19 @@ export interface StoredPlan {
   movedCount?: number;
   // The look every marker of the plan shares (see planner.ts); the user can edit it while reviewing.
   look?: string;
+  // How alike the markers are built (see series.ts); absent on plans saved before this existed,
+  // which are generated as varied, as they were planned.
+  consistency?: Consistency;
+  // The component a series plan's markers share.
+  component?: SeriesComponent;
   items: PlanItem[];
+}
+
+// The plan-wide design choices the user can edit while reviewing.
+export interface PlanDesign {
+  look?: string;
+  consistency?: Consistency;
+  component?: SeriesComponent;
 }
 
 const planFile = (id: string) => path.join(projectDir(id), '00_input', 'plan.json');
@@ -75,7 +91,11 @@ export function startPlanning(id: string, source: PlanSource): StoredPlan {
   return writePlan(id, { state: 'planning', source, createdAt: now, droppedCount: 0, items: [] });
 }
 
-export function savePlanProposals(id: string, source: PlanSource, result: Pick<PlanMarkersResult, 'proposals' | 'droppedCount' | 'movedCount' | 'look'>): StoredPlan {
+export function savePlanProposals(
+  id: string,
+  source: PlanSource,
+  result: Pick<PlanMarkersResult, 'proposals' | 'droppedCount' | 'movedCount' | 'look' | 'consistency' | 'component'>
+): StoredPlan {
   const createdAt = readPlan(id)?.createdAt ?? new Date().toISOString();
   return writePlan(id, {
     state: 'review',
@@ -84,6 +104,8 @@ export function savePlanProposals(id: string, source: PlanSource, result: Pick<P
     droppedCount: result.droppedCount,
     ...(result.movedCount > 0 && { movedCount: result.movedCount }),
     ...(result.look && { look: result.look }),
+    consistency: result.consistency,
+    ...(result.component && { component: result.component }),
     items: result.proposals.map((p) => ({
       key: crypto.randomUUID(),
       included: true,
@@ -94,6 +116,7 @@ export function savePlanProposals(id: string, source: PlanSource, result: Pick<P
       allowImage: p.generateImage === true,
       assets: p.assets,
       ...(p.narration ? { narration: p.narration } : {}),
+      ...(p.props ? { props: p.props } : {}),
     })),
   });
 }
@@ -112,6 +135,7 @@ const isPlanItem = (v: unknown): v is PlanItem => {
     Array.isArray(i.assets) &&
     i.assets.every((a) => typeof a === 'string') &&
     (i.narration === undefined || typeof i.narration === 'string') &&
+    (i.props === undefined || (typeof i.props === 'string' && i.props.length <= MAX_PROPS_CHARS)) &&
     (i.markerId === undefined || typeof i.markerId === 'string') &&
     (i.error === undefined || typeof i.error === 'string')
   );
@@ -119,14 +143,29 @@ const isPlanItem = (v: unknown): v is PlanItem => {
 
 export const MAX_LOOK_CHARS = 4000;
 
-// Saves the user's edits made while reviewing: the items, and the shared look when given. Returns
-// null when there is no plan to save into.
-export function savePlanItems(id: string, items: unknown, look?: unknown): StoredPlan | null {
+// The design fields of a request body, checked; a field left out is not changed.
+export function parsePlanDesign(body: { look?: unknown; consistency?: unknown; component?: unknown }): PlanDesign {
+  const { look, consistency, component } = body;
+  if (look !== undefined && typeof look !== 'string') throw new Error('look must be a string');
+  if (consistency !== undefined && !isConsistency(consistency)) throw new Error('consistency must be series, themed or varied');
+  const c = component as { name?: unknown; spec?: unknown } | undefined;
+  if (c !== undefined && (!c || !isComponentName(c.name) || typeof c.spec !== 'string')) throw new Error('component must have a name and a spec');
+  return {
+    ...(look !== undefined && { look: look.slice(0, MAX_LOOK_CHARS) }),
+    ...(consistency !== undefined && { consistency }),
+    ...(c && { component: { name: c.name as string, spec: (c.spec as string).slice(0, MAX_SPEC_CHARS) } }),
+  };
+}
+
+// Saves the user's edits made while reviewing: the items, and the plan-wide design fields given.
+// Returns null when there is no plan to save into.
+export function savePlanItems(id: string, items: unknown, design: PlanDesign = {}): StoredPlan | null {
   const plan = readPlan(id);
   if (!plan) return null;
   if (!Array.isArray(items) || !items.every(isPlanItem)) throw new Error('items must be a list of plan items');
-  if (look !== undefined && typeof look !== 'string') throw new Error('look must be a string');
-  return writePlan(id, { ...plan, items, ...(look !== undefined && { look: look.slice(0, MAX_LOOK_CHARS) }) });
+  // The component's name is its file name, chosen when the plan was made; only its spec is edited.
+  const component = design.component && plan.component ? { name: plan.component.name, spec: design.component.spec } : plan.component;
+  return writePlan(id, { ...plan, ...design, ...(component && { component }), items });
 }
 
 export function setPlanState(id: string, state: StoredPlan['state']): void {

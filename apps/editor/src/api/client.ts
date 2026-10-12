@@ -463,6 +463,9 @@ export interface PlanItem {
   assets: string[];
   // Voiceover line spoken from the marker's start; absent or empty for none.
   narration?: string;
+  // In a series plan, the content this marker shows in the shared template, as JSON text; absent or
+  // empty when it is not one of the repeated markers.
+  props?: string;
   // Set once applying the plan created a marker for this item.
   markerId?: string;
   // Why applying skipped this item, if it did.
@@ -486,7 +489,28 @@ export interface StoredPlan {
   movedCount?: number;
   // The look every marker of the plan shares, editable while reviewing.
   look?: string;
+  // How alike the markers are built; absent on older plans, which are varied.
+  consistency?: Consistency;
+  // The template a series plan's repeated markers all render.
+  component?: SeriesComponent;
   items: PlanItem[];
+}
+
+//   series  The markers repeat one format and all render one shared template, built once.
+//   themed  Different markers in one look; the first one built is what the rest match.
+//   varied  Every marker is designed on its own.
+export type Consistency = 'series' | 'themed' | 'varied';
+
+export interface SeriesComponent {
+  name: string;
+  spec: string;
+}
+
+// The plan-wide choices edited while reviewing.
+export interface PlanDesign {
+  look: string;
+  consistency: Consistency;
+  component?: SeriesComponent;
 }
 
 // Thrown when the user stopped the request.
@@ -589,11 +613,11 @@ export const clearIdeaChat = (id: string) =>
 // running lists the Claude work in progress for the project ('plan', 'chat', 'apply', 'regenerate:<id>').
 export const getPlan = (id: string) => fetch(`${BASE}/projects/${id}/plan`).then((r) => json<{ plan: StoredPlan | null; running: string[] }>(r));
 
-export const savePlan = (id: string, items: PlanItem[], look?: string) =>
+export const savePlan = (id: string, items: PlanItem[], design?: PlanDesign) =>
   fetch(`${BASE}/projects/${id}/plan`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items, look }),
+    body: JSON.stringify({ items, ...design }),
   }).then((r) => json<{ plan: StoredPlan }>(r));
 
 export const discardPlan = (id: string) =>
@@ -621,6 +645,8 @@ export interface ApplyMarkerInput {
   narration?: string;
   // The voice to read the line in; the project's voice when absent.
   voice?: string;
+  // In a series plan, the content for the shared template, as JSON text.
+  props?: string;
   // The saved plan item this comes from.
   key?: string;
   // A marker left unfinished by an interrupted earlier apply of this item.

@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Asset, Marker, PlanItem, PlanSource } from '../api/client';
+import type { Asset, Consistency, Marker, PlanDesign, PlanItem, PlanSource } from '../api/client';
 import { AssetPicker } from './AssetPicker';
 import { estimateSpeechSeconds } from './VoiceoverSection';
 import type { MarkerRunState } from '../App';
@@ -36,9 +36,9 @@ interface Props {
   movedCount: number;
   // Whether the project is built on an uploaded video, whose length is fixed.
   videoLocked: boolean;
-  // The look every marker of the plan shares, given to each one when it is generated.
-  look: string;
-  onLookChange: (look: string) => void;
+  // How alike the markers are built, the look they share, and a series' shared template.
+  design: PlanDesign;
+  onDesignChange: (design: PlanDesign) => void;
   // Set when this plan was restored after its generation was interrupted (crash, reload, quit).
   interrupted: boolean;
   applying: boolean;
@@ -65,6 +65,30 @@ const rowStatus = (item: ReviewItem, markers: Marker[], run?: MarkerRunState): D
   return 'draft';
 };
 
+const CONSISTENCY_LABELS: Record<Consistency, string> = {
+  series: 'One template for all',
+  themed: 'Same look',
+  varied: 'Each its own design',
+};
+
+const CONSISTENCY_HINTS: Record<Consistency, string> = {
+  series:
+    'The repeated markers all render one template, built once with the first of them, so they look identical apart from their content. Markers without template content are built in the same look.',
+  themed: 'The first marker is built first, and every other marker is built to match its design.',
+  varied: 'Every marker is designed on its own; only the shared look below ties them together.',
+};
+
+// Whether a marker's template content is a JSON object (or empty, for a marker outside the template).
+const propsError = (text: string | undefined): string | null => {
+  if (!text?.trim()) return null;
+  try {
+    const value = JSON.parse(text) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? null : 'Must be a JSON object.';
+  } catch {
+    return 'Not valid JSON; this marker would be skipped.';
+  }
+};
+
 const sourceLine = (source: PlanSource): string | null => {
   if (source.kind === 'idea') {
     const voice = source.narration && source.voice ? ` Voiceover read by ${source.voice[0].toUpperCase()}${source.voice.slice(1)}.` : '';
@@ -84,8 +108,8 @@ export const MarkerPlanReview: React.FC<Props> = ({
   droppedCount,
   movedCount,
   videoLocked,
-  look,
-  onLookChange,
+  design,
+  onDesignChange,
   interrupted,
   applying,
   stopping,
@@ -108,6 +132,12 @@ export const MarkerPlanReview: React.FC<Props> = ({
   const doneCount = items.filter((i) => isItemDone(i, markers)).length;
   const editingAll = editingRegionKey === ALL_AREAS_KEY;
   const sourceText = source ? sourceLine(source) : null;
+  const look = design.look;
+  // The template only exists when the plan was made as a series; switching away keeps it for coming back.
+  const asSeries = design.consistency === 'series' && !!design.component;
+  const choices: Consistency[] = design.component ? ['series', 'themed', 'varied'] : ['themed', 'varied'];
+  // A series plan without a template (one could not be planned) is built as themed.
+  const shown: Consistency = asSeries ? 'series' : design.consistency === 'series' ? 'themed' : design.consistency;
 
   return (
     <div className="panel">
@@ -138,6 +168,42 @@ export const MarkerPlanReview: React.FC<Props> = ({
           Remove any you don't want.
         </div>
       )}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <span className="capture-label">Markers</span>
+          <select
+            className="field-select"
+            style={{ width: 'auto', padding: '5px 8px' }}
+            value={shown}
+            disabled={applying}
+            onChange={(e) => onDesignChange({ ...design, consistency: e.target.value as Consistency })}
+          >
+            {choices.map((c) => (
+              <option key={c} value={c}>
+                {CONSISTENCY_LABELS[c]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{CONSISTENCY_HINTS[shown]}</div>
+      </div>
+      {asSeries && design.component && (
+        <div style={{ marginBottom: 12 }}>
+          <span className="capture-label" style={{ display: 'block', marginBottom: 4 }}>
+            Template: {design.component.name}
+          </span>
+          <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 4 }}>
+            What the shared template shows and the content it takes. Each repeated marker fills it in below.
+          </div>
+          <textarea
+            className="field-textarea"
+            rows={4}
+            value={design.component.spec}
+            disabled={applying}
+            onChange={(e) => onDesignChange({ ...design, component: { ...design.component!, spec: e.target.value } })}
+          />
+        </div>
+      )}
       {(look || !applying) && (
         <div style={{ marginBottom: 12 }}>
           <span className="capture-label" style={{ display: 'block', marginBottom: 4 }}>
@@ -153,7 +219,7 @@ export const MarkerPlanReview: React.FC<Props> = ({
             value={look}
             disabled={applying}
             placeholder="No shared look: each marker is styled on its own"
-            onChange={(e) => onLookChange(e.target.value)}
+            onChange={(e) => onDesignChange({ ...design, look: e.target.value })}
           />
         </div>
       )}
@@ -236,6 +302,23 @@ export const MarkerPlanReview: React.FC<Props> = ({
                   disabled={locked}
                   onChange={(e) => onChange(item.key, { prompt: e.target.value })}
                 />
+                {asSeries && (
+                  <div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 4 }}>
+                      Template content (JSON){item.props?.trim() ? '' : ' · empty: built on its own in the same look'}
+                    </div>
+                    <textarea
+                      className="field-textarea"
+                      rows={Math.min(8, Math.max(2, (item.props ?? '').split('\n').length))}
+                      style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: 12 }}
+                      value={item.props ?? ''}
+                      disabled={locked}
+                      placeholder="Not part of the template"
+                      onChange={(e) => onChange(item.key, { props: e.target.value })}
+                    />
+                    {propsError(item.props) && <div className="field-error">{propsError(item.props)}</div>}
+                  </div>
+                )}
                 {(withVoiceover || item.narration !== undefined) && (
                   <div>
                     <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 4 }}>

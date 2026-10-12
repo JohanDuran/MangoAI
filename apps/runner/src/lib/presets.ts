@@ -5,6 +5,7 @@ import { PROJECTS_ROOT, markerFile } from './paths.js';
 import { readJson, writeJsonAtomic } from './store.js';
 import { findMarker, type MarkerRegion } from './markers.js';
 import { readProject } from './scaffold.js';
+import { readSharedComponent } from './series.js';
 
 // Style presets: a finished marker's look, saved so later markers (in any project) can match it.
 // A preset keeps a copy of the marker's code, which Claude gets as a style reference (palette, fonts,
@@ -53,6 +54,16 @@ export function listPresets(): PresetSummary[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// A marker of a series holds only its content; its design is in the shared component it renders,
+// so that is kept with it.
+function presetCode(projectId: string, markerId: string, component?: string): string {
+  const code = fs.readFileSync(markerFile(projectId, markerId), 'utf-8');
+  const shared = component ? readSharedComponent(projectId, component) : null;
+  return shared ? `${code}
+// ./shared/${component}.tsx, which the code above renders:
+${shared}` : code;
+}
+
 // Saves a generated marker's look as a new preset.
 export function savePreset(projectId: string, markerId: string, name: string): PresetSummary {
   const marker = findMarker(projectId, markerId);
@@ -65,7 +76,7 @@ export function savePreset(projectId: string, markerId: string, name: string): P
     createdAt: new Date().toISOString(),
     fromProject: readProject(projectId)?.name ?? projectId,
     ...(marker.region && { region: marker.region }),
-    code: fs.readFileSync(markerFile(projectId, markerId), 'utf-8'),
+    code: presetCode(projectId, markerId, marker.series?.component),
   };
   fs.mkdirSync(presetsDir(), { recursive: true });
   writeJsonAtomic(presetFile(preset.id), preset);

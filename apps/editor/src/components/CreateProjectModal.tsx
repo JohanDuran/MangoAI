@@ -24,7 +24,7 @@ export const CreateProjectModal: React.FC<Props> = ({ onClose, onCreate }) => {
   const [gradientFrom, setGradientFrom] = useState('#6366f1');
   const [gradientTo, setGradientTo] = useState('#ec4899');
   const [gradientAngle, setGradientAngle] = useState(45);
-  const [durationSeconds, setDurationSeconds] = useState(10);
+  const [durationSeconds, setDurationSeconds] = useState(60);
   const [resolutionIndex, setResolutionIndex] = useState(0);
   const [customWidth, setCustomWidth] = useState(1920);
   const [customHeight, setCustomHeight] = useState(1080);

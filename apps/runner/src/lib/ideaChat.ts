@@ -9,6 +9,7 @@ import { runClaudeHeadlessCapturingText, withProjectLock } from './claude.js';
 import { existingMarkerLines, libraryAssetLines, areaInPixels } from './planner.js';
 import { lengthIsFixed } from './timeline.js';
 import { log } from './log.js';
+import { WEB_TOOLS } from './skills.js';
 
 // The conversation in which the creator and Claude work out a video idea before any marker is
 // designed, and the brief they agree on at the end. Designing from an idea plans from that brief
@@ -105,6 +106,7 @@ function buildReplyPrompt(id: string, chat: IdeaChat, message: string, opts: Ide
       '- Ask only the few questions (at most three) whose answers would change the design most, and offer concrete suggestions or options the creator can react to instead of open-ended questions alone.',
       '- Once you know enough, propose a structure: the beats in order with rough timings that fit the length, and refine it with them.',
       "- Say so when something will not fit the length or the area, or would be hard to read on screen, and suggest an alternative.",
+      '- When the idea depends on real facts (recent events, prices, rankings, statistics), look them up with WebSearch/WebFetch and use what you find; never invent them. Do not narrate the search, just use the results.',
       '- Keep replies short and conversational: a few sentences, or a short list using "- " lines. Plain text only: no headings, bold, tables or code.',
       '- When the plan seems settled, say so and suggest they click "Write the brief". Never say that you built or generated anything.',
     ].join('\n'),
@@ -138,7 +140,8 @@ function buildBriefPrompt(id: string, chat: IdeaChat, opts: IdeaChatOptions): st
         : null,
       'Must include: anything the creator insisted on.',
       'Avoid: anything the creator ruled out.',
-      'Output only the brief.',
+      'If the brief needs real facts that the conversation does not already give (recent events, prices, rankings, statistics), look them up with WebSearch/WebFetch first and put the actual facts in the brief; never invent them.',
+      'Output only the brief, starting with "Goal:". No remarks before or after it about what you did or will do.',
     ]
       .filter((line): line is string => Boolean(line))
       .join('\n'),
@@ -147,12 +150,14 @@ function buildBriefPrompt(id: string, chat: IdeaChat, opts: IdeaChatOptions): st
     .join('\n\n');
 }
 
+// Both the replies and the brief may need real facts, so Claude can search the web (and nothing else).
 async function askClaude(id: string, prompt: string, purpose: string, signal?: AbortSignal): Promise<string> {
   const { text, success, failure } = await withProjectLock(id, 'chat', () =>
     runClaudeHeadlessCapturingText({
       cwd: projectDir(id),
       prompt,
-      tools: [],
+      tools: WEB_TOOLS,
+      allowedTools: WEB_TOOLS,
       logContext: { project: id, purpose },
       signal,
       onEvent: () => {},
@@ -181,7 +186,21 @@ export async function replyInIdeaChat(id: string, message: string, opts: IdeaCha
 export async function writeBriefFromIdeaChat(id: string, opts: IdeaChatOptions, signal?: AbortSignal): Promise<IdeaChat> {
   const chat = readIdeaChat(id);
   if (chat.messages.length === 0) throw new Error('Talk the idea through with Claude first.');
-  const brief = await askClaude(id, buildBriefPrompt(id, chat, opts), 'idea-brief', signal);
+  const answer = await askClaude(id, buildBriefPrompt(id, chat, opts), 'idea-brief', signal);
+  const brief = briefFrom(answer);
+  if (!brief) {
+    log('warn', 'idea-chat.brief_unusable', { project: id, chars: answer.length, text: answer.slice(0, 300) });
+    throw new Error('Claude did not write a brief this time. Try again.');
+  }
   log('info', 'idea-chat.brief', { project: id, chars: brief.length });
   return saveIdeaBrief(id, brief);
+}
+
+// The brief out of Claude's answer: from its "Goal:" line on, dropping any remark before it (such as
+// saying it will look something up). An answer without the beats is not a brief, and is never saved
+// over the one the creator has.
+export function briefFrom(answer: string): string | null {
+  const start = answer.search(/^\s*Goal:/im);
+  const brief = (start === -1 ? answer : answer.slice(start)).trim();
+  return /^\s*Beats:/im.test(brief) ? brief : null;
 }

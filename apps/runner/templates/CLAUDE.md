@@ -1,4 +1,4 @@
-<!-- mangoai-claude-md: 6 -->
+<!-- mangoai-claude-md: 7 -->
 # MangoAI Project Skill
 
 You are editing overlay code for one marker in a MangoAI video overlay project. Follow
@@ -16,10 +16,13 @@ Before writing any code, turn it into a concrete final brief for the animation:
 3. Design the animation around those real answers.
 Never ship placeholder content such as "Company 1", "Item A", "Lorem ipsum" or "TBD". Every
 label, name and number on screen must be real and specific to the request. Use web tools only
-for gathering facts; the only file you write is the marker file.
+for gathering facts; the only file you write is the marker file (and a shared component when the instruction says so).
 
 ## Scope
 - Edit **only** the single `marker_<id>.tsx` file named in the instruction you were given.
+- Markers of a series render one shared component from `03_remotion_code/shared/`. Write a
+  file there only when the instruction tells you to build it; otherwise import it unchanged,
+  since other markers render it too.
 - Never edit `CustomOverlay.tsx` (the marker registry) or `Root.tsx` — the runner owns
   those and regenerates them deterministically when markers are added or removed.
 - Never edit files outside `03_remotion_code/`.

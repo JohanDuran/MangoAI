@@ -9,7 +9,17 @@ import { logAttempt } from './debug.js';
 import { updateMarkerStatus, readMarkers } from './markers.js';
 import { assetsForPrompt } from './assets.js';
 import { syncAssetModule } from './assetModule.js';
-import { prepareClaudeCall } from './skills.js';
+import { prepareClaudeCall, allSkillExternals } from './skills.js';
+import {
+  leadInstructions,
+  memberInstructions,
+  memberSource,
+  readSharedComponent,
+  sharedComponentFile,
+  sharedComponentPath,
+  type MarkerSeries,
+  type SeriesComponent,
+} from './series.js';
 import { playableNarration } from './narration.js';
 import { readPreset } from './presets.js';
 import { log, clip } from './log.js';
@@ -35,6 +45,14 @@ export interface GenerateMarkerOptions {
   regionWidth: number;
   regionHeight: number;
   isFullScreen: boolean;
+  // While applying a plan: the marker of a series that builds its shared component, with every
+  // member's props so the component fits them all (see series.ts).
+  seriesLead?: { component: SeriesComponent; allProps: Record<string, unknown>[] };
+  // While applying a plan: a member of a series gets its file written by the runner (see series.ts),
+  // and Claude only when that does not work.
+  writeSeriesMember?: boolean;
+  // While applying a plan: code of a marker of the same plan built first, to match its design.
+  setReference?: { code: string };
   // Aborting stops the run (the browser that asked for it went away or the user cancelled).
   signal?: AbortSignal;
   onEvent: (e: { type: 'progress' | 'claude'; attempt?: number; phase?: string; error?: string; raw?: unknown }) => void;
@@ -135,14 +153,26 @@ async function onGray(file: string): Promise<string> {
   return made && made.code === 0 && fs.existsSync(out) ? out : file;
 }
 
-function buildVisualReviewPrompt(opts: GenerateMarkerOptions, stills: Still[], look?: string): string {
+// What the visual review may change in a marker of a series: the lead may still fix its shared
+// component; any other member only its own props, since the shared design is used by the others too.
+function seriesReviewNote(series: MarkerSeries | undefined, buildsShared: boolean): string | null {
+  if (!series) return null;
+  const shared = sharedComponentPath(series.component);
+  return buildsShared
+    ? `It renders the shared component ${shared}, which the other markers of its series render too with their own props. Fix defects in whichever of the two files they come from, and keep the component working for every marker of the series.`
+    : `It renders the shared component ${shared} with its own props, like the other markers of its series. Fix defects only through this file's props (for example a shorter wording); never edit the shared component or rebuild the design here.`;
+}
+
+function buildVisualReviewPrompt(opts: GenerateMarkerOptions, stills: Still[], look?: string, series?: MarkerSeries): string {
   const file = `03_remotion_code/marker_${opts.markerId}.tsx`;
+  const buildsShared = !!(series && opts.seriesLead);
   return [
     `You built the overlay animation in ${file}. Now check how it actually looks.`,
     `Its creative intent: ${opts.prompt}`,
     opts.feedback ? `The creator's latest feedback: ${opts.feedback}` : null,
     opts.narration ? `A voiceover says during it: "${opts.narration}"` : null,
     look ? `It shares this look with the other markers of the video:\n${look}` : null,
+    seriesReviewNote(series, buildsShared),
     `Its area is ${opts.regionWidth}x${opts.regionHeight}px${opts.isFullScreen ? ' (the full canvas)' : ` inside a ${opts.compositionWidth}x${opts.compositionHeight}px canvas`}. These are frames of it, placed on a plain mid-gray background that stands in for the footage the overlay will sit on:`,
     stills.map((s) => `- ${s.file} (${s.seconds.toFixed(1)}s into the marker)`).join('\n'),
     [
@@ -152,7 +182,7 @@ function buildVisualReviewPrompt(opts: GenerateMarkerOptions, stills: Still[], l
       '- whether it is readable at this size and against the gray (which stands in for footage)',
       'Then also check each frame as a whole: empty where something should be showing, placeholder text, wrong numbers or facts, anything contradicting the intent, an unbalanced or misaligned layout.',
     ].join('\n'),
-    `List every defect you found. If there are any, fix them in ${file} (only that file), for example by shrinking the text or widening its box, keep everything that works, and update its design spec comment to match. If there are none, change nothing; do not restyle something that works just to change it.`,
+    `List every defect you found. If there are any, fix them in ${file}${buildsShared ? ` or ${sharedComponentPath(series!.component)}` : ' (only that file)'}, for example by shrinking the text or widening its box, keep everything that works, and update its design spec comment to match. If there are none, change nothing; do not restyle something that works just to change it.`,
     'End your reply with one line: "REVIEW: fixed" if you changed the file, or "REVIEW: ok" if not.',
   ]
     .filter((part): part is string => Boolean(part))
@@ -162,19 +192,27 @@ function buildVisualReviewPrompt(opts: GenerateMarkerOptions, stills: Still[], l
 // After a marker works, Claude looks at rendered frames of it and fixes what it sees (clipped or
 // overflowing text, things outside the area, unreadable or empty frames). A fix that breaks the
 // marker is undone, so the review can only keep or improve a working marker.
-async function reviewVisually(opts: GenerateMarkerOptions, stills: Still[], look: string | undefined): Promise<void> {
+async function reviewVisually(opts: GenerateMarkerOptions, stills: Still[], look: string | undefined, series: MarkerSeries | undefined): Promise<void> {
   const ctx = { project: opts.projectId, marker: opts.markerId };
+  // The lead may fix the shared component too; it is put back along with the marker on a bad fix.
+  const sharedFile = series && opts.seriesLead ? sharedComponentFile(opts.projectId, series.component) : null;
   for (let round = 1; round <= reviewRounds() && stills.length > 0; round++) {
     if (opts.signal?.aborted) return;
     opts.onEvent({ type: 'progress', attempt: round, phase: 'reviewing' });
     const before = fs.readFileSync(opts.file, 'utf-8');
+    const sharedBefore = sharedFile ? readFileOrNull(sharedFile) : null;
+    const putBack = () => {
+      fs.writeFileSync(opts.file, before);
+      if (sharedFile && sharedBefore !== null) fs.writeFileSync(sharedFile, sharedBefore);
+    };
     const shown = await Promise.all(stills.map(async (s) => ({ ...s, file: await onGray(s.file) })));
     const relative = shown.map((s) => ({ ...s, file: path.relative(opts.cwd, s.file).split(path.sep).join('/') }));
-    const { result, config } = await runClaudeOnMarker(opts, buildVisualReviewPrompt(opts, relative, look), round, 'review');
+    const { result, config } = await runClaudeOnMarker(opts, buildVisualReviewPrompt(opts, relative, look, series), round, 'review');
     if (opts.signal?.aborted) return;
     const after = fs.readFileSync(opts.file, 'utf-8');
-    if (!result.success || after === before) {
-      if (after !== before) fs.writeFileSync(opts.file, before);
+    const changed = after !== before || (sharedFile !== null && readFileOrNull(sharedFile) !== sharedBefore);
+    if (!result.success || !changed) {
+      if (changed) putBack();
       log('info', 'marker.review_done', { ...ctx, round, changed: false, failure: result.failure?.kind });
       return;
     }
@@ -185,13 +223,50 @@ async function reviewVisually(opts: GenerateMarkerOptions, stills: Still[], look
       const error = smoke ? smoke.error : validation.error;
       log('warn', 'marker.review_reverted', { ...ctx, round, error: clip(error, 600) });
       opts.onEvent({ type: 'progress', attempt: round, phase: 'review-reverted', error });
-      fs.writeFileSync(opts.file, before);
+      putBack();
       return;
     }
     log('info', 'marker.review_done', { ...ctx, round, changed: true });
     opts.onEvent({ type: 'progress', attempt: round, phase: 'review-fixed' });
     stills = smoke.kept;
   }
+}
+
+const readFileOrNull = (file: string): string | null => (fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null);
+
+// Validates the marker file and renders a few frames of it; the frames are kept for the visual review.
+async function checkMarker(opts: GenerateMarkerOptions, externals: string[], attempt: number): Promise<{ ok: true; stills: Still[] } | { ok: false; error: string }> {
+  const ctx = { project: opts.projectId, marker: opts.markerId };
+  const code = fs.readFileSync(opts.file, 'utf-8');
+  opts.onEvent({ type: 'progress', attempt, phase: 'validating' });
+  const validation = await validateMarkerFile(opts.file, externals);
+  logAttempt(opts.projectId, opts.markerId, attempt, code, validation);
+  log(validation.ok ? 'info' : 'warn', 'marker.validation', { ...ctx, attempt, ok: validation.ok, error: validation.ok ? undefined : clip(validation.error, 600) });
+  if (!validation.ok) return { ok: false, error: validation.error ?? 'The code did not build.' };
+  if (process.env.MANGO_SKIP_RENDER_CHECK) return { ok: true, stills: [] };
+  opts.onEvent({ type: 'progress', attempt, phase: 'rendering-check' });
+  const smoke = await renderCheck(opts);
+  if (smoke.skipped) {
+    log('warn', 'marker.render_check_skipped', { ...ctx, attempt, reason: clip(smoke.error, 300) });
+    return { ok: true, stills: [] };
+  }
+  if (!smoke.ok) {
+    log('warn', 'marker.render_check_failed', { ...ctx, attempt, error: clip(smoke.error, 600) });
+    logAttempt(opts.projectId, opts.markerId, attempt, code, { ok: false, error: smoke.error });
+    return { ok: false, error: smoke.error ?? 'The animation failed to render.' };
+  }
+  return { ok: true, stills: smoke.kept };
+}
+
+// The lead of a series has to leave a shared component that its marker actually renders, or the
+// other markers would render something nobody checked.
+function leadProblem(opts: GenerateMarkerOptions, series: MarkerSeries): string | null {
+  const shared = sharedComponentPath(series.component);
+  if (!fs.existsSync(sharedComponentFile(opts.projectId, series.component))) return `${shared} was not created. Create it, and render it from the marker file.`;
+  if (!fs.readFileSync(opts.file, 'utf-8').includes(`./shared/${series.component}`)) {
+    return `The marker file does not import ./shared/${series.component}. The marker must render the shared component, since the other markers of the series will.`;
+  }
+  return null;
 }
 
 // The generate-then-validate retry loop shared by a single marker's own regenerate call
@@ -217,10 +292,35 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
   const styleReference = preset ? { name: preset.name, code: preset.code } : undefined;
   // The look shared with the markers planned together with this one.
   const look = thisMarker?.look;
+  // A marker of a series renders the shared component (see series.ts). Its lead builds it; any other
+  // member gets its file written by the runner while a plan is applied, and Claude only when that
+  // does not work; Claude always handles a regenerate.
+  const series = thisMarker?.series;
+  const sharedFile = series ? sharedComponentFile(opts.projectId, series.component) : null;
+  const originalShared = sharedFile && opts.seriesLead ? readFileOrNull(sharedFile) : null;
+  const sharedCode = series && !opts.seriesLead ? readSharedComponent(opts.projectId, series.component) : null;
+  const seriesPrompt = series
+    ? opts.seriesLead
+      ? { instructions: leadInstructions(opts.markerId, opts.seriesLead.component, series.props, opts.seriesLead.allProps), buildsShared: true }
+      : sharedCode
+        ? { instructions: memberInstructions(series, sharedCode), buildsShared: false }
+        : undefined
+    : undefined;
   if (projectAssets.attached.length > 0) log('info', 'marker.assets', { ...ctx, attached: projectAssets.attached.map((a) => a.id), library: projectAssets.library.length });
   let stills: Still[] = [];
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  if (series && sharedCode && opts.writeSeriesMember && !opts.signal?.aborted) {
+    fs.writeFileSync(opts.file, memberSource(opts.markerId, series));
+    const check = await checkMarker(opts, allSkillExternals(), 0);
+    log(check.ok ? 'info' : 'warn', 'marker.series_member', { ...ctx, component: series.component, ok: check.ok });
+    if (check.ok) {
+      success = true;
+      stills = check.stills;
+    } else priorError = check.error;
+    lastCode = fs.readFileSync(opts.file, 'utf-8');
+  }
+
+  for (let attempt = 1; attempt <= 3 && !success; attempt++) {
     if (opts.signal?.aborted) {
       priorError = 'The request was cancelled.';
       break;
@@ -238,6 +338,8 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
       narrationWords,
       styleReference,
       look,
+      setReference: opts.setReference,
+      series: seriesPrompt,
       optedInSkills: opts.allowSkills,
       compositionWidth: opts.compositionWidth,
       compositionHeight: opts.compositionHeight,
@@ -260,34 +362,19 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
     }
 
     lastCode = fs.readFileSync(opts.file, 'utf-8');
-    opts.onEvent({ type: 'progress', attempt, phase: 'validating' });
-    const validation = await validateMarkerFile(opts.file, config.validatorExternals);
-    logAttempt(opts.projectId, opts.markerId, attempt, lastCode, validation);
-    log(validation.ok ? 'info' : 'warn', 'marker.validation', { ...ctx, attempt, ok: validation.ok, error: validation.ok ? undefined : clip(validation.error, 600) });
-
-    if (validation.ok && !process.env.MANGO_SKIP_RENDER_CHECK) {
-      opts.onEvent({ type: 'progress', attempt, phase: 'rendering-check' });
-      const smoke = await renderCheck(opts);
-      if (smoke.skipped) log('warn', 'marker.render_check_skipped', { ...ctx, attempt, reason: clip(smoke.error, 300) });
-      else if (!smoke.ok) {
-        log('warn', 'marker.render_check_failed', { ...ctx, attempt, error: clip(smoke.error, 600) });
-        priorError = smoke.error;
-        logAttempt(opts.projectId, opts.markerId, attempt, lastCode, { ok: false, error: smoke.error });
-        opts.onEvent({ type: 'progress', attempt, phase: 'validation-failed', error: priorError });
-        continue;
-      } else stills = smoke.kept;
-    }
-
-    if (validation.ok) {
+    const problem = series && opts.seriesLead ? leadProblem(opts, series) : null;
+    const check = problem ? ({ ok: false, error: problem } as const) : await checkMarker(opts, config.validatorExternals, attempt);
+    if (check.ok) {
       success = true;
+      stills = check.stills;
       break;
     }
-    priorError = validation.error;
+    priorError = check.error;
     opts.onEvent({ type: 'progress', attempt, phase: 'validation-failed', error: priorError });
   }
 
   if (success && !opts.signal?.aborted) {
-    await reviewVisually(opts, stills, look);
+    await reviewVisually(opts, stills, look, series);
     lastCode = fs.readFileSync(opts.file, 'utf-8');
   }
 
@@ -296,6 +383,10 @@ export async function generateMarkerWithRetry(opts: GenerateMarkerOptions): Prom
   if (opts.signal?.aborted) {
     try {
       if (fs.readFileSync(opts.file, 'utf-8') !== originalCode) fs.writeFileSync(opts.file, originalCode);
+      if (sharedFile && opts.seriesLead) {
+        if (originalShared === null) fs.rmSync(sharedFile, { force: true });
+        else fs.writeFileSync(sharedFile, originalShared);
+      }
     } catch (err) {
       log('warn', 'marker.restore_failed', { ...ctx, error: err });
     }

@@ -382,6 +382,11 @@ export function buildRegeneratePrompt(opts: {
   styleReference?: { name: string; code: string };
   // The look shared by the markers planned together with this one.
   look?: string;
+  // A marker of the same plan built before this one, whose design this one matches.
+  setReference?: { code: string };
+  // What to do as part of a series (see series.ts); buildsShared when this marker also writes the
+  // shared component.
+  series?: { instructions: string; buildsShared: boolean };
   optedInSkills?: string[];
   compositionWidth: number;
   compositionHeight: number;
@@ -412,6 +417,10 @@ export function buildRegeneratePrompt(opts: {
     opts.look
       ? `This marker is one of a set planned together for this video, and they all share this look:\n${opts.look}\nFollow it (palette, fonts, text sizes, corner radii, motion) so the markers read as one video${opts.styleReference ? '; where it conflicts with the style above, the style above wins' : ''}.`
       : null,
+    opts.setReference
+      ? `Another marker of this set is already built. Make this one look like part of the same video: reuse its design system (palette, fonts, text sizes relative to the area, spacing, card and background treatment, corner radii, and its entrance and exit motion) and change the layout only as far as this marker's different content needs. Do not copy its content. Its code, for reference only:\n\`\`\`tsx\n${opts.setReference.code}\n\`\`\``
+      : null,
+    opts.series?.instructions ?? null,
     `Current code:\n\`\`\`tsx\n${opts.currentCode}\n\`\`\``,
     describeAttachedAssets(opts.attachedAssets ?? []),
     describeLibraryAssets(opts.libraryAssets ?? []),
@@ -423,7 +432,7 @@ export function buildRegeneratePrompt(opts: {
     opts.optedInSkills && opts.optedInSkills.length > 0
       ? `The user has made these skills available for this request: ${opts.optedInSkills.join(', ')}. Use them only if they genuinely improve the result for this request; it is fine not to use them at all.`
       : null,
-    'Follow the conventions in CLAUDE.md. Only modify this one file.',
+    opts.series?.buildsShared ? 'Follow the conventions in CLAUDE.md. Only modify the two files named above.' : 'Follow the conventions in CLAUDE.md. Only modify this one file.',
   ].filter((s): s is string => Boolean(s));
   return sections.join('\n\n');
 }

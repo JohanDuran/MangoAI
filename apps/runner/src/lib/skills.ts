@@ -40,7 +40,7 @@ const TOOL_RE = /^[A-Za-z0-9_]+$/;
 const BASE_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 // Lets Claude research the facts a prompt asks about. Pre-approved (headless runs cannot
 // prompt), which is safe because neither tool can touch local files.
-const WEB_TOOLS = ['WebSearch', 'WebFetch'];
+export const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 const MANAGED_MARKER = '.mangoai-managed';
 
 // Where the runner can be reached, as written into generated code and skill files. Set by the
@@ -217,6 +217,13 @@ export interface ClaudeCallConfig {
   validatorExternals: string[];
   activeSkills: string[];
   skipped: { name: string; reason: string }[];
+}
+
+// The imports the validator accepts for code the runner writes itself, outside a Claude call: the
+// packages of every skill, since a shared component may use any of them.
+export function allSkillExternals(): string[] {
+  const packages = discoverSkills().skills.flatMap((s) => s.manifest.packages ?? []);
+  return [...packages, ...packages.map((p) => `${p}/*`)];
 }
 
 // Everything per-call that depends on skills: which skills are installed for Claude to see,
