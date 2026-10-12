@@ -185,6 +185,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [ideaNarration, setIdeaNarration] = useState<boolean | null>(null);
   // The voice an idea plan's lines are read in; null follows the project's voice.
   const [ideaVoice, setIdeaVoice] = useState<string | null>(null);
+  // Whether Claude may plan markers that generate an image with AI.
+  const [ideaImages, setIdeaImages] = useState(false);
   const [planPanelOpen, setPlanPanelOpen] = useState(false);
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
   const [captionsOpen, setCaptionsOpen] = useState(false);
@@ -604,6 +606,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         setIdeaRegion(plan.source.region ?? null);
         setIdeaNarration(!!plan.source.narration);
         setIdeaVoice(plan.source.voice ?? null);
+        setIdeaImages(!!plan.source.images);
         setIdeaPanelOpen(true);
       } else setPlanPanelOpen(true);
       return;
@@ -648,7 +651,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const ideaNarrationOn = ideaNarration ?? baseLayer.type !== 'video';
   const ideaPlanRegion = ideaRegion && !isFullScreenRegion(ideaRegion) ? ideaRegion : undefined;
-  const ideaChat = useIdeaChat(projectId, { region: ideaPlanRegion, narration: ideaNarrationOn });
+  const ideaChat = useIdeaChat(projectId, { region: ideaPlanRegion, narration: ideaNarrationOn, images: ideaImages });
 
   // Designs the markers from the brief agreed in the idea chat.
   const handlePlanFromIdea = async (brief: string) => {
@@ -659,7 +662,12 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       // the plan carries the brief anyway
     }
     return runPlanner(() =>
-      planMarkersFromIdea(projectId!, brief, { region: ideaPlanRegion, narration: ideaNarrationOn, voice: ideaNarrationOn ? ideaVoice ?? defaultVoice : undefined })
+      planMarkersFromIdea(projectId!, brief, {
+        region: ideaPlanRegion,
+        narration: ideaNarrationOn,
+        voice: ideaNarrationOn ? ideaVoice ?? defaultVoice : undefined,
+        images: ideaImages,
+      })
     );
   };
 
@@ -1680,6 +1688,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               voices={voices?.voices ?? null}
               voice={ideaVoice ?? defaultVoice}
               onVoiceChange={setIdeaVoice}
+              images={ideaImages}
+              onImagesChange={setIdeaImages}
               onStop={() => requestStop('plan')}
               onSubmit={handlePlanFromIdea}
               onCancel={() =>

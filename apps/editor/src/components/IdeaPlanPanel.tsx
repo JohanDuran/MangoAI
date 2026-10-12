@@ -25,6 +25,9 @@ interface Props {
   voices: string[] | null;
   voice: string;
   onVoiceChange: (voice: string) => void;
+  // Whether Claude may plan markers that generate an image with AI.
+  images: boolean;
+  onImagesChange: (value: boolean) => void;
   onStop: () => void;
   // Designs the markers from the brief.
   onSubmit: (brief: string) => void;
@@ -47,6 +50,8 @@ export const IdeaPlanPanel: React.FC<Props> = ({
   voices,
   voice,
   onVoiceChange,
+  images,
+  onImagesChange,
   onStop,
   onSubmit,
   onCancel,
@@ -119,6 +124,11 @@ export const IdeaPlanPanel: React.FC<Props> = ({
             <VoicePicker voices={voices} value={voice} onChange={onVoiceChange} disabled={planning} title="The voice for this plan's voiceover" />
           </label>
         )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>
+          <input type="checkbox" checked={images} onChange={(e) => onImagesChange(e.target.checked)} disabled={planning} />
+          Allow AI image generation: Claude may plan markers that generate an image via OpenAI where one fits, and ticks
+          that option on them (you can change it in the review)
+        </label>
       </div>
 
       <div className="idea-chat-log" ref={logRef}>

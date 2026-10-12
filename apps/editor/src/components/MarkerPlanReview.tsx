@@ -60,7 +60,8 @@ const rowStatus = (item: ReviewItem, markers: Marker[], run?: MarkerRunState): D
 const sourceLine = (source: PlanSource): string | null => {
   if (source.kind === 'idea') {
     const voice = source.narration && source.voice ? ` Voiceover read by ${source.voice[0].toUpperCase()}${source.voice.slice(1)}.` : '';
-    return `From your idea: "${source.idea}"${voice}`;
+    const idea = source.idea.length > 200 ? `${source.idea.slice(0, 200).trimEnd()}…` : source.idea;
+    return `From your idea: "${idea}"${voice}`;
   }
   return source.context ? `From the transcript, with your instructions: "${source.context}"` : null;
 };
@@ -89,6 +90,8 @@ export const MarkerPlanReview: React.FC<Props> = ({
 }) => {
   // Claude was asked for voiceover lines, so every item gets a field even if its line came back empty.
   const withVoiceover = source?.kind === 'idea' && !!source.narration;
+  // Claude could tick AI image generation, so every item shows that choice.
+  const withImages = source?.kind === 'idea' && !!source.images;
   const pending = items.filter((i) => i.included && !isItemDone(i, markers));
   const doneCount = items.filter((i) => isItemDone(i, markers)).length;
   const editingAll = editingRegionKey === ALL_AREAS_KEY;
@@ -219,6 +222,17 @@ export const MarkerPlanReview: React.FC<Props> = ({
                       onChange={(e) => onChange(item.key, { narration: e.target.value })}
                     />
                   </div>
+                )}
+                {(withImages || item.allowImage) && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--text-muted)' }}>
+                    <input
+                      type="checkbox"
+                      checked={item.allowImage}
+                      disabled={locked}
+                      onChange={(e) => onChange(item.key, { allowImage: e.target.checked })}
+                    />
+                    Allow AI image generation{item.allowImage && withImages ? ' (Claude thinks this marker needs an image)' : ''}
+                  </label>
                 )}
                 {(assets.length > 0 || item.assets.length > 0) && (
                   <div>

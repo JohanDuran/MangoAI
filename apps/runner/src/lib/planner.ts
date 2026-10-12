@@ -16,6 +16,8 @@ export interface ProposedMarker {
   assets: string[];
   // A voiceover line to speak from the marker's start; empty for none.
   narration: string;
+  // Whether generating the marker may create an image with AI (the image-generation skill).
+  generateImage: boolean;
 }
 
 export interface PlanMarkersResult {
@@ -106,7 +108,7 @@ function extractJsonArray(text: string): unknown[] {
 
 function normalizeCandidate(item: unknown, projectId: string): ProposedMarker | null {
   if (!item || typeof item !== 'object') return null;
-  const { start, end, prompt, region, assets, narration } = item as Record<string, unknown>;
+  const { start, end, prompt, region, assets, narration, generateImage } = item as Record<string, unknown>;
   if (typeof start !== 'number' || typeof end !== 'number' || typeof prompt !== 'string' || !prompt.trim()) return null;
   if (region !== null && region !== undefined && !isValidRegion(region)) return null;
   return {
@@ -116,6 +118,7 @@ function normalizeCandidate(item: unknown, projectId: string): ProposedMarker | 
     region: region ? (region as MarkerRegion) : null,
     assets: validAssetIds(projectId, assets),
     narration: typeof narration === 'string' ? narration.trim().slice(0, MAX_NARRATION_CHARS) : '',
+    generateImage: generateImage === true,
   };
 }
 
@@ -130,6 +133,8 @@ function buildIdeaPlanPrompt(opts: {
   region?: MarkerRegion;
   // Whether to write a voiceover line for each marker.
   narration?: boolean;
+  // Whether markers may get an image generated with AI.
+  images?: boolean;
 }): string {
   const existingLines = existingMarkerLines(opts.existing);
   const libraryLines = libraryAssetLines(opts.library);
@@ -151,7 +156,10 @@ function buildIdeaPlanPrompt(opts: {
     opts.narration
       ? `The video also gets a voiceover. For each marker write "narration": the exact words a voice reads aloud starting at the marker's start, continuing the story from the previous marker so the whole voiceover reads as one script. A voice speaks about 2.5 words per second, so keep each line to at most 2.5 words per second of its marker (a 4-second marker gets at most 10 words); make a marker longer rather than cramming words in. Write plain spoken text: no stage directions, emoji or markup. The animation should show what the line says.`
       : null,
-    `Respond with ONLY a JSON array, no prose, no markdown code fences, of objects shaped exactly like:\n[{"start": number, "end": number, "prompt": string, "region": null | {"x": number, "y": number, "width": number, "height": number}${opts.library.length > 0 ? ', "assets": string[]' : ''}${opts.narration ? ', "narration": string' : ''}}]`,
+    opts.images
+      ? `The creator allows AI image generation. When a marker genuinely needs a picture that is not in the project library and cannot be drawn well in code (a photo, a realistic scene, a detailed illustration or character), set its "generateImage" to true and say in its prompt what the image should show and how the animation uses it. Each image costs time and money, so set it only where it clearly adds value, and never for text, numbers, charts, simple shapes or icons. Otherwise set it to false.`
+      : null,
+    `Respond with ONLY a JSON array, no prose, no markdown code fences, of objects shaped exactly like:\n[{"start": number, "end": number, "prompt": string, "region": null | {"x": number, "y": number, "width": number, "height": number}${opts.library.length > 0 ? ', "assets": string[]' : ''}${opts.narration ? ', "narration": string' : ''}${opts.images ? ', "generateImage": boolean' : ''}}]`,
     `Rules: start/end are seconds within [0, ${opts.durationSeconds.toFixed(1)}]. ${area ? 'region is always null here; the chosen area is applied for you.' : 'region is null for full screen, or x/y/width/height as fractions of the canvas between 0 and 1 (x+width <= 1, y+height <= 1).'} No two proposed ranges may overlap each other or any existing marker listed above.`,
   ]
     .filter((part): part is string => Boolean(part))
@@ -209,22 +217,26 @@ export async function planMarkers(id: string, context?: string, signal?: AbortSi
   if (!success) throw new Error(failure?.message ?? 'Claude could not produce a plan.');
   const raw = extractJsonArray(text);
   const result = finalizeProposals(raw, id, durationSeconds, markers);
-  // The video's own speech is the voice here; a voiceover is only planned from an idea.
-  for (const p of result.proposals) p.narration = '';
+  // The video's own speech is the voice here; a voiceover is only planned from an idea, and so are AI images.
+  for (const p of result.proposals) {
+    p.narration = '';
+    p.generateImage = false;
+  }
 
   log('info', 'plan.done', { project: id, proposed: result.proposals.length, dropped: result.droppedCount });
   return result;
 }
 
 // With a region, every proposed marker is confined to it whatever Claude answered. With narration,
-// each marker also gets a voiceover line.
+// each marker also gets a voiceover line. With images, Claude may mark markers that should get an
+// image generated with AI.
 export async function planMarkersFromIdea(
   id: string,
   idea: string,
-  opts: { region?: MarkerRegion; narration?: boolean } = {},
+  opts: { region?: MarkerRegion; narration?: boolean; images?: boolean } = {},
   signal?: AbortSignal
 ): Promise<PlanMarkersResult> {
-  const { region, narration } = opts;
+  const { region, narration, images } = opts;
   const trimmedIdea = idea.trim();
   if (!trimmedIdea) throw new Error('Describe the idea for the AI to design markers from.');
 
@@ -241,6 +253,7 @@ export async function planMarkersFromIdea(
     library: readAssets(id),
     region,
     narration,
+    images,
   });
 
   const { text, success, failure } = await withProjectLock(id, 'plan', () =>
@@ -260,6 +273,7 @@ export async function planMarkersFromIdea(
   for (const p of result.proposals) {
     if (region) p.region = region;
     if (!narration) p.narration = '';
+    if (!images) p.generateImage = false;
   }
 
   log('info', 'plan-from-idea.done', { project: id, proposed: result.proposals.length, dropped: result.droppedCount });

@@ -27,6 +27,7 @@ fs.writeFileSync(
     'if "%MODE%"=="hang" goto hang',
     'if "%MODE%"=="version" goto version',
     'if "%MODE%"=="plan" goto plan',
+    'if "%MODE%"=="planimage" goto planimage',
     'if "%MODE%"=="slow" goto slow',
     ':ok',
     'echo {"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.01}',
@@ -43,6 +44,9 @@ fs.writeFileSync(
     'exit /b 0',
     ':version',
     'echo 2.1.0 (Claude Code)',
+    'exit /b 0',
+    ':planimage',
+    'echo {"type":"result","subtype":"success","is_error":false,"result":"[{\\"start\\":0.5,\\"end\\":2,\\"prompt\\":\\"A photo of a beach\\",\\"region\\":null,\\"generateImage\\":true},{\\"start\\":3,\\"end\\":5,\\"prompt\\":\\"Big number\\",\\"region\\":null,\\"generateImage\\":false}]","total_cost_usd":0.01}',
     'exit /b 0',
     ':plan',
     'echo {"type":"result","subtype":"success","is_error":false,"result":"[{\\"start\\":0.5,\\"end\\":2,\\"prompt\\":\\"Title card\\",\\"region\\":null},{\\"start\\":3,\\"end\\":5,\\"prompt\\":\\"Big number\\",\\"region\\":null}]","total_cost_usd":0.01}',
@@ -227,6 +231,21 @@ test('a plan is saved as soon as it exists, keeps review edits, and is removed o
   const done = events.find((e) => e.event === 'done')!;
   assert.equal(done.data.planRemaining, false, JSON.stringify(events));
   assert.equal((await getPlan(id)).plan, null);
+});
+
+test('an idea plan ticks AI image generation where Claude asks for it, only when allowed', { skip }, async () => {
+  setMode('planimage');
+  const id = await newProject();
+  const plan = (body: unknown) =>
+    api(`/projects/${id}/markers/plan-from-idea`, { method: 'POST', headers: json, body: JSON.stringify(body) }).then(async (r) => ((await r.json()) as any).plan);
+
+  const allowed = await plan({ idea: 'beach trip', images: true });
+  assert.deepEqual(allowed.items.map((i: any) => i.allowImage), [true, false]);
+  assert.equal(allowed.source.images, true);
+
+  const notAllowed = await plan({ idea: 'beach trip' });
+  assert.deepEqual(notAllowed.items.map((i: any) => i.allowImage), [false, false]);
+  assert.equal(notAllowed.source.images, undefined);
 });
 
 test('the idea chat keeps the conversation and brief, and a stopped reply leaves it as it was', { skip }, async () => {

@@ -470,8 +470,10 @@ export interface PlanItem {
 }
 
 // region on an idea plan is the area every proposed marker was confined to; narration says whether
-// Claude was asked for voiceover lines.
-export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean; voice?: string };
+// Claude was asked for voiceover lines, images whether it could plan AI-generated images.
+export type PlanSource =
+  | { kind: 'transcript'; context?: string }
+  | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean; voice?: string; images?: boolean };
 
 // Saved on the runner from the moment planning starts, so a crash or reload does not lose it.
 export interface StoredPlan {
@@ -507,12 +509,13 @@ export const planMarkers = (id: string, context?: string) =>
 
 // Without a region Claude picks each marker's area itself. With narration it also writes a
 // voiceover line for each marker.
-// voice is the voice the plan's voiceover lines are read in (the project's voice when absent).
-export const planMarkersFromIdea = (id: string, idea: string, opts: { region?: MarkerRegion; narration?: boolean; voice?: string } = {}) =>
+// voice is the voice the plan's voiceover lines are read in (the project's voice when absent). With
+// images, Claude may tick "generate an AI image" on the markers that need one.
+export const planMarkersFromIdea = (id: string, idea: string, opts: { region?: MarkerRegion; narration?: boolean; voice?: string; images?: boolean } = {}) =>
   fetch(`${BASE}/projects/${id}/markers/plan-from-idea`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idea, region: opts.region, narration: opts.narration, voice: opts.voice }),
+    body: JSON.stringify({ idea, region: opts.region, narration: opts.narration, voice: opts.voice, images: opts.images }),
   }).then(planResult);
 
 // The conversation in which Claude and the user work out the idea, and the brief they agree on.
@@ -529,10 +532,11 @@ export interface IdeaChat {
   updatedAt: string;
 }
 
-// The idea panel's area and voiceover settings, which Claude is told about while chatting.
+// The idea panel's area, voiceover and AI image settings, which Claude is told about while chatting.
 export interface IdeaChatSettings {
   region?: MarkerRegion;
   narration?: boolean;
+  images?: boolean;
 }
 
 const chatResult = async (r: Response) => {

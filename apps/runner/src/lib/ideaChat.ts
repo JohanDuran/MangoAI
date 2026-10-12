@@ -29,10 +29,12 @@ export interface IdeaChat {
 export const MAX_CHAT_MESSAGE_CHARS = 6000;
 export const MAX_BRIEF_CHARS = 12000;
 
-// What the panel settings tell Claude: the area every marker goes in, and whether there is a voiceover.
+// What the panel settings tell Claude: the area every marker goes in, whether there is a voiceover,
+// and whether markers may use images generated with AI.
 export interface IdeaChatOptions {
   region?: MarkerRegion;
   narration?: boolean;
+  images?: boolean;
 }
 
 const chatFile = (id: string) => path.join(projectDir(id), '00_input', 'idea-chat.json');
@@ -77,6 +79,9 @@ function projectContext(id: string, opts: IdeaChatOptions): string {
     opts.narration
       ? 'The video gets an AI voiceover: each marker has a line read aloud from its start, at about 2.5 words per second, and together the lines read as one script.'
       : 'There is no voiceover; the animations carry the message on their own.',
+    opts.images
+      ? 'AI image generation is allowed: a marker can use an image generated with AI (a photo, a realistic scene, a detailed illustration) where one adds real value; text, numbers, charts and simple shapes are drawn in code instead.'
+      : 'No images are generated with AI; markers are drawn in code or use the library images.',
     library.length > 0 ? `Images in the project library that markers can use:\n${libraryAssetLines(library)}` : null,
   ]
     .filter((part): part is string => Boolean(part))
@@ -123,6 +128,7 @@ function buildBriefPrompt(id: string, chat: IdeaChat, opts: IdeaChatOptions): st
       'Audience: who it is for.',
       'Look and tone: visual style, colors, mood, pacing.',
       `Beats: a numbered list in order, each with a rough time range in seconds, together covering 0 to ${durationSeconds}s, saying what is on screen${opts.narration ? ' and what the voiceover says' : ''}.`,
+      opts.images ? 'AI images: which beats use an image generated with AI and what each shows, or "none".' : null,
       opts.narration
         ? "Voiceover: its tone and any lines agreed word for word. A voice reads about 2.5 words per second, so the words for each beat must fit its length (a 10-second beat gets at most 25 words); shorten any line that does not fit, also one taken from an earlier brief, unless the creator fixed its wording."
         : null,

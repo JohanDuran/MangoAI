@@ -12,9 +12,11 @@ import type { ProposedMarker } from './planner.js';
 //   review    The plan is waiting for the user to edit and apply it.
 //   applying  Markers are (or were, if nothing is running any more) being generated from it.
 // The file is removed once every item has become a marker, or when the user discards the plan.
-// An idea plan may carry the area every proposed marker is confined to (absent means Claude decides)
-// and whether Claude was asked for voiceover lines.
-export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean; voice?: string };
+// An idea plan may carry the area every proposed marker is confined to (absent means Claude decides),
+// whether Claude was asked for voiceover lines, and whether it could plan AI-generated images.
+export type PlanSource =
+  | { kind: 'transcript'; context?: string }
+  | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean; voice?: string; images?: boolean };
 
 export interface PlanItem {
   key: string;
@@ -83,7 +85,7 @@ export function savePlanProposals(id: string, source: PlanSource, proposals: Pro
       end: p.end,
       prompt: p.prompt,
       region: p.region,
-      allowImage: false,
+      allowImage: p.generateImage === true,
       assets: p.assets,
       ...(p.narration ? { narration: p.narration } : {}),
     })),

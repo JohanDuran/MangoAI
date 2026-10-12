@@ -488,7 +488,7 @@ projectsRouter.post('/projects/:id/markers/plan', requireVideo, async (req, res)
 });
 
 projectsRouter.post('/projects/:id/markers/plan-from-idea', requireVideo, async (req, res) => {
-  const { idea, region, narration, voice } = req.body as { idea?: unknown; region?: unknown; narration?: unknown; voice?: unknown };
+  const { idea, region, narration, voice, images } = req.body as { idea?: unknown; region?: unknown; narration?: unknown; voice?: unknown; images?: unknown };
   if (typeof idea !== 'string' || !idea.trim()) {
     return res.status(400).json({ error: 'idea must be a non-empty string' });
   }
@@ -497,6 +497,7 @@ projectsRouter.post('/projects/:id/markers/plan-from-idea', requireVideo, async 
   }
   const area = region ?? undefined;
   const withNarration = narration === true;
+  const withImages = images === true;
   if (voice !== undefined && !isValidVoice(voice)) return res.status(400).json({ error: `voice must be one of: ${TTS_VOICES.join(', ')}` });
   // The voice is kept with the plan, so applying it (even after a reload) reads the lines in it.
   const source = {
@@ -504,9 +505,10 @@ projectsRouter.post('/projects/:id/markers/plan-from-idea', requireVideo, async 
     idea: idea.trim(),
     ...(area && { region: area }),
     ...(withNarration && { narration: true, ...(voice && { voice }) }),
+    ...(withImages && { images: true }),
   };
   await runPlan(req.params.id, source, res, (signal) =>
-    planMarkersFromIdea(req.params.id, idea, { region: area, narration: withNarration }, signal)
+    planMarkersFromIdea(req.params.id, idea, { region: area, narration: withNarration, images: withImages }, signal)
   );
 });
 
@@ -542,11 +544,11 @@ projectsRouter.get('/projects/:id/idea-chat', (req, res) => {
   res.json({ chat: readIdeaChat(req.params.id) });
 });
 
-// The area and voiceover settings of the idea panel, which Claude is told about.
+// The area, voiceover and AI image settings of the idea panel, which Claude is told about.
 function ideaChatOptions(body: unknown): IdeaChatOptions | string {
-  const { region, narration } = (body ?? {}) as { region?: unknown; narration?: unknown };
+  const { region, narration, images } = (body ?? {}) as { region?: unknown; narration?: unknown; images?: unknown };
   if (region !== undefined && region !== null && !isValidRegion(region)) return 'region must be { x, y, width, height } as fractions of the canvas';
-  return { region: (region as MarkerRegion | null) ?? undefined, narration: narration === true };
+  return { region: (region as MarkerRegion | null) ?? undefined, narration: narration === true, images: images === true };
 }
 
 // One chat turn at a time per project; Stop (tag "chat") or the editor going away drops the turn.
