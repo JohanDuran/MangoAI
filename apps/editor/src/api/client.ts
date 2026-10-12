@@ -515,7 +515,70 @@ export const planMarkersFromIdea = (id: string, idea: string, opts: { region?: M
     body: JSON.stringify({ idea, region: opts.region, narration: opts.narration, voice: opts.voice }),
   }).then(planResult);
 
-// running lists the Claude work in progress for the project ('plan', 'apply', 'regenerate:<id>').
+// The conversation in which Claude and the user work out the idea, and the brief they agree on.
+// Designing from an idea plans from the brief.
+export interface IdeaChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  at: string;
+}
+
+export interface IdeaChat {
+  messages: IdeaChatMessage[];
+  brief: string | null;
+  updatedAt: string;
+}
+
+// The idea panel's area and voiceover settings, which Claude is told about while chatting.
+export interface IdeaChatSettings {
+  region?: MarkerRegion;
+  narration?: boolean;
+}
+
+const chatResult = async (r: Response) => {
+  if (r.status === 499) throw new StoppedError();
+  if (!r.ok) {
+    const body = await r.text();
+    let message = body;
+    try {
+      message = (JSON.parse(body) as { error?: string }).error ?? body;
+    } catch {
+      // not JSON
+    }
+    throw new Error(message || `${r.status}`);
+  }
+  return ((await r.json()) as { chat: IdeaChat }).chat;
+};
+
+export const getIdeaChat = (id: string) => fetch(`${BASE}/projects/${id}/idea-chat`).then(chatResult);
+
+export const sendIdeaChatMessage = (id: string, text: string, settings: IdeaChatSettings) =>
+  fetch(`${BASE}/projects/${id}/idea-chat/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, ...settings }),
+  }).then(chatResult);
+
+export const writeIdeaBrief = (id: string, settings: IdeaChatSettings) =>
+  fetch(`${BASE}/projects/${id}/idea-chat/brief`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  }).then(chatResult);
+
+export const saveIdeaBrief = (id: string, brief: string) =>
+  fetch(`${BASE}/projects/${id}/idea-chat/brief`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ brief }),
+  }).then(chatResult);
+
+export const clearIdeaChat = (id: string) =>
+  fetch(`${BASE}/projects/${id}/idea-chat`, { method: 'DELETE' }).then(async (r) => {
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  });
+
+// running lists the Claude work in progress for the project ('plan', 'chat', 'apply', 'regenerate:<id>').
 export const getPlan = (id: string) => fetch(`${BASE}/projects/${id}/plan`).then((r) => json<{ plan: StoredPlan | null; running: string[] }>(r));
 
 export const savePlan = (id: string, items: PlanItem[]) =>

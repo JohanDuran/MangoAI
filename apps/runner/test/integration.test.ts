@@ -229,6 +229,36 @@ test('a plan is saved as soon as it exists, keeps review edits, and is removed o
   assert.equal((await getPlan(id)).plan, null);
 });
 
+test('the idea chat keeps the conversation and brief, and a stopped reply leaves it as it was', { skip }, async () => {
+  setMode('ok');
+  const id = await newProject();
+  const chatOf = async (res: Response) => ((await res.json()) as any).chat;
+  const send = (text: string) => api(`/projects/${id}/idea-chat/messages`, { method: 'POST', headers: json, body: JSON.stringify({ text, narration: true }) });
+
+  const first = await chatOf(await send('a video about compound interest'));
+  assert.deepEqual(first.messages.map((m: any) => [m.role, m.text]), [['user', 'a video about compound interest'], ['assistant', 'done']]);
+  assert.equal(first.brief, null);
+
+  const briefed = await chatOf(await api(`/projects/${id}/idea-chat/brief`, { method: 'POST', headers: json, body: '{}' }));
+  assert.equal(briefed.brief, 'done');
+  await api(`/projects/${id}/idea-chat/brief`, { method: 'PUT', headers: json, body: JSON.stringify({ brief: 'my own brief' }) });
+
+  setMode('hang');
+  const pending = send('one more thing');
+  await sleep(1500);
+  assert.equal((await send('meanwhile')).status, 409, 'one turn at a time');
+  assert.equal(((await (await stop(id, 'chat')).json()) as { stopped: number }).stopped, 1);
+  assert.equal((await pending).status, 499);
+
+  const saved = await chatOf(await api(`/projects/${id}/idea-chat`));
+  assert.equal(saved.messages.length, 2);
+  assert.equal(saved.brief, 'my own brief');
+
+  assert.equal((await api(`/projects/${id}/idea-chat`, { method: 'DELETE' })).status, 204);
+  const cleared = await chatOf(await api(`/projects/${id}/idea-chat`));
+  assert.deepEqual([cleared.messages, cleared.brief], [[], null]);
+});
+
 test('Stop during apply removes the half-made marker and keeps the rest of the plan', { skip }, async () => {
   setMode('plan');
   const id = await newProject();

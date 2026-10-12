@@ -1,8 +1,8 @@
 import type { Response } from 'express';
 
-// Claude work in flight per project (planning, applying a plan, regenerating a marker), so the
+// Claude work in flight per project (planning, the idea chat, applying a plan, regenerating a marker), so the
 // editor can stop it on purpose instead of only by closing the connection.
-export type JobTag = 'plan' | 'apply' | `regenerate:${string}`;
+export type JobTag = 'plan' | 'chat' | 'apply' | `regenerate:${string}`;
 
 export interface Job {
   tag: JobTag;

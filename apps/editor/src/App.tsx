@@ -64,6 +64,7 @@ import { DualLayerPreview, type DualLayerPreviewHandle, type StagePoint } from '
 import { Timeline } from './components/Timeline';
 import { AddMarkerPanel } from './components/AddMarkerPanel';
 import { IdeaPlanPanel } from './components/IdeaPlanPanel';
+import { useIdeaChat } from './useIdeaChat';
 import { MarkerInspector } from './components/MarkerInspector';
 import { AssetLibrary } from './components/AssetLibrary';
 import { MarkerPlanReview, ALL_AREAS_KEY, isItemDone, type ReviewItem } from './components/MarkerPlanReview';
@@ -175,9 +176,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [inspectorWidth, setInspectorWidth] = useState(340);
   const [planReviewOpen, setPlanReviewOpen] = useState(false);
   const [ideaPanelOpen, setIdeaPanelOpen] = useState(false);
-  // The idea being written and the area every marker designed from it goes in (null = Claude
-  // picks per marker). Kept here so hiding the panel to work on the timeline doesn't lose them.
-  const [ideaDraft, setIdeaDraft] = useState('');
+  // The area every marker designed from an idea goes in (null = Claude picks per marker). Kept here
+  // so hiding the panel to work on the timeline doesn't lose it; the conversation is in useIdeaChat.
   const [ideaRegion, setIdeaRegion] = useState<MarkerRegion | null>(null);
   const [editingIdeaRegion, setEditingIdeaRegion] = useState(false);
   // Whether "Design from idea" also writes voiceover lines. Until the user picks, it is on for
@@ -600,7 +600,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
       selectMarker(null);
       setNewMarkerPanelVisible(false);
       if (plan.source.kind === 'idea') {
-        setIdeaDraft(plan.source.idea);
+        ideaChat.adoptBrief(plan.source.idea);
         setIdeaRegion(plan.source.region ?? null);
         setIdeaNarration(!!plan.source.narration);
         setIdeaVoice(plan.source.voice ?? null);
@@ -647,11 +647,20 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const handlePlanMarkers = (context: string) => runPlanner(() => planMarkers(projectId!, context));
 
   const ideaNarrationOn = ideaNarration ?? baseLayer.type !== 'video';
+  const ideaPlanRegion = ideaRegion && !isFullScreenRegion(ideaRegion) ? ideaRegion : undefined;
+  const ideaChat = useIdeaChat(projectId, { region: ideaPlanRegion, narration: ideaNarrationOn });
 
-  const handlePlanFromIdea = (idea: string) => {
+  // Designs the markers from the brief agreed in the idea chat.
+  const handlePlanFromIdea = async (brief: string) => {
     setEditingIdeaRegion(false);
-    const region = ideaRegion && !isFullScreenRegion(ideaRegion) ? ideaRegion : undefined;
-    return runPlanner(() => planMarkersFromIdea(projectId!, idea, { region, narration: ideaNarrationOn, voice: ideaNarrationOn ? ideaVoice ?? defaultVoice : undefined }));
+    try {
+      await ideaChat.flushBrief();
+    } catch {
+      // the plan carries the brief anyway
+    }
+    return runPlanner(() =>
+      planMarkersFromIdea(projectId!, brief, { region: ideaPlanRegion, narration: ideaNarrationOn, voice: ideaNarrationOn ? ideaVoice ?? defaultVoice : undefined })
+    );
   };
 
   // Hides the idea panel (the draft and area stay for when it is reopened). Planning carries on
@@ -1399,7 +1408,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               title={
                 videoMissing
                   ? 'Upload the video first'
-                  : 'Describe an idea and have Claude design a full sequence of markers to cover the video'
+                  : 'Talk an idea through with Claude, then have it design a full sequence of markers to cover the video'
               }
             >
               Design from idea
@@ -1659,8 +1668,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               planning={planning}
               stopping={stopping.has('plan')}
               error={planError}
-              idea={ideaDraft}
-              onIdeaChange={setIdeaDraft}
+              chat={ideaChat}
               notice={interruptedPlanningNotice}
               region={ideaRegion}
               editingRegion={editingIdeaRegion}

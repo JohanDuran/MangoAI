@@ -1164,3 +1164,60 @@ select {
   color: var(--text-faint);
   line-height: 1.5;
 }
+
+/* ---------- idea chat ---------- */
+
+.idea-chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  min-height: 96px;
+  overflow-y: auto;
+  margin: 12px 0;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.idea-chat-empty {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+
+.idea-chat-msg {
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  max-width: 92%;
+}
+
+.idea-chat-user {
+  align-self: flex-end;
+  background: var(--mango-wash);
+}
+
+.idea-chat-assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.idea-chat-who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.idea-chat-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}

@@ -35,6 +35,18 @@ const overlapsAny = (candidate: TimeRange, ranges: TimeRange[]): boolean =>
 const isValidRange = (r: TimeRange, durationSeconds: number): boolean =>
   Number.isFinite(r.start) && Number.isFinite(r.end) && r.start >= 0 && r.end > r.start && r.end <= durationSeconds + 0.001;
 
+// Prompt lines shared by the planners and the idea chat (ideaChat.ts).
+export const existingMarkerLines = (existing: { start: number; end: number; prompt: string }[]): string =>
+  existing.length > 0 ? existing.map((m) => `- [${m.start.toFixed(1)}-${m.end.toFixed(1)}] ${m.prompt}`).join('\n') : '(none)';
+
+export const libraryAssetLines = (library: Asset[]): string =>
+  library
+    .map((a) => `- id ${a.id}: "${a.name}"${a.width && a.height ? ` (${a.width}x${a.height})` : ''} — ${a.description ?? 'no description, so only use it if the name makes its content obvious'}`)
+    .join('\n');
+
+export const areaInPixels = (area: MarkerRegion, width: number, height: number): string =>
+  `${Math.round(area.width * width)}x${Math.round(area.height * height)}px with its top-left corner at (${Math.round(area.x * width)}, ${Math.round(area.y * height)})`;
+
 function buildPlanPrompt(opts: {
   segments: TranscriptSegment[];
   durationSeconds: number;
@@ -45,14 +57,8 @@ function buildPlanPrompt(opts: {
   context?: string;
 }): string {
   const transcriptLines = opts.segments.map((s) => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text}`).join('\n');
-  const existingLines =
-    opts.existing.length > 0
-      ? opts.existing.map((m) => `- [${m.start.toFixed(1)}-${m.end.toFixed(1)}] ${m.prompt}`).join('\n')
-      : '(none)';
-
-  const libraryLines = opts.library
-    .map((a) => `- id ${a.id}: "${a.name}"${a.width && a.height ? ` (${a.width}x${a.height})` : ''} — ${a.description ?? 'no description, so only use it if the name makes its content obvious'}`)
-    .join('\n');
+  const existingLines = existingMarkerLines(opts.existing);
+  const libraryLines = libraryAssetLines(opts.library);
 
   return [
     `You are planning on-screen animated overlays for a video, based on its transcript. The video is ${opts.width}x${opts.height}px and ${opts.durationSeconds.toFixed(1)} seconds long.`,
@@ -125,23 +131,15 @@ function buildIdeaPlanPrompt(opts: {
   // Whether to write a voiceover line for each marker.
   narration?: boolean;
 }): string {
-  const existingLines =
-    opts.existing.length > 0
-      ? opts.existing.map((m) => `- [${m.start.toFixed(1)}-${m.end.toFixed(1)}] ${m.prompt}`).join('\n')
-      : '(none)';
-
-  const libraryLines = opts.library
-    .map((a) => `- id ${a.id}: "${a.name}"${a.width && a.height ? ` (${a.width}x${a.height})` : ''} — ${a.description ?? 'no description, so only use it if the name makes its content obvious'}`)
-    .join('\n');
+  const existingLines = existingMarkerLines(opts.existing);
+  const libraryLines = libraryAssetLines(opts.library);
 
   const area = opts.region;
-  const areaPx = area
-    ? `${Math.round(area.width * opts.width)}x${Math.round(area.height * opts.height)}px with its top-left corner at (${Math.round(area.x * opts.width)}, ${Math.round(area.y * opts.height)})`
-    : '';
+  const areaPx = area ? areaInPixels(area, opts.width, opts.height) : '';
 
   return [
     `You are designing a full storyboard of on-screen animated overlays for a video from the creator's idea below. There is no transcript — you are inventing the content and pacing, not illustrating spoken words. The video is ${opts.width}x${opts.height}px and ${opts.durationSeconds.toFixed(1)} seconds long.`,
-    `The creator's idea:\n${opts.idea}`,
+    `The creator's brief, usually agreed with them in a planning conversation. Follow it closely: when it lists beats, keep them, in its order and roughly at its timings, and keep any style, wording or must-haves it gives. Fill in only what it leaves open:\n${opts.idea}`,
     `Break the idea into a sequence of multiple correlated markers that together cover the video from 0s to ${opts.durationSeconds.toFixed(1)}s — do not propose just one marker. Think of it as a storyboard: decide how many distinct beats the idea needs, order them narratively, and space them across the full duration so the video isn't front-loaded with content and empty afterward. Consecutive markers may sit back-to-back, but must not overlap.`,
     `Markers that already exist — do not propose anything overlapping these time ranges:\n${existingLines}`,
     area

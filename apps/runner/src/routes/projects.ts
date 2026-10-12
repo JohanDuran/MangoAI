@@ -50,6 +50,17 @@ import { maxParallelRuns } from '../lib/claude.js';
 import { planMarkers, planMarkersFromIdea, type PlanMarkersResult } from '../lib/planner.js';
 import { startJob, stopJobs, runningJobs, type JobTag } from '../lib/jobs.js';
 import {
+  readIdeaChat,
+  replyInIdeaChat,
+  writeBriefFromIdeaChat,
+  saveIdeaBrief,
+  clearIdeaChat,
+  MAX_CHAT_MESSAGE_CHARS,
+  MAX_BRIEF_CHARS,
+  type IdeaChat,
+  type IdeaChatOptions,
+} from '../lib/ideaChat.js';
+import {
   readPlan,
   clearPlan,
   startPlanning,
@@ -525,10 +536,79 @@ projectsRouter.delete('/projects/:id/plan', (req, res) => {
   res.status(204).end();
 });
 
-// Stops Claude work for the project: one kind (plan, apply, regenerate:<markerId>) or all of it.
+// The conversation with Claude about the idea, and the brief agreed in it (see ideaChat.ts).
+projectsRouter.get('/projects/:id/idea-chat', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  res.json({ chat: readIdeaChat(req.params.id) });
+});
+
+// The area and voiceover settings of the idea panel, which Claude is told about.
+function ideaChatOptions(body: unknown): IdeaChatOptions | string {
+  const { region, narration } = (body ?? {}) as { region?: unknown; narration?: unknown };
+  if (region !== undefined && region !== null && !isValidRegion(region)) return 'region must be { x, y, width, height } as fractions of the canvas';
+  return { region: (region as MarkerRegion | null) ?? undefined, narration: narration === true };
+}
+
+// One chat turn at a time per project; Stop (tag "chat") or the editor going away drops the turn.
+async function runChatTurn(id: string, res: import('express').Response, turn: (signal: AbortSignal) => Promise<IdeaChat>): Promise<void> {
+  if (runningJobs(id).includes('chat')) {
+    res.status(409).json({ error: 'Claude is still answering.' });
+    return;
+  }
+  const job = startJob(id, 'chat', res);
+  try {
+    res.json({ chat: await turn(job.signal) });
+  } catch (err) {
+    if (job.signal.aborted) {
+      if (!res.headersSent) res.status(499).json({ error: 'Stopped.', cancelled: true });
+      return;
+    }
+    writeLog('error', 'route.error', { route: 'idea-chat', project: id, error: err });
+    if (!res.headersSent) res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  } finally {
+    job.finish();
+  }
+}
+
+projectsRouter.post('/projects/:id/idea-chat/messages', requireVideo, async (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const { text } = req.body as { text?: unknown };
+  if (typeof text !== 'string' || !text.trim()) return res.status(400).json({ error: 'text must be a non-empty string' });
+  if (text.length > MAX_CHAT_MESSAGE_CHARS) return res.status(400).json({ error: `Keep a message under ${MAX_CHAT_MESSAGE_CHARS} characters.` });
+  const opts = ideaChatOptions(req.body);
+  if (typeof opts === 'string') return res.status(400).json({ error: opts });
+  await runChatTurn(req.params.id, res, (signal) => replyInIdeaChat(req.params.id, text, opts, signal));
+});
+
+// Claude writes (or rewrites) the brief from the conversation.
+projectsRouter.post('/projects/:id/idea-chat/brief', requireVideo, async (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const opts = ideaChatOptions(req.body);
+  if (typeof opts === 'string') return res.status(400).json({ error: opts });
+  await runChatTurn(req.params.id, res, (signal) => writeBriefFromIdeaChat(req.params.id, opts, signal));
+});
+
+// Saves the creator's own edits to the brief.
+projectsRouter.put('/projects/:id/idea-chat/brief', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const { brief } = req.body as { brief?: unknown };
+  if (typeof brief !== 'string') return res.status(400).json({ error: 'brief must be a string' });
+  if (brief.length > MAX_BRIEF_CHARS) return res.status(400).json({ error: `Keep the brief under ${MAX_BRIEF_CHARS} characters.` });
+  res.json({ chat: saveIdeaBrief(req.params.id, brief) });
+});
+
+// Starts the conversation over.
+projectsRouter.delete('/projects/:id/idea-chat', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  stopJobs(req.params.id, 'chat');
+  clearIdeaChat(req.params.id);
+  res.status(204).end();
+});
+
+// Stops Claude work for the project: one kind (plan, chat, apply, regenerate:<markerId>) or all of it.
 projectsRouter.post('/projects/:id/stop', (req, res) => {
   const tag = (req.body as { tag?: unknown } | undefined)?.tag;
-  if (tag !== undefined && (typeof tag !== 'string' || !/^(plan|apply|regenerate:[\w-]+)$/.test(tag))) {
+  if (tag !== undefined && (typeof tag !== 'string' || !/^(plan|chat|apply|regenerate:[\w-]+)$/.test(tag))) {
     return res.status(400).json({ error: 'invalid tag' });
   }
   res.json({ stopped: stopJobs(req.params.id, tag as JobTag | undefined) });
