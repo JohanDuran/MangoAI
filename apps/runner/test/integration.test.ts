@@ -278,6 +278,25 @@ test('the idea chat keeps the conversation and brief, and a stopped reply leaves
   assert.deepEqual([cleared.messages, cleared.brief], [[], null]);
 });
 
+test('applying a plan keeps markers past the end and overlapping ones, and the timeline grows', { skip }, async () => {
+  setMode('ok');
+  const id = await newProject();
+  const markers = [
+    { start: 1, end: 4, prompt: 'scene', region: null, allowSkills: [] },
+    { start: 2, end: 3, prompt: 'caption over the scene', region: null, allowSkills: [] },
+    { start: 9, end: 12.5, prompt: 'runs past the 10s end', region: null, allowSkills: [] },
+  ];
+  const { events } = await sse(`/projects/${id}/markers/apply`, { markers, look: 'navy and mango' });
+  assert.equal(events.find((e) => e.event === 'done')!.data.completed, 3, JSON.stringify(events));
+  const project = (await (await api(`/projects/${id}`)).json()) as any;
+  assert.deepEqual(project.markers.map((m: any) => [m.start, m.end, m.look]), [
+    [1, 4, 'navy and mango'],
+    [2, 3, 'navy and mango'],
+    [9, 12.5, 'navy and mango'],
+  ]);
+  assert.equal(project.composition.durationInFrames, 375);
+});
+
 test('Stop during apply removes the half-made marker and keeps the rest of the plan', { skip }, async () => {
   setMode('plan');
   const id = await newProject();

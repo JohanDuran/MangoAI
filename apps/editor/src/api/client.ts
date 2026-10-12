@@ -482,6 +482,10 @@ export interface StoredPlan {
   createdAt: string;
   updatedAt: string;
   droppedCount: number;
+  // How many markers were moved later to play one after another instead of overlapping.
+  movedCount?: number;
+  // The look every marker of the plan shares, editable while reviewing.
+  look?: string;
   items: PlanItem[];
 }
 
@@ -585,11 +589,11 @@ export const clearIdeaChat = (id: string) =>
 // running lists the Claude work in progress for the project ('plan', 'chat', 'apply', 'regenerate:<id>').
 export const getPlan = (id: string) => fetch(`${BASE}/projects/${id}/plan`).then((r) => json<{ plan: StoredPlan | null; running: string[] }>(r));
 
-export const savePlan = (id: string, items: PlanItem[]) =>
+export const savePlan = (id: string, items: PlanItem[], look?: string) =>
   fetch(`${BASE}/projects/${id}/plan`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items, look }),
   }).then((r) => json<{ plan: StoredPlan }>(r));
 
 export const discardPlan = (id: string) =>
@@ -623,17 +627,19 @@ export interface ApplyMarkerInput {
   markerId?: string;
 }
 
+// look is the style every marker of the plan shares; it is kept on each marker it creates.
 export async function applyMarkerPlan(
   id: string,
   markers: ApplyMarkerInput[],
   onEvent: (e: RegenerateEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  look?: string
 ): Promise<void> {
   try {
     const res = await fetch(`${BASE}/projects/${id}/markers/apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ markers: markers.map(({ allowImage, ...m }) => ({ ...m, allowSkills: allowImage ? IMAGE_SKILLS : [] })) }),
+      body: JSON.stringify({ markers: markers.map(({ allowImage, ...m }) => ({ ...m, allowSkills: allowImage ? IMAGE_SKILLS : [] })), look }),
       signal,
     });
     await readEventStream(res, onEvent);

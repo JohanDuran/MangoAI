@@ -47,6 +47,7 @@ import { syncAssetModule } from '../lib/assetModule.js';
 import { regenerateRegistry } from '../lib/registry.js';
 import { generateMarkerWithRetry } from '../lib/generateMarker.js';
 import { maxParallelRuns } from '../lib/claude.js';
+import { lengthIsFixed } from '../lib/timeline.js';
 import { planMarkers, planMarkersFromIdea, type PlanMarkersResult } from '../lib/planner.js';
 import { startJob, stopJobs, runningJobs, type JobTag } from '../lib/jobs.js';
 import {
@@ -68,6 +69,7 @@ import {
   savePlanItems,
   setPlanState,
   updatePlanItem,
+  MAX_LOOK_CHARS,
   type PlanSource,
 } from '../lib/planStore.js';
 import { findRawVideo } from '../lib/video.js';
@@ -466,7 +468,7 @@ async function runPlan(
   startPlanning(id, source);
   try {
     const result = await plan(job.signal);
-    res.json({ ...result, plan: savePlanProposals(id, source, result.proposals, result.droppedCount) });
+    res.json({ ...result, plan: savePlanProposals(id, source, result) });
   } catch (err) {
     if (job.stoppedByUser()) {
       clearPlan(id);
@@ -523,7 +525,8 @@ projectsRouter.get('/projects/:id/plan', (req, res) => {
 projectsRouter.put('/projects/:id/plan', (req, res) => {
   if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
   try {
-    const plan = savePlanItems(req.params.id, (req.body as { items?: unknown }).items);
+    const { items, look } = req.body as { items?: unknown; look?: unknown };
+    const plan = savePlanItems(req.params.id, items, look);
     if (!plan) return res.status(404).json({ error: 'no plan' });
     res.json({ plan });
   } catch (err) {
@@ -662,6 +665,9 @@ function settlePlan(id: string): boolean {
 projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res) => {
   const { id } = req.params;
   const inputs = (req.body.markers ?? []) as ApplyMarkerInput[];
+  // The look the plan's markers share (see planner.ts): sent with the request, or the saved plan's.
+  const bodyLook = (req.body as { look?: unknown }).look;
+  const look = typeof bodyLook === 'string' ? bodyLook.trim().slice(0, MAX_LOOK_CHARS) : readPlan(id)?.look;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -678,9 +684,6 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
   if (readPlan(id)) setPlanState(id, 'applying');
 
   try {
-    const { fps, durationInFrames } = readCompositionConfig(id);
-    const durationSeconds = durationInFrames / fps;
-
     // Two passes. First, in order, every item is checked, created and voiced: that is quick, and the
     // timing has to settle in order, since a voice longer than its planned marker lengthens it and
     // moves every later marker back by as much (see narration.ts) — the plan items still to be made
@@ -704,24 +707,35 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
         updatePlanItem(id, input.key, { markerId: undefined });
       }
 
-      const { start, end, prompt } = input;
+      const { prompt } = input;
       const region = input.region ?? null;
-      const validTiming =
-        typeof start === 'number' && typeof end === 'number' && start >= 0 && end > start && end <= durationSeconds + 0.001;
+      // Nothing is skipped for its timing. Overlaps are kept: the plan already lined its markers up, so
+      // one left overlapping was meant that way or placed there by the user. A marker past the end of
+      // an uploaded video is moved back to end with it; a blank canvas grows instead (see timeline.ts).
+      // Only an item that cannot become a marker at all is skipped.
+      const { start, end } = input;
+      const validTiming = typeof start === 'number' && typeof end === 'number' && Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start;
       const validRegion = region === null || isValidRegion(region);
       const validPrompt = typeof prompt === 'string' && prompt.trim().length > 0;
-      const overlapsExisting =
-        validTiming && readMarkers(id).some((m) => start! < m.end && end! > m.start);
+      if (validTiming && lengthIsFixed(id)) {
+        const { fps, durationInFrames } = readCompositionConfig(id);
+        const videoEnd = durationInFrames / fps;
+        if (input.end! > videoEnd + 0.001) {
+          const length = Math.min(input.end! - input.start!, videoEnd);
+          input.end = Math.round(videoEnd * 100) / 100;
+          input.start = Math.round(Math.max(0, videoEnd - length) * 100) / 100;
+        }
+      }
 
-      if (!validTiming || !validRegion || !validPrompt || overlapsExisting) {
-        const error = 'Invalid or overlapping marker — skipped.';
+      if (!validTiming || !validRegion || !validPrompt) {
+        const error = !validPrompt ? 'This marker has no description — skipped.' : !validTiming ? 'The end must be after the start — skipped.' : 'Invalid area — skipped.';
         updatePlanItem(id, input.key, { error });
         send('item-done', { index, success: false, error });
         results.push({ success: false });
         continue;
       }
 
-      const marker = addMarker(id, { start: start!, end: end!, prompt: prompt!, region: region ?? undefined, assets: validAssetIds(id, input.assets) });
+      const marker = addMarker(id, { start: input.start!, end: input.end!, prompt: prompt!, region: region ?? undefined, assets: validAssetIds(id, input.assets), look });
       updatePlanItem(id, input.key, { markerId: marker.marker_id, error: undefined });
       send('item-created', { index, markerId: marker.marker_id });
 

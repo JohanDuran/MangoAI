@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { projectDir } from './paths.js';
 import { readJson, writeJsonAtomic } from './store.js';
+import { fitTimeline } from './timeline.js';
 
 // Normalized 0-1 fractions of the composition canvas — resolution-independent, so a
 // region drawn on a 1080p preview still lands correctly if the video is later swapped
@@ -27,6 +28,9 @@ export interface Marker {
   narration?: MarkerNarration;
   // A style preset (see presets.ts) whose look the next generation should match.
   stylePreset?: string;
+  // The look shared by the markers of the plan this one came from, so they stay consistent when
+  // generated, and again when regenerated.
+  look?: string;
 }
 
 // When a word is spoken in a voiceover take, in seconds from the start of the take (Whisper's
@@ -63,8 +67,10 @@ export function readMarkers(id: string): Marker[] {
   return readJson<Marker[]>(file);
 }
 
+// Every marker change goes through here, so the timeline always grows (or shrinks back) to fit.
 export function writeMarkers(id: string, markers: Marker[]): void {
   writeJsonAtomic(markersFile(id), markers);
+  fitTimeline(id, markers);
 }
 
 export function findMarker(id: string, markerId: string): Marker {

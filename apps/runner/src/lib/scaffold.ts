@@ -119,7 +119,7 @@ export function writeProject(project: Project): void {
   writeJsonAtomic(path.join(projectDir(project.id), 'project.json'), project);
 }
 
-export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[] }): Marker {
+export function addMarker(id: string, input: { start: number; end: number; prompt: string; region?: MarkerRegion; assets?: string[]; look?: string }): Marker {
   const markers = readMarkers(id);
   const projectStyle = readProject(id)?.stylePreset;
   // Based on the highest existing numeric suffix, not the array length — deleting a
@@ -140,6 +140,7 @@ export function addMarker(id: string, input: { start: number; end: number; promp
     ...(input.assets && input.assets.length > 0 ? { assets: input.assets } : {}),
     // New markers start with the project's style, so a whole video looks consistent.
     ...(projectStyle ? { stylePreset: projectStyle } : {}),
+    ...(input.look?.trim() ? { look: input.look.trim() } : {}),
   };
   markers.push(marker);
   writeMarkers(id, markers);

@@ -22,6 +22,7 @@ const { setMarkerNarration, generateNarration, playableNarration, narrationFileP
 );
 const { savePlanProposals, savePlanItems, readPlan } = await import('../src/lib/planStore.ts');
 const { writeNarrationTrack } = await import('../src/routes/exportJob.ts');
+const { readCompositionConfig } = await import('../src/lib/composition.ts');
 
 // A short mp3, standing in for what OpenAI returns.
 function makeSpeech(seconds: number): Buffer {
@@ -108,7 +109,7 @@ test('speech is generated once, reused while the line is unchanged, and goes sta
 });
 
 test('a voice longer than its marker lengthens it and moves every later marker back by as much, never past the end of the video', needsFfmpeg, async () => {
-  const room = createProject('Voice Room', { baseLayer: { type: 'color', color: '#000000' }, fps: 30, width: 320, height: 180, durationInFrames: 300 });
+  const room = createProject('Voice Room', { baseLayer: { type: 'video' }, fps: 30, width: 320, height: 180, durationInFrames: 300 });
   const a = addMarker(room.id, { start: 0, end: 2, prompt: 'a' });
   const b = addMarker(room.id, { start: 2.5, end: 4, prompt: 'b' });
   const c = addMarker(room.id, { start: 6, end: 8, prompt: 'c' });
@@ -137,6 +138,20 @@ test('a voice longer than its marker lengthens it and moves every later marker b
       assert.equal(readMarkers(room.id).find((m) => m.marker_id === c.marker_id)?.narration?.audio, undefined);
       await assert.rejects(generateNarration(room.id, c.marker_id), /past the end of the video/);
       assert.equal(calls.length, 2, 'the take is kept, so trying again is not paid for');
+    }
+  );
+});
+
+test('on a blank canvas a voice that runs past the end makes the canvas longer', needsFfmpeg, async () => {
+  const canvas = createProject('Voice Canvas', { baseLayer: { type: 'color', color: '#000000' }, fps: 30, width: 320, height: 180, durationInFrames: 300 });
+  const a = addMarker(canvas.id, { start: 8, end: 9, prompt: 'a' });
+  setMarkerNarration(canvas.id, a.marker_id, { text: 'Longer than what is left.', voice: 'marin' });
+  await withFetch(
+    () => new Response(makeSpeech(4), { status: 200 }),
+    async () => {
+      const made = await generateNarration(canvas.id, a.marker_id);
+      assert.ok(made.marker.end > 12, `ends at ${made.marker.end}`);
+      assert.equal(readCompositionConfig(canvas.id).durationInFrames, Math.ceil(made.marker.end * 30 - 0.001));
     }
   );
 });
@@ -222,10 +237,15 @@ test('the export voiceover track lines each clip up with its marker and lasts th
 });
 
 test('plan items keep their voiceover lines through review edits', () => {
-  savePlanProposals(project.id, { kind: 'idea', idea: 'x', narration: true }, [
-    { start: 10, end: 12, prompt: 'p', region: null, assets: [], narration: 'First line.' },
-    { start: 12, end: 14, prompt: 'q', region: null, assets: [], narration: '' },
-  ], 0);
+  savePlanProposals(project.id, { kind: 'idea', idea: 'x', narration: true }, {
+    proposals: [
+      { start: 10, end: 12, prompt: 'p', region: null, assets: [], narration: 'First line.', generateImage: false },
+      { start: 12, end: 14, prompt: 'q', region: null, assets: [], narration: '', generateImage: false },
+    ],
+    droppedCount: 0,
+    movedCount: 0,
+    look: '',
+  });
   const plan = readPlan(project.id)!;
   assert.equal(plan.items[0].narration, 'First line.');
   assert.equal(plan.items[1].narration, undefined);

@@ -380,6 +380,8 @@ export function buildRegeneratePrompt(opts: {
   narration?: string;
   narrationWords?: SpokenWord[];
   styleReference?: { name: string; code: string };
+  // The look shared by the markers planned together with this one.
+  look?: string;
   optedInSkills?: string[];
   compositionWidth: number;
   compositionHeight: number;
@@ -407,6 +409,9 @@ export function buildRegeneratePrompt(opts: {
     opts.styleReference
       ? `Match the visual style of the "${opts.styleReference.name}" style, an earlier animation the creator liked: reuse its palette, fonts, text sizes relative to the area, spacing, corner radii and motion (easing, timing, entrances and exits), so the video looks consistent. Do not copy its content, text, data or images; this marker shows its own content from the intent above. Its code, for reference only:\n\`\`\`tsx\n${opts.styleReference.code}\n\`\`\``
       : null,
+    opts.look
+      ? `This marker is one of a set planned together for this video, and they all share this look:\n${opts.look}\nFollow it (palette, fonts, text sizes, corner radii, motion) so the markers read as one video${opts.styleReference ? '; where it conflicts with the style above, the style above wins' : ''}.`
+      : null,
     `Current code:\n\`\`\`tsx\n${opts.currentCode}\n\`\`\``,
     describeAttachedAssets(opts.attachedAssets ?? []),
     describeLibraryAssets(opts.libraryAssets ?? []),
@@ -414,6 +419,7 @@ export function buildRegeneratePrompt(opts: {
       ? `Validation error from the previous attempt — fix this specifically:\n${opts.priorError}`
       : null,
     'Before writing code, check the skills available to you and load any whose description matches what this animation needs.',
+    'Then design before you code: put a short design spec in a comment block at the top of the file (the layout, with positions and sizes as fractions of regionWidth/regionHeight; the palette; the font sizes; and a timeline of what appears, moves and leaves at which second), and build the component to match it. When you change the design later, update the spec too.',
     opts.optedInSkills && opts.optedInSkills.length > 0
       ? `The user has made these skills available for this request: ${opts.optedInSkills.join(', ')}. Use them only if they genuinely improve the result for this request; it is fine not to use them at all.`
       : null,

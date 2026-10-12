@@ -145,12 +145,15 @@ export interface SmokeRenderResult {
   // Set when the check itself could not run (no browser, no network); the marker is not blamed for that.
   skipped?: boolean;
   error?: string;
+  // The rendered frames, in the order asked for, when they were kept.
+  stills?: string[];
 }
 
 // Renders a few still frames of the composition in headless Chrome. esbuild only proves the file bundles;
 // this proves the animation actually runs, which is where undefined access, misused hooks and bad
-// props show up. Everything a marker throws while rendering becomes the returned error text.
-export async function smokeRenderFrames(entryPoint: string, frames: number[], scratchDir: string): Promise<SmokeRenderResult> {
+// props show up. Everything a marker throws while rendering becomes the returned error text. With
+// keep, the frames are left in scratchDir as PNGs (for Claude to look at, see generateMarker.ts).
+export async function smokeRenderFrames(entryPoint: string, frames: number[], scratchDir: string, opts: { keep?: boolean } = {}): Promise<SmokeRenderResult> {
   let serveUrl: string;
   try {
     serveUrl = await bundle({
@@ -174,6 +177,7 @@ export async function smokeRenderFrames(entryPoint: string, frames: number[], sc
   }
 
   fs.mkdirSync(scratchDir, { recursive: true });
+  const stills: string[] = [];
   try {
     const composition = await selectComposition({ serveUrl, id: 'Overlay', puppeteerInstance: browser });
     for (const frame of frames) {
@@ -181,13 +185,14 @@ export async function smokeRenderFrames(entryPoint: string, frames: number[], sc
       const output = path.join(scratchDir, `smoke_${clamped}.png`);
       try {
         await renderStill({ composition, serveUrl, frame: clamped, output, imageFormat: 'png', puppeteerInstance: browser, timeoutInMilliseconds: 30_000 });
+        if (opts.keep) stills.push(output);
       } catch (err) {
         return { ok: false, error: `The animation failed while rendering frame ${clamped}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 2500) };
       } finally {
-        fs.rmSync(output, { force: true });
+        if (!opts.keep) fs.rmSync(output, { force: true });
       }
     }
-    return { ok: true };
+    return { ok: true, ...(opts.keep && { stills }) };
   } catch (err) {
     return { ok: false, error: `The animation failed while rendering: ${err instanceof Error ? err.message : String(err)}`.slice(0, 2500) };
   } finally {

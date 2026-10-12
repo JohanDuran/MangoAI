@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { projectDir } from './paths.js';
 import { readJson, writeJsonAtomic } from './store.js';
 import { isValidRegion, type MarkerRegion } from './markers.js';
-import type { ProposedMarker } from './planner.js';
+import type { PlanMarkersResult } from './planner.js';
 
 // The marker plan being worked on, kept on disk from the moment planning starts so a crash or
 // reload never loses what was asked for, the reviewed edits, or how far applying it got.
@@ -41,6 +41,10 @@ export interface StoredPlan {
   createdAt: string;
   updatedAt: string;
   droppedCount: number;
+  // How many markers were moved later to play one after another instead of overlapping.
+  movedCount?: number;
+  // The look every marker of the plan shares (see planner.ts); the user can edit it while reviewing.
+  look?: string;
   items: PlanItem[];
 }
 
@@ -71,14 +75,16 @@ export function startPlanning(id: string, source: PlanSource): StoredPlan {
   return writePlan(id, { state: 'planning', source, createdAt: now, droppedCount: 0, items: [] });
 }
 
-export function savePlanProposals(id: string, source: PlanSource, proposals: ProposedMarker[], droppedCount: number): StoredPlan {
+export function savePlanProposals(id: string, source: PlanSource, result: Pick<PlanMarkersResult, 'proposals' | 'droppedCount' | 'movedCount' | 'look'>): StoredPlan {
   const createdAt = readPlan(id)?.createdAt ?? new Date().toISOString();
   return writePlan(id, {
     state: 'review',
     source,
     createdAt,
-    droppedCount,
-    items: proposals.map((p) => ({
+    droppedCount: result.droppedCount,
+    ...(result.movedCount > 0 && { movedCount: result.movedCount }),
+    ...(result.look && { look: result.look }),
+    items: result.proposals.map((p) => ({
       key: crypto.randomUUID(),
       included: true,
       start: p.start,
@@ -111,12 +117,16 @@ const isPlanItem = (v: unknown): v is PlanItem => {
   );
 };
 
-// Saves the user's edits made while reviewing. Returns null when there is no plan to save into.
-export function savePlanItems(id: string, items: unknown): StoredPlan | null {
+export const MAX_LOOK_CHARS = 4000;
+
+// Saves the user's edits made while reviewing: the items, and the shared look when given. Returns
+// null when there is no plan to save into.
+export function savePlanItems(id: string, items: unknown, look?: unknown): StoredPlan | null {
   const plan = readPlan(id);
   if (!plan) return null;
   if (!Array.isArray(items) || !items.every(isPlanItem)) throw new Error('items must be a list of plan items');
-  return writePlan(id, { ...plan, items });
+  if (look !== undefined && typeof look !== 'string') throw new Error('look must be a string');
+  return writePlan(id, { ...plan, items, ...(look !== undefined && { look: look.slice(0, MAX_LOOK_CHARS) }) });
 }
 
 export function setPlanState(id: string, state: StoredPlan['state']): void {

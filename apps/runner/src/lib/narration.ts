@@ -7,6 +7,7 @@ import { explainOpenAIError } from './transcript.js';
 import { runCommand } from './proc.js';
 import { ffprobeBin } from './bin.js';
 import { readCompositionConfig } from './composition.js';
+import { lengthIsFixed } from './timeline.js';
 import { log } from './log.js';
 
 // Voiceover: each marker can carry one spoken line, turned into speech with OpenAI's speech API
@@ -170,8 +171,9 @@ async function audioDuration(file: string): Promise<number> {
 const shortHash = (value: string) => crypto.createHash('sha256').update(value).digest('hex').slice(0, 12);
 
 // Lengthens a marker so its voice ends inside it, and moves every later marker back by the same
-// amount, so the rest of the timeline keeps its spacing. Throws, changing nothing, if that would
-// push a marker past the end of the video.
+// amount, so the rest of the timeline keeps its spacing. On an uploaded video, throws, changing
+// nothing, if that would push a marker past the end of the video; a blank canvas grows instead (see
+// timeline.ts).
 function makeRoom(id: string, markers: Marker[], marker: Marker, voiceSec: number): void {
   const needed = Math.round((marker.start + voiceSec + VOICE_TAIL_SEC) * 100) / 100;
   const growth = needed - marker.end;
@@ -180,7 +182,7 @@ function makeRoom(id: string, markers: Marker[], marker: Marker, voiceSec: numbe
   const videoSec = durationInFrames / fps;
   const later = markers.filter((m) => m !== marker && m.start >= marker.end - 0.001);
   const lastEnd = Math.max(needed, ...later.map((m) => m.end + growth));
-  if (lastEnd > videoSec + 0.001) {
+  if (lengthIsFixed(id) && lastEnd > videoSec + 0.001) {
     throw new Error(
       `The voice is ${voiceSec.toFixed(1)}s long. Making room for it moves the markers after this one ${growth.toFixed(1)}s later, which runs ${(lastEnd - videoSec).toFixed(1)}s past the end of the video. Shorten this line or make room at the end, then generate again; this take is kept, so that costs nothing.`
     );

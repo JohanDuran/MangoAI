@@ -31,6 +31,14 @@ interface Props {
   items: ReviewItem[];
   source: PlanSource | null;
   droppedCount: number;
+  // Proposals retimed to play one after another instead of overlapping (and, on an uploaded video,
+  // to fit inside it).
+  movedCount: number;
+  // Whether the project is built on an uploaded video, whose length is fixed.
+  videoLocked: boolean;
+  // The look every marker of the plan shares, given to each one when it is generated.
+  look: string;
+  onLookChange: (look: string) => void;
   // Set when this plan was restored after its generation was interrupted (crash, reload, quit).
   interrupted: boolean;
   applying: boolean;
@@ -74,6 +82,10 @@ export const MarkerPlanReview: React.FC<Props> = ({
   items,
   source,
   droppedCount,
+  movedCount,
+  videoLocked,
+  look,
+  onLookChange,
   interrupted,
   applying,
   stopping,
@@ -114,8 +126,35 @@ export const MarkerPlanReview: React.FC<Props> = ({
       )}
       {droppedCount > 0 && (
         <div className="panel-hint">
-          {droppedCount} proposal{droppedCount === 1 ? ' was' : 's were'} dropped for overlapping an existing marker
-          or having an invalid time range/area.
+          {droppedCount} proposal{droppedCount === 1 ? ' was' : 's were'} left out because Claude gave no description or
+          times for {droppedCount === 1 ? 'it' : 'them'}.
+        </div>
+      )}
+      {movedCount > 0 && (
+        <div className="panel-hint">
+          {movedCount} marker{movedCount === 1 ? ' was' : 's were'} retimed so they play one after another instead of
+          overlapping{' '}
+          {source?.kind === 'transcript' || videoLocked ? 'and fit inside the video' : '(the canvas gets longer to hold them)'}.
+          Remove any you don't want.
+        </div>
+      )}
+      {(look || !applying) && (
+        <div style={{ marginBottom: 12 }}>
+          <span className="capture-label" style={{ display: 'block', marginBottom: 4 }}>
+            Shared look
+          </span>
+          <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginBottom: 4 }}>
+            Every marker of this plan is built to this style, so the video looks consistent. A style preset on a marker wins
+            over it.
+          </div>
+          <textarea
+            className="field-textarea"
+            rows={3}
+            value={look}
+            disabled={applying}
+            placeholder="No shared look: each marker is styled on its own"
+            onChange={(e) => onLookChange(e.target.value)}
+          />
         </div>
       )}
       {items.length > 0 && !applying && (

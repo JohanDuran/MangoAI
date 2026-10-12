@@ -7,6 +7,7 @@ import { readCompositionConfig } from './composition.js';
 import { readAssets } from './assets.js';
 import { runClaudeHeadlessCapturingText, withProjectLock } from './claude.js';
 import { existingMarkerLines, libraryAssetLines, areaInPixels } from './planner.js';
+import { lengthIsFixed } from './timeline.js';
 import { log } from './log.js';
 
 // The conversation in which the creator and Claude work out a video idea before any marker is
@@ -72,6 +73,9 @@ function projectContext(id: string, opts: IdeaChatOptions): string {
   const library = readAssets(id);
   return [
     `The video is ${width}x${height}px and ${durationSeconds.toFixed(1)} seconds long. Its animated overlays are planned as a sequence of timed markers covering 0s to ${durationSeconds.toFixed(1)}s; each marker is one animation built by another agent from a short description.`,
+    lengthIsFixed(id)
+      ? 'The length is fixed: the overlays go on top of an uploaded video, so the plan has to fit inside it.'
+      : 'The overlays are the whole video, on a blank canvas, so the length is only a starting point: if the idea needs more time, the video can be longer.',
     `Markers that already exist (new ones cannot overlap them):\n${existingMarkerLines(readMarkers(id).map((m) => ({ start: m.start, end: m.end, prompt: m.prompt })))}`,
     opts.region
       ? `Every marker is confined to the same area the creator chose: ${areaInPixels(opts.region, width, height)} of the canvas.`

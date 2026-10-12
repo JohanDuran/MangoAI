@@ -202,6 +202,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const [planError, setPlanError] = useState<string | null>(null);
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [droppedCount, setDroppedCount] = useState(0);
+  // How many proposals the planner moved to play one after another, and the look they all share.
+  const [movedCount, setMovedCount] = useState(0);
+  const [planLook, setPlanLook] = useState('');
   // Which proposed marker's area is being drawn on the preview, if any — mirrors
   // editingRegionMarkerId/editingNewMarkerRegion but targets a reviewItems entry directly
   // since it has no server-backed marker until the plan is applied.
@@ -577,9 +580,11 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   };
 
   const openPlanReview = (plan: StoredPlan, interrupted: boolean) => {
-    savedPlanItemsRef.current = JSON.stringify(plan.items);
+    savedPlanItemsRef.current = JSON.stringify({ items: plan.items, look: plan.look ?? '' });
     setReviewItems(plan.items);
     setDroppedCount(plan.droppedCount);
+    setMovedCount(plan.movedCount ?? 0);
+    setPlanLook(plan.look ?? '');
     setPlanSource(plan.source);
     setPlanInterrupted(interrupted);
     setEditingPlanItemKey(null);
@@ -698,17 +703,17 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   // While applying, the runner records progress in the plan itself.
   useEffect(() => {
     if (!projectId || !planReviewOpen || applyingPlan) return;
-    const serialized = JSON.stringify(reviewItems);
+    const serialized = JSON.stringify({ items: reviewItems, look: planLook });
     if (serialized === savedPlanItemsRef.current) return;
     const timer = setTimeout(() => {
-      savePlan(projectId, reviewItems)
+      savePlan(projectId, reviewItems, planLook)
         .then(() => {
           savedPlanItemsRef.current = serialized;
         })
         .catch(() => {});
     }, 400);
     return () => clearTimeout(timer);
-  }, [reviewItems, planReviewOpen, applyingPlan, projectId]);
+  }, [reviewItems, planLook, planReviewOpen, applyingPlan, projectId]);
 
   // Items "Edit all areas" changes: the selected ones that have not been generated yet.
   const isBulkAreaTarget = (item: ReviewItem) => item.included && !isItemDone(item, markers);
@@ -767,9 +772,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     setPlanInterrupted(false);
     setApplyingPlan(true);
     // Make sure the runner has the latest edits before it starts recording progress in the plan.
-    await savePlan(projectId, reviewItems)
+    await savePlan(projectId, reviewItems, planLook)
       .then(() => {
-        savedPlanItemsRef.current = JSON.stringify(reviewItems);
+        savedPlanItemsRef.current = JSON.stringify({ items: reviewItems, look: planLook });
       })
       .catch(() => {});
     let planRemaining = false;
@@ -863,7 +868,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
             }
           }
         },
-        abortRef.current.signal
+        abortRef.current.signal,
+        planLook.trim() || undefined
       );
     } catch (err) {
       notify('error', `Generating the plan failed: ${describeError(err)}`);
@@ -1639,6 +1645,10 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               items={reviewItems}
               source={planSource}
               droppedCount={droppedCount}
+              movedCount={movedCount}
+              videoLocked={baseLayer.type === 'video'}
+              look={planLook}
+              onLookChange={setPlanLook}
               interrupted={planInterrupted}
               applying={applyingPlan}
               stopping={stopping.has('apply')}
