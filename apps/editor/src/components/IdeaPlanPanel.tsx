@@ -1,6 +1,7 @@
 import React from 'react';
 import type { MarkerRegion } from '../api/client';
 import { formatRegion } from '../format';
+import { VoicePicker } from './VoicePicker';
 
 interface Props {
   planning: boolean;
@@ -20,6 +21,10 @@ interface Props {
   // Whether Claude also writes a voiceover line for each marker.
   narration: boolean;
   onNarrationChange: (value: boolean) => void;
+  // The voice the lines are read in (the project's voice until another is picked here).
+  voices: string[] | null;
+  voice: string;
+  onVoiceChange: (voice: string) => void;
   onStop: () => void;
   onSubmit: (idea: string) => void;
   onCancel: () => void;
@@ -39,6 +44,9 @@ export const IdeaPlanPanel: React.FC<Props> = ({
   onResetRegion,
   narration,
   onNarrationChange,
+  voices,
+  voice,
+  onVoiceChange,
   onStop,
   onSubmit,
   onCancel,
@@ -106,6 +114,12 @@ export const IdeaPlanPanel: React.FC<Props> = ({
           <input type="checkbox" checked={narration} onChange={(e) => onNarrationChange(e.target.checked)} disabled={planning} />
           Write a voiceover: Claude adds a spoken line to each marker, read aloud by an AI voice from OpenAI (tell your viewers it is AI-generated)
         </label>
+        {narration && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--text-muted)', marginLeft: 22 }}>
+            Read by
+            <VoicePicker voices={voices} value={voice} onChange={onVoiceChange} disabled={planning} title="The voice for this plan's voiceover" />
+          </label>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
             {planning ? 'Designing…' : 'Design markers'}

@@ -7,6 +7,7 @@ import {
   saveOverlayVolume,
   saveVoiceVolume,
   getVoices,
+  saveProjectVoice,
   getCaptions,
   getMusic,
   musicFileUrl,
@@ -71,6 +72,7 @@ import { TranscriptPanel } from './components/TranscriptPanel';
 import { CaptionsDialog } from './components/CaptionsDialog';
 import { MusicDialog } from './components/MusicDialog';
 import { StylesDialog } from './components/StylesDialog';
+import { VoicePicker } from './components/VoicePicker';
 import { CreateProjectModal } from './components/CreateProjectModal';
 import { StatusButton, StatusDashboard, useStatus } from './components/StatusDashboard';
 import { ConnectionBanner } from './components/ConnectionBanner';
@@ -181,6 +183,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   // Whether "Design from idea" also writes voiceover lines. Until the user picks, it is on for
   // projects without a video (they have no speech of their own) and off otherwise.
   const [ideaNarration, setIdeaNarration] = useState<boolean | null>(null);
+  // The voice an idea plan's lines are read in; null follows the project's voice.
+  const [ideaVoice, setIdeaVoice] = useState<string | null>(null);
   const [planPanelOpen, setPlanPanelOpen] = useState(false);
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
   const [captionsOpen, setCaptionsOpen] = useState(false);
@@ -439,6 +443,18 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
 
   const defaultVoice = projectVoice ?? voices?.defaultVoice ?? 'marin';
 
+  // Lines already voiced keep their voice; this sets what new lines (and plans) start with.
+  const handleProjectVoiceChange = (voice: string) => {
+    if (!projectId) return;
+    const previous = projectVoice;
+    markEdited();
+    setProjectVoice(voice);
+    saveProjectVoice(projectId, voice).catch((err) => {
+      setProjectVoice(previous);
+      notify('error', `Could not change the project's voice: ${describeError(err)}`);
+    });
+  };
+
   // Saves a marker's voiceover line and turns it into speech; an empty line removes the voiceover.
   // Rejects with the reason so the inspector can show it.
   const handleGenerateVoice = async (markerId: string, text: string, voice: string) => {
@@ -447,7 +463,6 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     try {
       await saveMarkerNarration(projectId, markerId, text, voice);
       if (text.trim()) {
-        setProjectVoice(voice);
         const before = markers.find((m) => m.marker_id === markerId);
         const after = await generateMarkerNarration(projectId, markerId);
         // A voice longer than its marker lengthens it (and can push later markers back).
@@ -588,6 +603,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
         setIdeaDraft(plan.source.idea);
         setIdeaRegion(plan.source.region ?? null);
         setIdeaNarration(!!plan.source.narration);
+        setIdeaVoice(plan.source.voice ?? null);
         setIdeaPanelOpen(true);
       } else setPlanPanelOpen(true);
       return;
@@ -635,7 +651,7 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
   const handlePlanFromIdea = (idea: string) => {
     setEditingIdeaRegion(false);
     const region = ideaRegion && !isFullScreenRegion(ideaRegion) ? ideaRegion : undefined;
-    return runPlanner(() => planMarkersFromIdea(projectId!, idea, { region, narration: ideaNarrationOn }));
+    return runPlanner(() => planMarkersFromIdea(projectId!, idea, { region, narration: ideaNarrationOn, voice: ideaNarrationOn ? ideaVoice ?? defaultVoice : undefined }));
   };
 
   // Hides the idea panel (the draft and area stay for when it is reopened). Planning carries on
@@ -751,6 +767,8 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
           allowImage: i.allowImage,
           assets: i.assets,
           narration: i.narration?.trim() || undefined,
+          // The voice picked for an idea plan; otherwise the runner uses the project's voice.
+          voice: planSource?.kind === 'idea' ? planSource.voice : undefined,
           key: i.key,
           markerId: i.markerId,
         })),
@@ -899,7 +917,6 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
     if (narration) {
       try {
         await saveMarkerNarration(projectId, marker.marker_id, narration.text, narration.voice);
-        setProjectVoice(narration.voice);
         withVoice = true;
       } catch (err) {
         notify('error', `The voiceover line was not saved: ${describeError(err)}`);
@@ -1402,12 +1419,19 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               />
               <span className="volume-value">{overlayVolume === 0 ? 'Muted' : `${Math.round(overlayVolume * 100)}%`}</span>
             </label>
+            <span
+              className="volume-control"
+              title="The project's voice: new voiceover lines start with it, and plans use it unless you pick another"
+            >
+              <span>Voice</span>
+              <VoicePicker voices={voices?.voices ?? null} value={defaultVoice} onChange={handleProjectVoiceChange} />
+            </span>
             {markers.some((m) => m.narration) && (
               <label
                 className="volume-control"
                 title="Volume of the markers' voiceover. Drag to 0 to mute it. Applies to the preview and to the export."
               >
-                <span>Voice</span>
+                <span>Voice volume</span>
                 <input
                   type="range"
                   min={0}
@@ -1645,6 +1669,9 @@ function Workspace({ projectId, projects, setProjects, onProjectChange }: Worksp
               onResetRegion={() => setIdeaRegion(null)}
               narration={ideaNarrationOn}
               onNarrationChange={setIdeaNarration}
+              voices={voices?.voices ?? null}
+              voice={ideaVoice ?? defaultVoice}
+              onVoiceChange={setIdeaVoice}
               onStop={() => requestStop('plan')}
               onSubmit={handlePlanFromIdea}
               onCancel={() =>

@@ -14,7 +14,7 @@ import type { ProposedMarker } from './planner.js';
 // The file is removed once every item has become a marker, or when the user discards the plan.
 // An idea plan may carry the area every proposed marker is confined to (absent means Claude decides)
 // and whether Claude was asked for voiceover lines.
-export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean };
+export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean; voice?: string };
 
 export interface PlanItem {
   key: string;

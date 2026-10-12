@@ -129,6 +129,14 @@ export interface VoiceOptions {
 
 export const getVoices = () => fetch(`${BASE}/voices`).then((r) => json<VoiceOptions>(r));
 
+// The project's voice: what new voiceover lines start with, and what plans use unless they pick another.
+export const saveProjectVoice = (id: string, voice: string) =>
+  fetch(`${BASE}/projects/${id}/voice`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ voice }),
+  }).then((r) => json<{ voice: string }>(r));
+
 // An error response's message, for showing to the user.
 async function errorText(r: Response): Promise<string> {
   const body = await r.text();
@@ -463,7 +471,7 @@ export interface PlanItem {
 
 // region on an idea plan is the area every proposed marker was confined to; narration says whether
 // Claude was asked for voiceover lines.
-export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean };
+export type PlanSource = { kind: 'transcript'; context?: string } | { kind: 'idea'; idea: string; region?: MarkerRegion; narration?: boolean; voice?: string };
 
 // Saved on the runner from the moment planning starts, so a crash or reload does not lose it.
 export interface StoredPlan {
@@ -499,11 +507,12 @@ export const planMarkers = (id: string, context?: string) =>
 
 // Without a region Claude picks each marker's area itself. With narration it also writes a
 // voiceover line for each marker.
-export const planMarkersFromIdea = (id: string, idea: string, opts: { region?: MarkerRegion; narration?: boolean } = {}) =>
+// voice is the voice the plan's voiceover lines are read in (the project's voice when absent).
+export const planMarkersFromIdea = (id: string, idea: string, opts: { region?: MarkerRegion; narration?: boolean; voice?: string } = {}) =>
   fetch(`${BASE}/projects/${id}/markers/plan-from-idea`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idea, region: opts.region, narration: opts.narration }),
+    body: JSON.stringify({ idea, region: opts.region, narration: opts.narration, voice: opts.voice }),
   }).then(planResult);
 
 // running lists the Claude work in progress for the project ('plan', 'apply', 'regenerate:<id>').
@@ -539,6 +548,8 @@ export interface ApplyMarkerInput {
   allowImage: boolean;
   assets?: string[];
   narration?: string;
+  // The voice to read the line in; the project's voice when absent.
+  voice?: string;
   // The saved plan item this comes from.
   key?: string;
   // A marker left unfinished by an interrupted earlier apply of this item.

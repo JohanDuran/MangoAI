@@ -260,8 +260,18 @@ projectsRouter.get('/voices/:voice/sample', async (req, res) => {
   }
 });
 
-// Saves a marker's voiceover line and voice (an empty line removes it). The voice becomes the
-// project's choice for new lines. Generating the speech is a separate call, since it costs money.
+// The project's voice: what new voiceover lines start with, and what plans read their lines in
+// unless they pick another. Changed only here, never by picking a voice for one marker.
+projectsRouter.put('/projects/:id/voice', (req, res) => {
+  if (!readProject(req.params.id)) return res.status(404).json({ error: 'not found' });
+  const { voice } = req.body as { voice?: unknown };
+  if (!isValidVoice(voice)) return res.status(400).json({ error: `voice must be one of: ${TTS_VOICES.join(', ')}` });
+  updateProjectSettings(req.params.id, { voice });
+  res.json({ voice });
+});
+
+// Saves a marker's voiceover line and voice (an empty line removes it). Generating the speech is a
+// separate call, since it costs money.
 projectsRouter.put('/projects/:id/markers/:markerId/narration', (req, res) => {
   const { id, markerId } = req.params;
   if (!readMarkers(id).some((m) => m.marker_id === markerId)) return res.status(404).json({ error: 'not found' });
@@ -269,7 +279,6 @@ projectsRouter.put('/projects/:id/markers/:markerId/narration', (req, res) => {
   if (typeof text !== 'string') return res.status(400).json({ error: 'text must be a string' });
   if (!isValidVoice(voice)) return res.status(400).json({ error: `voice must be one of: ${TTS_VOICES.join(', ')}` });
   if (text.trim().length > MAX_NARRATION_CHARS) return res.status(400).json({ error: `text must be at most ${MAX_NARRATION_CHARS} characters` });
-  updateProjectSettings(id, { voice });
   res.json(setMarkerNarration(id, markerId, { text, voice }));
 });
 
@@ -468,7 +477,7 @@ projectsRouter.post('/projects/:id/markers/plan', requireVideo, async (req, res)
 });
 
 projectsRouter.post('/projects/:id/markers/plan-from-idea', requireVideo, async (req, res) => {
-  const { idea, region, narration } = req.body as { idea?: unknown; region?: unknown; narration?: unknown };
+  const { idea, region, narration, voice } = req.body as { idea?: unknown; region?: unknown; narration?: unknown; voice?: unknown };
   if (typeof idea !== 'string' || !idea.trim()) {
     return res.status(400).json({ error: 'idea must be a non-empty string' });
   }
@@ -477,7 +486,15 @@ projectsRouter.post('/projects/:id/markers/plan-from-idea', requireVideo, async 
   }
   const area = region ?? undefined;
   const withNarration = narration === true;
-  await runPlan(req.params.id, { kind: 'idea', idea: idea.trim(), ...(area && { region: area }), ...(withNarration && { narration: true }) }, res, (signal) =>
+  if (voice !== undefined && !isValidVoice(voice)) return res.status(400).json({ error: `voice must be one of: ${TTS_VOICES.join(', ')}` });
+  // The voice is kept with the plan, so applying it (even after a reload) reads the lines in it.
+  const source = {
+    kind: 'idea' as const,
+    idea: idea.trim(),
+    ...(area && { region: area }),
+    ...(withNarration && { narration: true, ...(voice && { voice }) }),
+  };
+  await runPlan(req.params.id, source, res, (signal) =>
     planMarkersFromIdea(req.params.id, idea, { region: area, narration: withNarration }, signal)
   );
 });
@@ -526,6 +543,8 @@ interface ApplyMarkerInput {
   assets?: string[];
   // A voiceover line to speak from the marker's start.
   narration?: string;
+  // The voice to read it in; the project's voice when absent.
+  voice?: string;
   // The saved plan item this came from, so progress is recorded in the plan file.
   key?: string;
   // A marker an interrupted earlier apply created for this item but never finished.
@@ -627,8 +646,9 @@ projectsRouter.post('/projects/:id/markers/apply', requireVideo, async (req, res
       // The voice is made first: it is quick, and the overlay is then generated knowing the line.
       const narration = typeof input.narration === 'string' ? input.narration.trim().slice(0, MAX_NARRATION_CHARS) : '';
       if (narration) {
-        const voice = readProject(id)?.voice;
-        setMarkerNarration(id, marker.marker_id, { text: narration, voice: isValidVoice(voice) ? voice : DEFAULT_VOICE });
+        const projectVoice = readProject(id)?.voice;
+        const voice = isValidVoice(input.voice) ? input.voice : isValidVoice(projectVoice) ? projectVoice : DEFAULT_VOICE;
+        setMarkerNarration(id, marker.marker_id, { text: narration, voice });
         send('progress', { index, markerId: marker.marker_id, attempt: 0, phase: 'voice' });
         try {
           const voiced = await generateNarration(id, marker.marker_id, signal);

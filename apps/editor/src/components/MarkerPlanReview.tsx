@@ -58,7 +58,10 @@ const rowStatus = (item: ReviewItem, markers: Marker[], run?: MarkerRunState): D
 };
 
 const sourceLine = (source: PlanSource): string | null => {
-  if (source.kind === 'idea') return `From your idea: "${source.idea}"`;
+  if (source.kind === 'idea') {
+    const voice = source.narration && source.voice ? ` Voiceover read by ${source.voice[0].toUpperCase()}${source.voice.slice(1)}.` : '';
+    return `From your idea: "${source.idea}"${voice}`;
+  }
   return source.context ? `From the transcript, with your instructions: "${source.context}"` : null;
 };
 

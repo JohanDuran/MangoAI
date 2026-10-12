@@ -62,6 +62,8 @@ async function startServer(extraEnv: Record<string, string> = {}): Promise<void>
     MANGO_LOG_DIR: process.env.MANGO_LOG_DIR!,
     MANGO_CLAUDE_PATH: fake,
     MANGO_SKIP_RENDER_CHECK: '1',
+    // Never reach the real OpenAI (the runner's .env may hold a real key): requests fail at once.
+    OPENAI_BASE_URL: 'http://127.0.0.1:9/v1',
     ...(bins ? { MANGO_FFMPEG: bins.ffmpeg, MANGO_FFPROBE: bins.ffprobe } : {}),
     ...extraEnv,
   };
@@ -245,6 +247,29 @@ test('Stop during apply removes the half-made marker and keeps the rest of the p
   assert.ok(after.plan.items.every((i: any) => i.markerId === undefined));
   const project = (await (await api(`/projects/${id}`)).json()) as { markers: unknown[] };
   assert.equal(project.markers.length, 0, 'the unfinished marker is gone');
+});
+
+test("a plan's voice is kept with it and reads its lines; otherwise the project's voice does", { skip }, async () => {
+  setMode('plan');
+  const id = await newProject();
+  await api(`/projects/${id}/voice`, { method: 'PUT', headers: json, body: JSON.stringify({ voice: 'coral' }) });
+  const planned = (await (
+    await api(`/projects/${id}/markers/plan-from-idea`, { method: 'POST', headers: json, body: JSON.stringify({ idea: 'two beats', narration: true, voice: 'onyx' }) })
+  ).json()) as any;
+  assert.equal(planned.plan.source.voice, 'onyx');
+  assert.equal((await getPlan(id)).plan.source.voice, 'onyx', 'kept with the saved plan');
+
+  setMode('ok');
+  const markers = [
+    { start: 0, end: 1.5, prompt: 'a', region: null, narration: 'First line.', voice: 'onyx' },
+    { start: 3, end: 4.5, prompt: 'b', region: null, narration: 'Second line.' },
+  ];
+  const { events } = await sse(`/projects/${id}/markers/apply`, { markers });
+  // Speech cannot be made here (no OpenAI), which is reported per marker without stopping the apply.
+  assert.equal(events.filter((e) => e.event === 'item-voice').length, 2, JSON.stringify(events));
+  const project = (await (await api(`/projects/${id}`)).json()) as { markers: { narration?: { voice: string } }[]; project: { voice?: string } };
+  assert.deepEqual(project.markers.map((m) => m.narration?.voice), ['onyx', 'coral']);
+  assert.equal(project.project.voice, 'coral', "a plan's voice does not change the project's");
 });
 
 test('applying a plan generates several markers at once', { skip }, async () => {
