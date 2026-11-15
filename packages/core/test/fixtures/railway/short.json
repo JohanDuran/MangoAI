@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "title": "$740K on AI with stolen keys (Railway breach)",
+  "words": "transcripts/narration.words.tsv",
+  "sources": { "main": "edit/main.mp4" },
+  "anchors": {
+    "end": "48.6"
+  },
+  "shots": [
+    { "name": "s01_hook", "end": 6.4, "note": "HyperFrames: $740,000 counter, key card",
+      "layers": [ { "src": "main", "ss": 0, "region": [0, 0, 1080, 1920], "card_w": 1080, "cy": 960, "keys": [[0, 1.0, 540, 960], ["dur", 1.0, 540, 960]] } ] },
+    { "name": "s02_attack", "end": 18.9, "note": "HyperFrames: attack flow + env-var scan",
+      "layers": [ { "src": "main", "ss": 6.4, "region": [0, 0, 1080, 1920], "card_w": 1080, "cy": 960, "keys": [[0, 1.0, 540, 960], ["dur", 1.0, 540, 960]] } ] },
+    { "name": "s03_stats", "end": 26.0, "note": "HyperFrames: up to 100,000 workspaces, Railway covers",
+      "layers": [ { "src": "main", "ss": 18.9, "region": [0, 0, 1080, 1920], "card_w": 1080, "cy": 960, "keys": [[0, 1.0, 540, 960], ["dur", 1.0, 540, 960]] } ] },
+    { "name": "s04_next", "end": 28.55, "note": "HyperFrames: your key could be next, 3 rules",
+      "layers": [ { "src": "main", "ss": 26.0, "region": [0, 0, 1080, 1920], "card_w": 1080, "cy": 960, "keys": [[0, 1.0, 540, 960], ["dur", 1.0, 540, 960]] } ] },
+    { "name": "s05_rules", "end": 42.55, "note": "HyperFrames: rules 1-3",
+      "layers": [ { "src": "main", "ss": 28.55, "region": [0, 0, 1080, 1920], "card_w": 1080, "cy": 960, "keys": [[0, 1.0, 540, 960], ["dur", 1.0, 540, 960]] } ] },
+    { "name": "s06_end", "end": "end", "note": "HyperFrames: skip the bill, long-video card",
+      "layers": [ { "src": "main", "ss": 42.55, "region": [0, 0, 1080, 1920], "card_w": 1080, "cy": 960, "keys": [[0, 1.0, 540, 960], ["dur", 1.0, 540, 960]] } ] }
+  ],
+  "graphics": [],
+  "captions": { "y": 1580, "max_words": 3 },
+  "audio": {
+    "narration": "audio/narration.wav",
+    "music": "../../sfx_library/dark-minimal-electronic-background-music_s1339252264_1.wav",
+    "music_db": -24,
+    "sfx": [
+      { "file": "../../sfx_library/fast-digital-counter-ticking-numbers-rol_s794647328_3.wav", "peak": 0.155, "at": [1.6], "gain": -12 },
+      { "file": "../../sfx_library/single-low-deep-thud-impact-soft-cinemat_s1905279013_1.wav", "peak": 0.029, "at": [3.1, 18.05, 19.2], "gain": -12 },
+      { "file": "../../sfx_library/quick-soft-whoosh-transition-sound-effec_s708222741_1.wav", "peak": 0.441, "at": [6.4, 18.9, 26.0, 28.55, 42.55], "gain": -8 },
+      { "file": "../../sfx_library/soft-ui-pop-sound-effect-short-bubbly-cl_s157384125_3.wav", "peak": 0.016, "at": [3.2, 6.45, 10.55, 13.4, 21.2, 27.75, 32.3, 34.35, 36.6, 39.05, 40.5, 46.3], "gain": -9 },
+      { "file": "../../sfx_library/notification-bell-ding-single-bright-met_s1669776307_1.wav", "peak": 0.37, "at": [37.4], "gain": -12 }
+    ]
+  },
+  "backdrop": { "c0": "0x141c28", "c1": "0x0a0d12" }
+}

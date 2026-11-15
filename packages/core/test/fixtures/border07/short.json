@@ -1,0 +1,1489 @@
+{
+ "version": 1,
+ "title": "Border Wars #7: Texarkana TX vs Texarkana AR",
+ "words": "transcripts/narration.words.tsv",
+ "sources": {
+  "map": "capture/map_line.png",
+  "tx_ext": "capture/photos/tx_00.jpg",
+  "tx_liv": "capture/photos/tx_02.jpg",
+  "tx_din": "capture/photos/tx_03.jpg",
+  "ar_ext": "capture/photos/ar_00.jpg",
+  "ar_air": "capture/photos/ar_01.jpg",
+  "ar_ext2": "capture/photos/ar_02.jpg",
+  "compare": "edit/compare.mp4"
+ },
+ "anchors": {
+  "tx1": "4.21",
+  "ar1": "5.62",
+  "split": "7.25",
+  "rules": "8.41",
+  "city": "12.98",
+  "bw": "17.62",
+  "tx": "20.31",
+  "tx2": "24.81",
+  "ar": "27.39",
+  "ar2": "31.03",
+  "inc": "34.34",
+  "prop": "38.33",
+  "arprop": "43.22",
+  "sales": "47.07",
+  "catchup": "52.50",
+  "compare": "57.09",
+  "end": "79.15",
+  "loop": "79.50"
+ },
+ "shots": [
+  {
+   "name": "s01_map",
+   "end": "tx1",
+   "note": "OSM map: Texarkana, State Line Ave highlighted, TX + AR pins",
+   "layers": [
+    {
+     "src": "map",
+     "still": true,
+     "card_w": 1080,
+     "cy": 1000,
+     "keys": [
+      [
+       0,
+       1.0,
+       750.0,
+       710.0
+      ],
+      [
+       "dur",
+       1.06,
+       750.0,
+       710.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1500,
+      1420
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s02_tx1",
+   "end": "ar1",
+   "note": "Texas house exterior",
+   "layers": [
+    {
+     "src": "tx_ext",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       341.5
+      ],
+      [
+       "dur",
+       1.12,
+       532.0,
+       341.5
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      683
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s03_ar1",
+   "end": "split",
+   "note": "Arkansas house exterior",
+   "layers": [
+    {
+     "src": "ar_ext",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       375.0
+      ],
+      [
+       "dur",
+       1.12,
+       492.0,
+       375.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      750
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s04_split",
+   "end": "rules",
+   "note": "both houses: which side pays more?",
+   "layers": [
+    {
+     "src": "tx_ext",
+     "still": true,
+     "card_w": 930,
+     "cy": 650,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       341.5
+      ],
+      [
+       "dur",
+       1.06,
+       512.0,
+       341.5
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      683
+     ]
+    },
+    {
+     "src": "ar_ext",
+     "still": true,
+     "card_w": 930,
+     "cy": 1340,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       375.0
+      ],
+      [
+       "dur",
+       1.06,
+       512.0,
+       375.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      750
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s05_rules",
+   "end": "city",
+   "note": "map: State Line Ave, TX no income tax / AR has one",
+   "layers": [
+    {
+     "src": "map",
+     "still": true,
+     "card_w": 1080,
+     "cy": 1000,
+     "keys": [
+      [
+       0,
+       1.0,
+       750.0,
+       710.0
+      ],
+      [
+       "dur",
+       1.08,
+       750.0,
+       710.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1500,
+      1420
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s06_city",
+   "end": "bw",
+   "note": "Arkansas aerial: except inside this city, since 1978",
+   "layers": [
+    {
+     "src": "ar_air",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       375.0
+      ],
+      [
+       "dur",
+       1.12,
+       512.0,
+       365.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      750
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s07_bw",
+   "end": "tx",
+   "note": "Texas living room: Border Wars #7",
+   "layers": [
+    {
+     "src": "tx_liv",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       341.5
+      ],
+      [
+       "dur",
+       1.1,
+       532.0,
+       341.5
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      683
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s08_tx",
+   "end": "tx2",
+   "note": "Texas exterior: $249,900",
+   "layers": [
+    {
+     "src": "tx_ext",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.05,
+       512.0,
+       341.5
+      ],
+      [
+       "dur",
+       1.18,
+       492.0,
+       341.5
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      683
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s09_tx2",
+   "end": "ar",
+   "note": "Texas dining: specs",
+   "layers": [
+    {
+     "src": "tx_din",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       341.5
+      ],
+      [
+       "dur",
+       1.12,
+       532.0,
+       341.5
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      683
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s10_ar",
+   "end": "ar2",
+   "note": "Arkansas exterior 2: $250,000",
+   "layers": [
+    {
+     "src": "ar_ext2",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.0,
+       512.0,
+       375.0
+      ],
+      [
+       "dur",
+       1.12,
+       532.0,
+       375.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      750
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s11_ar2",
+   "end": "inc",
+   "note": "Arkansas exterior push: specs",
+   "layers": [
+    {
+     "src": "ar_ext",
+     "still": true,
+     "card_w": 1080,
+     "cy": 860,
+     "keys": [
+      [
+       0,
+       1.1,
+       512.0,
+       375.0
+      ],
+      [
+       "dur",
+       1.25,
+       512.0,
+       365.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      750
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s12_inc",
+   "end": "prop",
+   "note": "map: income tax $0 on both sides",
+   "layers": [
+    {
+     "src": "map",
+     "still": true,
+     "card_w": 1080,
+     "cy": 1000,
+     "keys": [
+      [
+       0,
+       1.0,
+       750.0,
+       710.0
+      ],
+      [
+       "dur",
+       1.08,
+       750.0,
+       710.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1500,
+      1420
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s13_prop",
+   "end": "arprop",
+   "note": "Texas living room: property tax",
+   "layers": [
+    {
+     "src": "tx_liv",
+     "still": true,
+     "card_w": 1080,
+     "cy": 760,
+     "keys": [
+      [
+       0,
+       1.05,
+       512.0,
+       341.5
+      ],
+      [
+       "dur",
+       1.18,
+       492.0,
+       341.5
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      683
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s14_arprop",
+   "end": "sales",
+   "note": "Arkansas exterior 2: property tax, round 1",
+   "layers": [
+    {
+     "src": "ar_ext2",
+     "still": true,
+     "card_w": 1080,
+     "cy": 760,
+     "keys": [
+      [
+       0,
+       1.08,
+       512.0,
+       375.0
+      ],
+      [
+       "dur",
+       1.2,
+       492.0,
+       375.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      750
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s15_sales",
+   "end": "catchup",
+   "note": "map: sales tax 10.25% vs 8.25%",
+   "layers": [
+    {
+     "src": "map",
+     "still": true,
+     "card_w": 1080,
+     "cy": 1000,
+     "keys": [
+      [
+       0,
+       1.0,
+       750.0,
+       710.0
+      ],
+      [
+       "dur",
+       1.08,
+       750.0,
+       710.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1500,
+      1420
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s16_catchup",
+   "end": "compare",
+   "note": "Texas dining: $100,000 to catch up",
+   "layers": [
+    {
+     "src": "tx_din",
+     "still": true,
+     "card_w": 1080,
+     "cy": 760,
+     "keys": [
+      [
+       0,
+       1.05,
+       512.0,
+       341.5
+      ],
+      [
+       "dur",
+       1.18,
+       492.0,
+       341.5
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1024,
+      683
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s17_compare",
+   "end": "end",
+   "note": "HyperFrames: bars, answer, catch, DECODED, end card",
+   "layers": [
+    {
+     "src": "compare",
+     "still": false,
+     "card_w": 1080,
+     "cy": 960,
+     "keys": [
+      [
+       0,
+       1.0,
+       540.0,
+       960.0
+      ],
+      [
+       "dur",
+       1.0,
+       540.0,
+       960.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1080,
+      1920
+     ],
+     "ss": 0
+    }
+   ]
+  },
+  {
+   "name": "s18_loop",
+   "end": "loop",
+   "note": "first frame again so the video loops",
+   "layers": [
+    {
+     "src": "map",
+     "still": true,
+     "card_w": 1080,
+     "cy": 1000,
+     "keys": [
+      [
+       0,
+       1.0,
+       750.0,
+       710.0
+      ],
+      [
+       "dur",
+       1.0,
+       750.0,
+       710.0
+      ]
+     ],
+     "region": [
+      0,
+      0,
+      1500,
+      1420
+     ]
+    }
+   ]
+  }
+ ],
+ "graphics": [
+  {
+   "start": 0,
+   "end": "tx1",
+   "style": "Head",
+   "pos": [
+    540,
+    250
+   ],
+   "text": "ONE CITY. TWO STATES.",
+   "fs": 88
+  },
+  {
+   "start": 0,
+   "end": "tx1",
+   "style": "Tag",
+   "pos": [
+    540,
+    385
+   ],
+   "text": "SAME PRICE · $100 APART",
+   "fs": 46,
+   "box": "ink"
+  },
+  {
+   "start": 0,
+   "end": "tx1",
+   "style": "Tag",
+   "pos": [
+    260,
+    790
+   ],
+   "text": "TEXARKANA, TX",
+   "fs": 42,
+   "box": "#FF9F1C"
+  },
+  {
+   "start": 0,
+   "end": "tx1",
+   "style": "Tag",
+   "pos": [
+    840,
+    1020
+   ],
+   "text": "TEXARKANA, AR",
+   "fs": 42,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": 0,
+   "end": "tx1",
+   "style": "Big",
+   "pos": [
+    540,
+    1610
+   ],
+   "text": "WHO PAYS MORE?",
+   "fs": 104,
+   "color": "yellow"
+  },
+  {
+   "start": 0,
+   "end": "tx1",
+   "style": "Card",
+   "pos": [
+    60,
+    1478
+   ],
+   "text": "Map © OpenStreetMap contributors",
+   "fs": 24,
+   "color": "grey",
+   "bold": false,
+   "pop": false
+  },
+  {
+   "start": "tx1",
+   "end": "ar1",
+   "style": "Head",
+   "pos": [
+    540,
+    380
+   ],
+   "text": "TEXARKANA, TX",
+   "fs": 90,
+   "color": "#FF9F1C"
+  },
+  {
+   "start": "tx1",
+   "end": "ar1",
+   "style": "Big",
+   "pos": [
+    540,
+    1420
+   ],
+   "text": "$249,900",
+   "color": "yellow"
+  },
+  {
+   "start": "ar1",
+   "end": "split",
+   "style": "Head",
+   "pos": [
+    540,
+    380
+   ],
+   "text": "TEXARKANA, AR",
+   "fs": 90,
+   "color": "#3D8BFF"
+  },
+  {
+   "start": "ar1",
+   "end": "split",
+   "style": "Big",
+   "pos": [
+    540,
+    1420
+   ],
+   "text": "$250,000",
+   "color": "yellow"
+  },
+  {
+   "start": "split",
+   "end": "rules",
+   "style": "Head",
+   "pos": [
+    540,
+    200
+   ],
+   "text": "WHICH SIDE\\NPAYS MORE?",
+   "fs": 70
+  },
+  {
+   "start": "split",
+   "end": "rules",
+   "style": "Tag",
+   "pos": [
+    540,
+    370
+   ],
+   "text": "TEXARKANA, TX · $249,900",
+   "fs": 40,
+   "box": "#FF9F1C"
+  },
+  {
+   "start": "split",
+   "end": "rules",
+   "style": "Tag",
+   "pos": [
+    540,
+    1665
+   ],
+   "text": "TEXARKANA, AR · $250,000",
+   "fs": 40,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "7.60",
+   "end": "rules",
+   "style": "Tag",
+   "pos": [
+    540,
+    985
+   ],
+   "text": "GUESS BEFORE THE END",
+   "fs": 50,
+   "box": "green"
+  },
+  {
+   "start": "rules",
+   "end": "city",
+   "style": "Head",
+   "pos": [
+    540,
+    262
+   ],
+   "text": "STATE LINE AVENUE\\N= THE STATE LINE",
+   "fs": 64
+  },
+  {
+   "start": "rules",
+   "end": "city",
+   "style": "Tag",
+   "pos": [
+    518,
+    540
+   ],
+   "text": "STATE LINE AVE",
+   "fs": 34,
+   "box": "ink"
+  },
+  {
+   "start": "10.50",
+   "end": "city",
+   "style": "Tag",
+   "pos": [
+    260,
+    790
+   ],
+   "text": "TX: NO INCOME TAX",
+   "fs": 42,
+   "box": "green"
+  },
+  {
+   "start": "11.92",
+   "end": "city",
+   "style": "Tag",
+   "pos": [
+    840,
+    1020
+   ],
+   "text": "AR: INCOME TAX",
+   "fs": 42,
+   "box": "red"
+  },
+  {
+   "start": "rules",
+   "end": "city",
+   "style": "Card",
+   "pos": [
+    60,
+    1478
+   ],
+   "text": "Map © OpenStreetMap contributors",
+   "fs": 24,
+   "color": "grey",
+   "bold": false,
+   "pop": false
+  },
+  {
+   "start": "city",
+   "end": "bw",
+   "style": "Head",
+   "pos": [
+    540,
+    340
+   ],
+   "text": "EXCEPT INSIDE\\NTHIS CITY",
+   "fs": 80,
+   "color": "#3D8BFF"
+  },
+  {
+   "start": "14.52",
+   "end": "bw",
+   "style": "Big",
+   "pos": [
+    540,
+    1380
+   ],
+   "text": "$0 SINCE 1978",
+   "fs": 110,
+   "color": "green"
+  },
+  {
+   "start": "15.40",
+   "end": "bw",
+   "style": "Tag",
+   "pos": [
+    540,
+    1520
+   ],
+   "text": "ARKANSAS RESIDENTS OF TEXARKANA, AR",
+   "fs": 38,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "bw",
+   "end": "tx",
+   "style": "Head",
+   "pos": [
+    540,
+    340
+   ],
+   "text": "BORDER WARS #7",
+   "fs": 96,
+   "color": "yellow"
+  },
+  {
+   "start": "19.40",
+   "end": "tx",
+   "style": "Tag",
+   "pos": [
+    540,
+    1400
+   ],
+   "text": "LET'S DECODE IT",
+   "fs": 56,
+   "box": "green"
+  },
+  {
+   "start": "tx",
+   "end": "inc",
+   "style": "Tag",
+   "pos": [
+    220,
+    235
+   ],
+   "text": "BORDER WARS #7",
+   "fs": 40,
+   "box": "ink"
+  },
+  {
+   "start": "tx",
+   "end": "ar",
+   "style": "Head",
+   "pos": [
+    540,
+    340
+   ],
+   "text": "TEXARKANA, TX",
+   "fs": 90,
+   "color": "#FF9F1C"
+  },
+  {
+   "start": "21.30",
+   "end": "tx2",
+   "style": "Big",
+   "pos": [
+    540,
+    1380
+   ],
+   "text": "$249,900",
+   "color": "yellow"
+  },
+  {
+   "start": "tx2",
+   "end": "ar",
+   "style": "Tag",
+   "pos": [
+    540,
+    1360
+   ],
+   "text": "4 BD · 3 BA · 2,251 SQ FT",
+   "fs": 50,
+   "box": "#FF9F1C"
+  },
+  {
+   "start": "25.80",
+   "end": "ar",
+   "style": "Tag",
+   "pos": [
+    540,
+    1470
+   ],
+   "text": "0.66 ACRE · BUILT 1967",
+   "fs": 50,
+   "box": "#FF9F1C"
+  },
+  {
+   "start": "ar",
+   "end": "inc",
+   "style": "Head",
+   "pos": [
+    540,
+    340
+   ],
+   "text": "TEXARKANA, AR",
+   "fs": 90,
+   "color": "#3D8BFF"
+  },
+  {
+   "start": "29.80",
+   "end": "ar2",
+   "style": "Big",
+   "pos": [
+    540,
+    1380
+   ],
+   "text": "$250,000",
+   "color": "yellow"
+  },
+  {
+   "start": "31.10",
+   "end": "ar2",
+   "style": "Tag",
+   "pos": [
+    540,
+    1510
+   ],
+   "text": "JUST $100 MORE",
+   "fs": 46,
+   "box": "green"
+  },
+  {
+   "start": "ar2",
+   "end": "inc",
+   "style": "Tag",
+   "pos": [
+    540,
+    1360
+   ],
+   "text": "3 BD · 3 BA · 2,560 SQ FT",
+   "fs": 50,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "33.00",
+   "end": "inc",
+   "style": "Tag",
+   "pos": [
+    540,
+    1470
+   ],
+   "text": "1 ACRE · BUILT 1970",
+   "fs": 50,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "inc",
+   "end": "prop",
+   "style": "Head",
+   "pos": [
+    540,
+    262
+   ],
+   "text": "STATE INCOME TAX",
+   "fs": 80
+  },
+  {
+   "start": "inc",
+   "end": "prop",
+   "style": "Tag",
+   "pos": [
+    518,
+    540
+   ],
+   "text": "STATE LINE AVE",
+   "fs": 34,
+   "box": "ink"
+  },
+  {
+   "start": "35.10",
+   "end": "prop",
+   "style": "Tag",
+   "pos": [
+    260,
+    790
+   ],
+   "text": "TX: $0",
+   "fs": 46,
+   "box": "green"
+  },
+  {
+   "start": "35.40",
+   "end": "prop",
+   "style": "Tag",
+   "pos": [
+    840,
+    1020
+   ],
+   "text": "AR: $0 IN THE CITY",
+   "fs": 42,
+   "box": "green"
+  },
+  {
+   "start": "36.40",
+   "end": "prop",
+   "style": "Big",
+   "pos": [
+    540,
+    1610
+   ],
+   "text": "PROPERTY TAX DECIDES",
+   "fs": 84,
+   "color": "yellow"
+  },
+  {
+   "start": "inc",
+   "end": "prop",
+   "style": "Card",
+   "pos": [
+    60,
+    1478
+   ],
+   "text": "Map © OpenStreetMap contributors",
+   "fs": 24,
+   "color": "grey",
+   "bold": false,
+   "pop": false
+  },
+  {
+   "start": "prop",
+   "end": "arprop",
+   "style": "Head",
+   "pos": [
+    540,
+    300
+   ],
+   "text": "TEXARKANA, TX",
+   "fs": 90,
+   "color": "#FF9F1C"
+  },
+  {
+   "start": "prop",
+   "end": "arprop",
+   "style": "Tag",
+   "pos": [
+    540,
+    1240
+   ],
+   "text": "PROPERTY TAX · WITH HOMESTEAD",
+   "fs": 42,
+   "box": "#FF9F1C"
+  },
+  {
+   "start": "39.20",
+   "end": "arprop",
+   "style": "Big",
+   "pos": [
+    540,
+    1390
+   ],
+   "text": "~$4,286 / YR",
+   "fs": 124,
+   "color": "red"
+  },
+  {
+   "start": "arprop",
+   "end": "sales",
+   "style": "Head",
+   "pos": [
+    540,
+    300
+   ],
+   "text": "TEXARKANA, AR",
+   "fs": 90,
+   "color": "#3D8BFF"
+  },
+  {
+   "start": "arprop",
+   "end": "sales",
+   "style": "Tag",
+   "pos": [
+    540,
+    1240
+   ],
+   "text": "PROPERTY TAX · WITH $675 CREDIT",
+   "fs": 42,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "44.20",
+   "end": "sales",
+   "style": "Big",
+   "pos": [
+    540,
+    1390
+   ],
+   "text": "~$2,235 / YR",
+   "fs": 124,
+   "color": "green"
+  },
+  {
+   "start": "44.90",
+   "end": "sales",
+   "style": "Tag",
+   "pos": [
+    540,
+    1540
+   ],
+   "text": "ROUND 1: ARKANSAS",
+   "fs": 50,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "sales",
+   "end": "catchup",
+   "style": "Head",
+   "pos": [
+    540,
+    262
+   ],
+   "text": "BUT SALES TAX",
+   "fs": 88
+  },
+  {
+   "start": "sales",
+   "end": "catchup",
+   "style": "Tag",
+   "pos": [
+    518,
+    540
+   ],
+   "text": "STATE LINE AVE",
+   "fs": 34,
+   "box": "ink"
+  },
+  {
+   "start": "49.10",
+   "end": "catchup",
+   "style": "Tag",
+   "pos": [
+    840,
+    1020
+   ],
+   "text": "AR SIDE: 10.25%",
+   "fs": 44,
+   "box": "red"
+  },
+  {
+   "start": "50.30",
+   "end": "catchup",
+   "style": "Tag",
+   "pos": [
+    260,
+    790
+   ],
+   "text": "TX SIDE: 8.25%",
+   "fs": 44,
+   "box": "#FF9F1C"
+  },
+  {
+   "start": "sales",
+   "end": "catchup",
+   "style": "Card",
+   "pos": [
+    60,
+    1478
+   ],
+   "text": "Map © OpenStreetMap contributors",
+   "fs": 24,
+   "color": "grey",
+   "bold": false,
+   "pop": false
+  },
+  {
+   "start": "catchup",
+   "end": "compare",
+   "style": "Head",
+   "pos": [
+    540,
+    300
+   ],
+   "text": "TO CATCH UP\\NYOU'D SPEND",
+   "fs": 72,
+   "color": "#FF9F1C"
+  },
+  {
+   "start": "54.30",
+   "end": "compare",
+   "style": "Big",
+   "pos": [
+    540,
+    1390
+   ],
+   "text": "~$100,000 / YR",
+   "fs": 116,
+   "color": "yellow"
+  },
+  {
+   "start": "54.60",
+   "end": "compare",
+   "style": "Tag",
+   "pos": [
+    540,
+    1530
+   ],
+   "text": "ON TAXED STUFF",
+   "fs": 44,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "end",
+   "end": "loop",
+   "style": "Head",
+   "pos": [
+    540,
+    250
+   ],
+   "text": "ONE CITY. TWO STATES.",
+   "fs": 88
+  },
+  {
+   "start": "end",
+   "end": "loop",
+   "style": "Tag",
+   "pos": [
+    540,
+    385
+   ],
+   "text": "SAME PRICE · $100 APART",
+   "fs": 46,
+   "box": "ink"
+  },
+  {
+   "start": "end",
+   "end": "loop",
+   "style": "Tag",
+   "pos": [
+    260,
+    790
+   ],
+   "text": "TEXARKANA, TX",
+   "fs": 42,
+   "box": "#FF9F1C"
+  },
+  {
+   "start": "end",
+   "end": "loop",
+   "style": "Tag",
+   "pos": [
+    840,
+    1020
+   ],
+   "text": "TEXARKANA, AR",
+   "fs": 42,
+   "box": "#3D8BFF"
+  },
+  {
+   "start": "end",
+   "end": "loop",
+   "style": "Big",
+   "pos": [
+    540,
+    1610
+   ],
+   "text": "WHO PAYS MORE?",
+   "fs": 104,
+   "color": "yellow"
+  },
+  {
+   "start": "end",
+   "end": "loop",
+   "style": "Card",
+   "pos": [
+    60,
+    1478
+   ],
+   "text": "Map © OpenStreetMap contributors",
+   "fs": 24,
+   "color": "grey",
+   "bold": false,
+   "pop": false
+  }
+ ],
+ "captions": {
+  "y": 1775,
+  "max_words": 3
+ },
+ "audio": {
+  "narration": "audio/narration.wav",
+  "music": "../../sfx_library/dark-minimal-electronic-background-music_s1339252264_1.wav",
+  "music_db": -23,
+  "sfx": [
+   {
+    "file": "../../sfx_library/quick-soft-whoosh-transition-sound-effec_s708222741_1.wav",
+    "peak": 0.441,
+    "at": [
+     "tx1",
+     "ar1",
+     "split",
+     "rules",
+     "city",
+     "tx",
+     "ar",
+     "inc",
+     "prop",
+     "sales",
+     "compare"
+    ],
+    "gain": -9
+   },
+   {
+    "file": "../../sfx_library/soft-ui-pop-sound-effect-short-bubbly-cl_s157384125_3.wav",
+    "peak": 0.016,
+    "at": [
+     "7.60",
+     "10.50",
+     "11.92",
+     "15.40",
+     "19.40",
+     "21.30",
+     "tx2",
+     "25.80",
+     "29.80",
+     "31.10",
+     "ar2",
+     "33.00",
+     "35.10",
+     "35.40",
+     "44.90",
+     "50.30",
+     "54.60",
+     "compare + 0.3",
+     "compare + 0.85",
+     "compare + 4.2",
+     "compare + 12.8",
+     "compare + 16.7",
+     "compare + 17.95",
+     "compare + 18.8",
+     "compare + 19.5",
+     "compare + 20.8"
+    ],
+    "gain": -8
+   },
+   {
+    "file": "../../sfx_library/single-low-deep-thud-impact-soft-cinemat_s1905279013_1.wav",
+    "peak": 0.029,
+    "at": [
+     "14.52",
+     "39.20",
+     "44.20",
+     "49.10",
+     "54.30",
+     "compare + 2.5",
+     "compare + 8.35",
+     "compare + 14.85"
+    ],
+    "gain": -12
+   },
+   {
+    "file": "../../sfx_library/rubber-stamp-slamming-down-on-paper-on-a_s263565476_3.wav",
+    "peak": 0.01,
+    "at": [
+     "compare + 15.8"
+    ],
+    "gain": -6
+   },
+   {
+    "file": "../../sfx_library/short-bright-synth-chime-two-rising-note_s1525748883_1.wav",
+    "peak": 0.017,
+    "at": [
+     "compare + 19.5"
+    ],
+    "gain": 4
+   }
+  ]
+ },
+ "backdrop": {
+  "c0": "0x16191d",
+  "c1": "0x0b0c0e"
+ }
+}

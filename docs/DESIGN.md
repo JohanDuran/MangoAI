@@ -166,6 +166,8 @@ only the comps whose cue values changed are marked stale for export.
 
 ## 4. Data: the project file
 
+> Built in phase 0. The exact format is in [PROJECT_FORMAT.md](PROJECT_FORMAT.md); the sketch below is the original idea.
+
 `<project>/cut.json` (OTIO-shaped, versioned, human-readable, small diffs). Sketch:
 
 ```jsonc
@@ -390,19 +392,44 @@ Phases 1–5 are the MVP for Shorts, which is where most of your videos are righ
 
 ---
 
-## 11. Decisions I need from you
+## 11. Decisions (all settled 2026-11-15)
 
-- **D1. Decided (2026-11-15): MangoAI.** The old marker app was renamed to CutRoomAI on GitHub to free the name.
-- **D2. Window.** Browser tab on localhost (my pick: simplest, fastest to build) or desktop window (Electron).
-- **D3. Decided (2026-11-15): Claude-centric.** Everything starts in the chat; the editor never sends anything
-  to Claude. Hand edits reach Claude through Save and revisions (section 6).
-- **D4. media-toolbox.** MangoAI is separate, but may *call* the toolbox for TTS / transcribe / SFX generate /
-  HyperFrames render (it already has Docker + GPU), or do everything itself with local ffmpeg + `npx hyperframes`.
-  My pick: own ffmpeg + HyperFrames for preview/export (no Docker needed to edit), toolbox only for AI jobs.
-- **D5. First target.** Shorts first (my pick), or long-form recordings first.
-- **D6. One comp per scene** for new videos (my pick), or keep whole-video comps and only cache them whole.
-- **D7. "Run now" button** (headless Claude from the editor, CutRoomAI-style): later and optional (my pick), or never.
-- **D8. Decided (2026-11-15): new repo** `JohanDuran/MangoAI`, porting CutRoomAI's proven parts (section 12).
+- **D1. Name: MangoAI.** The old marker app was renamed to CutRoomAI on GitHub to free the name.
+- **D2. Window: browser tab** on localhost. An Electron wrapper can come later; nothing depends on it.
+- **D3. Claude-centric.** Everything starts in the chat; the editor never sends anything to Claude. Hand edits
+  reach Claude through Save and revisions (section 6).
+- **D4. Own ffmpeg + HyperFrames** for preview and export (no Docker needed to edit); media-toolbox only for AI
+  jobs (TTS, transcribe, SFX generation).
+- **D5. Shorts first**, but the model and engine are built for **50-minute videos from day one** (section 13).
+- **D6. One comp per scene** for new videos.
+- **D7. "Run now" button**: later and optional.
+- **D8. New repo** `JohanDuran/MangoAI`, porting CutRoomAI's proven parts (section 12).
+
+---
+
+## 13. Long videos (30–50 min) are a first-class target
+
+Shorts come first, but nothing may be designed so that it only works for 60 seconds. A 50-minute talking-head
+or screen-recording edit is roughly: 3,000 s of source, **500–2,000 clips** after cuts, **~8,000 words** of
+transcript, 50–150 SFX, 20–60 graphics scenes, one or more 50-min audio files.
+
+| Area | What breaks at 50 min if done naively | What MangoAI does |
+|---|---|---|
+| Project file | Words or waveforms inlined → 5–20 MB JSON, slow saves, huge diffs | `cut.json` holds only edit data (~1 KB per clip); words stay in `words.tsv`, peaks in `.mangoai/` |
+| Edits | Copying the whole project per op → laggy drags, giant undo history | Ops mutate in place through an index (clip id → track/position) and store only their inverse; undo history = ops, not snapshots |
+| Anchors | Scanning 8,000 words per lookup, re-resolving everything per change | Word index (normalized word → occurrences) built once per transcript; resolve is O(clips) and cached; target < 20 ms for 2,000 clips |
+| Validation | Full schema check on every keystroke | Full check on load/save; each op validates only its own payload |
+| Timeline UI | One DOM node per clip/word | Canvas, drawing only the visible window; level-of-detail (words and waveforms appear when zoomed in) |
+| Waveforms | One peak file at one resolution | Multi-resolution peaks (e.g. 64 / 512 / 4096 samples per pixel), loaded per visible range |
+| Playback | Seeking in 50-min H.264 with 10 s GOPs | Proxies (540p, 1 s GOP), made in the background, editing allowed before they finish |
+| Thumbnails | Decoding frames on the fly | Thumbnail strips per source at a few zoom levels, cached |
+| Export | One 50-min render per change | Segments between edit points cached by hash; a change at 32:10 re-encodes that segment, concat for the rest |
+| Graphics | One comp for the whole video | One comp per scene (D6); only scenes inside the visible window are mounted in the preview |
+| Claude's view | Sending the whole timeline into context | MCP tools take a time window (`project_state(from, to)`), summaries for the rest |
+| Transcript | Whole transcript in context | `transcript(from, to)` and word search |
+
+Phase 0 includes a synthetic **50-minute benchmark** (2,000 clips, 8,000 words) that runs in the tests, so these
+targets are checked from the start, not discovered in phase 7.
 
 ---
 

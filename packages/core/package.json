@@ -1,0 +1,15 @@
+{
+  "name": "@mangoai/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "MangoAI project model: cut.json schema, time expressions, edit operations, importers.",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  }
+}
