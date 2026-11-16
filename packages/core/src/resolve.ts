@@ -18,7 +18,7 @@ export interface ResolvedClip {
   /** Source in point and speed after speedTo, for media clips. */
   in?: number;
   speed?: number;
-  /** Zoom keys with absolute times. */
+  /** Zoom keys with times resolved (clip-local seconds, as the toolbox uses them). */
   keys?: [number, number, number, number][];
 }
 

@@ -379,8 +379,8 @@ what an export will cost before you press it. Background pre-render of stale com
 
 | Phase | You get | Done when |
 |---|---|---|
-| **0. Model** | `cut.json` schema, ops, short.json importer | all existing Shorts import without loss |
-| **1. Viewer** | open a folder, media pool, multi-track timeline, live playback with audio, waveforms | Railway_AI_Keys plays in sync, no render |
+| **0. Model** ✅ | `cut.json` schema, ops, short.json importer | all existing Shorts import without loss |
+| **1. Viewer** ✅ | open a folder, media pool, multi-track timeline, live playback with audio, waveforms | Railway_AI_Keys plays in sync, no render (median video/audio offset 4–24 ms) |
 | **2. Editing** | select/move/trim/split/ripple, snapping (playhead, markers, words), gain/fades, undo | a full Short tweak pass done by hand in the app |
 | **3. Claude + Save** | MCP server (state, frame, selection, apply_ops), Save/revisions/history, the "what changed" hook, drafts | you fix something by hand, save, and Claude knows on your next message |
 | **4. Requests** | click-to-target HF elements, range + region placeholders, comp versions, self-check stills | "change this" and "make something at 10:00–10:20" both work end to end |

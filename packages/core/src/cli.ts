@@ -5,8 +5,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { exportShortJson, importShortJson } from './import/shortJson.js';
-import { formatJson, loadWords, probeProjectMedia, readJson, writeProject } from './io.js';
+import { exportShortJson } from './import/shortJson.js';
+import { formatJson, loadWords, readJson, writeProject } from './io.js';
+import { importFolder } from './node.js';
 import { resolveProject } from './resolve.js';
 import { validateProject, type Project } from './schema.js';
 
@@ -23,15 +24,6 @@ async function specPath(arg: string): Promise<{ dir: string; file: string }> {
     throw new Error(`${arg}: no cut.json or short.json`);
   }
   return { dir: path.dirname(abs), file: abs };
-}
-
-/** Import a short.json with its words and media lengths (so SFX get spread over tracks). */
-export async function importFolder(dir: string, file: string): Promise<Project> {
-  const spec = await readJson(file);
-  const words = await loadWords(dir, (spec.words as string) ?? 'transcripts/narration.words.tsv');
-  const audio = (spec.audio ?? {}) as { sfx?: { file: string }[] };
-  const durations = await probeProjectMedia(dir, (audio.sfx ?? []).map((s) => s.file));
-  return importShortJson(spec, { ...(words && { words }), durations });
 }
 
 async function load(arg: string) {

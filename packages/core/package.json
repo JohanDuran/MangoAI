@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "description": "MangoAI project model: cut.json schema, time expressions, edit operations, importers.",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p ."
