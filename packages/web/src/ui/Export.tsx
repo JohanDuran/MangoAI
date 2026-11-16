@@ -1,0 +1,125 @@
+// Export: render once at the end, re-rendering only what changed. The plan shows which parts are already
+// rendered (green on the timeline's cache bar) and which comps need a HyperFrames render.
+import { useEffect, useState } from 'react';
+import { api, type ExportJob } from '../api';
+import type { Player } from '../engine/player';
+import { studio, useStudio } from '../store';
+import { timecode } from './Transport';
+
+interface Plan {
+  segments: { t0: number; t1: number; cached: boolean; key: string }[];
+  comps: { clip: string; comp: string; cached: boolean }[];
+  output: string;
+  estimate: string;
+}
+
+export function ExportPanel({ player }: { player: Player | null }) {
+  const s = useStudio();
+  const dir = s.opened?.dir ?? '';
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const job = s.exportJob;
+  const rev = s.editor?.project.revision ?? 0;
+
+  const load = () =>
+    api.get<Plan>(`/api/export/plan?${new URLSearchParams({ dir })}`).then(
+      (p) => {
+        setPlan(p);
+        setErr(null);
+        studio.cachePlan = p.segments;
+        studio.emit();
+      },
+      (e: Error) => setErr(e.message),
+    );
+  useEffect(() => {
+    if (dir) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dir, rev, job?.state]);
+
+  const start = async (range?: [number, number]) => {
+    if (studio.dirty && !(await studio.save())) return;
+    try {
+      await api.post<{ job: ExportJob }>('/api/export', { dir, ...(range && { range }) });
+    } catch (e) {
+      studio.flash((e as Error).message, true);
+    }
+  };
+  const otio = async () => {
+    if (studio.dirty && !(await studio.save())) return;
+    try {
+      const r = await api.post<{ path: string }>('/api/export/otio', { dir });
+      studio.flash(`Wrote ${r.path}`);
+    } catch (e) {
+      studio.flash((e as Error).message, true);
+    }
+  };
+  const fps = s.editor?.project.fps ?? 30;
+  const busy = job && (job.state === 'planning' || job.state === 'rendering');
+  const todo = plan ? plan.segments.filter((x) => !x.cached).length : 0;
+  const compsTodo = plan ? plan.comps.filter((x) => !x.cached).length : 0;
+  return (
+    <div className="panel side-body">
+      <div className="panel-body">
+        {err && <div className="error-text small">{err}</div>}
+        {plan && (
+          <>
+            <dl>
+              <dt>Output</dt>
+              <dd className="small">{plan.output}</dd>
+              <dt>Picture</dt>
+              <dd>
+                {plan.segments.length - todo} of {plan.segments.length} parts already rendered
+              </dd>
+              <dt>Comps</dt>
+              <dd>{plan.comps.length ? `${plan.comps.length - compsTodo} of ${plan.comps.length} cached` : 'none'}</dd>
+              <dt>Estimate</dt>
+              <dd>{plan.estimate}</dd>
+            </dl>
+            <ul className="segments small">
+              {plan.segments.map((seg) => (
+                <li key={seg.key} className={seg.cached ? 'cached' : 'stale'}>
+                  <button className="ghost tc" onClick={() => player?.seek(seg.t0)}>
+                    {timecode(seg.t0, fps)}–{timecode(seg.t1, fps)}
+                  </button>{' '}
+                  {seg.cached ? 'rendered' : 'will render'}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <div className="actions">
+          <button className="primary" disabled={!!busy} onClick={() => void start()}>
+            {busy ? 'Exporting…' : 'Export'}
+          </button>
+          <button disabled={!!busy || !s.range} onClick={() => s.range && void start(s.range)} title="Render just the I/O range to check it exactly">
+            Render range
+          </button>
+          <button onClick={() => void otio()} title="OpenTimelineIO, to finish in DaVinci Resolve">
+            Export .otio
+          </button>
+        </div>
+        {job && (
+          <div className={`job ${job.state}`}>
+            <div className="bar">
+              <div style={{ width: `${Math.round(job.progress * 100)}%` }} />
+            </div>
+            <div className="small">{job.message}</div>
+            {job.output && job.state === 'done' && (
+              <div className="small">
+                <a href={api.fileUrl(job.output, dir)} target="_blank" rel="noreferrer">
+                  {job.output.split(/[\\/]/).pop()}
+                </a>{' '}
+                · {job.took?.toFixed(1)} s{job.reused !== undefined ? ` · reused ${job.reused}, rendered ${job.rendered}` : ''}
+              </div>
+            )}
+            {job.error && <pre className="error-text small">{job.error}</pre>}
+          </div>
+        )}
+        <p className="muted small">
+          Saves first. Each part between edit points is cached by what's in it, so after a small change only that part
+          and any changed comp render again; the rest is joined from cache.
+        </p>
+      </div>
+    </div>
+  );
+}

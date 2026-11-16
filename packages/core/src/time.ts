@@ -55,6 +55,27 @@ export class WordIndex {
     return m[3] ? w.e : w.s;
   }
 
+  /** The `word:` reference for words[i] (e.g. "word:use#2"), so a clip can be linked to that word. */
+  refOf(i: number, end = false): string {
+    const w = this.words[i];
+    if (!w) throw new TimeError(`no word ${i}`);
+    const k = normWord(w.w);
+    const n = (this.byText.get(k) ?? []).indexOf(w) + 1;
+    return `word:${k}${n > 1 ? `#${n}` : ''}${end ? '.end' : ''}`;
+  }
+
+  /** Index of the first word that ends after t (binary search). */
+  firstAfter(t: number): number {
+    let lo = 0;
+    let hi = this.words.length;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (this.words[m]!.e <= t) lo = m + 1;
+      else hi = m;
+    }
+    return lo;
+  }
+
   get end(): number {
     const last = this.words[this.words.length - 1];
     if (!last) throw new TimeError('words_end: the transcript is empty');
@@ -101,6 +122,26 @@ function term(tok: string, scope: TimeScope): number {
     return scope.words.end;
   }
   throw new TimeError(`unknown time term ${JSON.stringify(tok)}`);
+}
+
+/**
+ * Move a time by `delta` seconds without breaking what it's linked to: 2.5 → 2.8,
+ * "word:so" → "word:so + 0.3", "s02.start + 0.5" → "s02.start + 0.8".
+ */
+export function shiftExpr(expr: TimeExpr, delta: number): TimeExpr {
+  if (Math.abs(delta) < 5e-5) return expr;
+  if (typeof expr === 'number') return round4(expr + delta);
+  const e = expr.trim();
+  if (NUMBER.test(e)) return round4(Number(e) + delta);
+  const m = /^(.*\S)\s+([+-])\s+(\d+\.?\d*|\.\d+)$/.exec(e);
+  let base = e;
+  let off = delta;
+  if (m && !NUMBER.test(m[1]!)) {
+    base = m[1]!;
+    off = round4((m[2] === '-' ? -1 : 1) * Number(m[3]) + delta);
+  }
+  if (Math.abs(off) < 5e-5) return base;
+  return `${base} ${off < 0 ? '-' : '+'} ${round4(Math.abs(off))}`;
 }
 
 /** Names (anchors, sections, timeline_end, start/dur) an expression refers to; for dependency checks. */

@@ -52,7 +52,12 @@ export const MediaClip = z
     keys: z.array(ZoomKey).optional(),
     /** dB. */
     gain: z.number().optional(),
+    /** Seconds of fade at the clip's head and tail (sound for audio, picture for video). */
+    fadeIn: z.number().nonnegative().optional(),
+    fadeOut: z.number().nonnegative().optional(),
     loop: z.boolean().optional(),
+    /** The words of this source are in transcripts[name], in source time (long-form recordings). */
+    transcript: z.string().optional(),
   })
   .strict();
 
@@ -92,8 +97,11 @@ export const CompClip = z
     ...ClipBase,
     type: z.literal('comp'),
     comp: z.string().min(1),
-    /** Values passed into the comp; times may be expressions, resolved by MangoAI. */
-    vars: z.record(z.union([TimeExpr, z.boolean(), z.null()])).optional(),
+    /**
+     * Values passed into the comp (its data-composition-variables). A string starting with "@" is a time
+     * expression, passed as seconds from the clip's start: "@word:hundred" → 2.35.
+     */
+    vars: z.record(z.unknown()).optional(),
   })
   .strict();
 
@@ -143,6 +151,39 @@ export type Section = z.infer<typeof Section>;
 export const Anchor = z.object({ name: Name, at: TimeExpr }).strict();
 export type Anchor = z.infer<typeof Anchor>;
 
+/**
+ * A request: you point at something in the editor and say what you want; Claude does it from the chat.
+ * kind "change": an existing clip or element. kind "create": something new over a time range (and region).
+ */
+export const Request = z
+  .object({
+    id: Id,
+    kind: z.enum(['change', 'create']),
+    status: z.enum(['open', 'working', 'done', 'rejected']),
+    text: z.string(),
+    /** Playhead when the request was made. */
+    t: z.number().optional(),
+    clip: z.string().optional(),
+    /** The element clicked inside a HyperFrames comp or a title. */
+    element: z
+      .object({ selector: z.string().optional(), id: z.string().optional(), text: z.string().optional(), box: Rect.optional() })
+      .strict()
+      .optional(),
+    range: z.tuple([z.number(), z.number()]).optional(),
+    /** Box on the frame, normalized 0-1: [x, y, w, h]. */
+    region: Rect.optional(),
+    /** Media pool files to use (paths relative to the project folder). */
+    assets: z.array(z.string()).optional(),
+    /** A still of the frame with the target boxed (.mangoai/requests/<id>.png). */
+    still: z.string().optional(),
+    /** Claude's answer: what was done, or why not. */
+    reply: z.string().optional(),
+    created: z.string(),
+    extra: Extra.optional(),
+  })
+  .strict();
+export type Request = z.infer<typeof Request>;
+
 export const Project = z
   .object({
     format: z.literal(FORMAT),
@@ -162,6 +203,7 @@ export const Project = z
     anchors: z.array(Anchor),
     sections: z.array(Section),
     tracks: z.array(Track),
+    requests: z.array(Request).optional(),
     master: z.object({ loudness: z.number().optional(), limiter: z.number().optional() }).strict().optional(),
     /** Fields kept from an import that MangoAI does not model yet. */
     extra: Extra.optional(),
@@ -205,6 +247,11 @@ export function validateProject(data: unknown): { ok: true; project: Project } |
   for (const [i, a] of p.anchors.entries()) {
     if (names.has(a.name)) problems.push({ path: `anchors.${i}.name`, message: `duplicate name ${a.name}` });
     names.add(a.name);
+  }
+  const reqIds = new Set<string>();
+  for (const [i, r] of (p.requests ?? []).entries()) {
+    if (reqIds.has(r.id)) problems.push({ path: `requests.${i}.id`, message: `duplicate request id ${r.id}` });
+    reqIds.add(r.id);
   }
   for (const [i, s] of p.sections.entries()) {
     if (names.has(s.id)) problems.push({ path: `sections.${i}.id`, message: `name ${s.id} is already used` });

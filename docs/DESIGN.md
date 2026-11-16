@@ -381,14 +381,36 @@ what an export will cost before you press it. Background pre-render of stale com
 |---|---|---|
 | **0. Model** ✅ | `cut.json` schema, ops, short.json importer | all existing Shorts import without loss |
 | **1. Viewer** ✅ | open a folder, media pool, multi-track timeline, live playback with audio, waveforms | Railway_AI_Keys plays in sync, no render (median video/audio offset 4–24 ms) |
-| **2. Editing** | select/move/trim/split/ripple, snapping (playhead, markers, words), gain/fades, undo | a full Short tweak pass done by hand in the app |
-| **3. Claude + Save** | MCP server (state, frame, selection, apply_ops), Save/revisions/history, the "what changed" hook, drafts | you fix something by hand, save, and Claude knows on your next message |
-| **4. Requests** | click-to-target HF elements, range + region placeholders, comp versions, self-check stills | "change this" and "make something at 10:00–10:20" both work end to end |
-| **5. Export** | cached per-clip HF renders + one ffmpeg pass, cache bar, loudness | a one-title change exports in seconds + one comp render |
-| **6. Anchors** | word/marker/clip anchors, comp variables | re-voicing a line needs no manual re-timing |
-| **7. Long-form** | proxies at scale, transcript editing, OTIO export to Resolve | a 20-min recording rough cut in MangoAI |
+| **2. Editing** ✅ | select/move/trim/split/ripple, snapping (playhead, markers, words), gain/fades, undo | a full Short tweak pass done by hand in the app |
+| **3. Claude + Save** ✅ | MCP server (state, frame, selection, apply_ops), Save/revisions/history, the "what changed" hook, drafts | you fix something by hand, save, and Claude knows on your next message |
+| **4. Requests** ✅ | click-to-target HF elements, range + region placeholders, comp versions, self-check stills | "change this" and "make something at 10:00–10:20" both work end to end |
+| **5. Export** ✅ | cached per-clip HF renders + one ffmpeg pass, cache bar, loudness | a one-title change exports in seconds + one comp render |
+| **6. Anchors** ✅ | word/marker/clip anchors, comp variables | re-voicing a line needs no manual re-timing |
+| **7. Long-form** ✅ | proxies at scale, transcript editing, OTIO export to Resolve | a 20-min recording rough cut in MangoAI |
 
 Phases 1–5 are the MVP for Shorts, which is where most of your videos are right now.
+
+### What was built, and what's left (2026-11-15)
+- **2**: drag to move (also across tracks), edge trims, split (S), delete / ripple delete, nudge, copy/paste/duplicate,
+  snapping to playhead, clip edges, sections, markers and words, gain and fades (picture and sound), track
+  mute/hide/lock, editable inspector with raw JSON, drop files from the media pool. Undo/redo for everything.
+- **3**: Save / Ctrl+S writes a revision (`.mangoai/revisions/`, `history.jsonl`); drafts every 2 s; Claude's saves
+  arrive live and slot under your unsaved edits (`Editor.rebase`); stale edits are refused with what changed. MCP
+  server `packages/mcp` (17 tools) and the hook `packages/mcp/hook.mjs`; `npm run claude-setup -- --yes` registers both.
+- **4**: request mode (R): click picks the exact element inside a comp (or a title), drag draws a box; requests with
+  stills, range placeholders on the ruler; live HyperFrames comps in the viewer (runtime injected, seeked to the
+  clock); `comp_create` scaffolds a comp in the box; versions you flip in the inspector; `comp_stills` on grey.
+- **5**: segments cut at edit points, cached by content hash; comps rendered once per content; one cached mix,
+  measured and gained to −14 LUFS; concat without re-encoding; cache bar on the timeline; exact range check render.
+  Railway_AI_Keys: first export 36 s, re-export after moving one comp 9.8 s (4 of 5 parts reused).
+- **6**: snapping a clip onto a word/marker/section links it; link/unlink in the inspector; markers (M) you drag;
+  comp variables with `"@word:…"` times; words follow the voice clip, so cutting or re-voicing re-times what's linked.
+- **7**: transcript panel (follow, find, cut words, cut pauses/fillers), words mapped through the recording's clips,
+  one-pass multi-range ripple (25 pause cuts on a 900-clip, 50-min timeline: 78 ms), OTIO export.
+- **Not done**: "Run now" (D7, optional); multi-resolution peaks and thumbnail strips (single 100/s peaks are
+  ~1 MB for 50 min, fine so far); background proxies for every large file (proxies are made only for files the
+  browser can't play); the comp *preview* draws comps above all canvas layers below the top-most comp track, while
+  export keeps exact track order.
 
 ---
 

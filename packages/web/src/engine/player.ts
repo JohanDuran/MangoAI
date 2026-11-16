@@ -1,7 +1,7 @@
 // Live playback: an AudioContext is the master clock; video elements and the canvas follow it.
 // Nothing is rendered to a file. Short audio (SFX, music, a Short's narration) is decoded into buffers
 // and scheduled sample-accurately; long audio (a 50-min voice track) streams through a media element.
-import type { Clip, MediaClip, Project, Resolved, TitleClip } from '@mangoai/core';
+import type { Clip, CompClip, MediaClip, Project, Resolved, TitleClip } from '@mangoai/core';
 import type { Opened, MediaInfo } from '../api';
 import { TimelineIndex, type Span } from './index';
 import { captionGroups, cardGeometry, color, drawCaption, drawTitle, findGroup, titleLayer, type CaptionGroup } from './look';
@@ -18,6 +18,59 @@ interface VideoSlot {
   el: HTMLVideoElement;
   clipId: string;
   ready: boolean;
+}
+
+interface CompSlot {
+  el: HTMLIFrameElement;
+  url: string;
+  track: string;
+  ready: boolean;
+  lastT: number;
+}
+
+type CompWindow = Window & {
+  __player?: { renderSeek?: (t: number) => void; seek?: (t: number) => void };
+  __timelines?: Record<string, { seek: (t: number, suppress?: boolean) => void }>;
+};
+
+/** The folder token the server uses in /comp/<token>/ URLs (base64url of the absolute path). */
+export function tokenOf(abs: string): string {
+  const bytes = new TextEncoder().encode(abs);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Seek a HyperFrames page: its runtime player if it has one, else its root GSAP timeline. */
+export function seekComp(el: HTMLIFrameElement, local: number) {
+  const w = el.contentWindow as CompWindow | null;
+  if (!w) return;
+  try {
+    if (w.__player?.renderSeek) return w.__player.renderSeek(local);
+    if (w.__player?.seek) return w.__player.seek(local);
+    const tls = w.__timelines;
+    if (tls) (tls.main ?? Object.values(tls)[0])?.seek(local, false);
+  } catch {
+    // a comp with a script error: leave it where it is
+  }
+}
+
+/** Gain envelope for a clip: fade in from its start, fade out to its end, from wherever we are now. */
+function envelope(p: AudioParam, level: number, a: number, b: number, fi: number, fo: number, now: number) {
+  const val = (x: number) => {
+    let v = level;
+    if (fi > 0 && x < a + fi) v *= Math.max(0, Math.min(1, (x - a) / fi));
+    if (fo > 0 && Number.isFinite(b) && x > b - fo) v *= Math.max(0, Math.min(1, (b - x) / fo));
+    return v;
+  };
+  const at = Math.max(a, now);
+  p.cancelScheduledValues(0);
+  p.setValueAtTime(val(at), at);
+  if (fi > 0 && a + fi > at) p.linearRampToValueAtTime(val(a + fi), a + fi);
+  if (fo > 0 && Number.isFinite(b)) {
+    if (b - fo > at) p.setValueAtTime(val(b - fo), b - fo);
+    if (b > at) p.linearRampToValueAtTime(0, b);
+  }
 }
 
 interface Voice {
@@ -49,7 +102,15 @@ export class Player {
   /** Measured each frame while playing: worst |video time − expected| in seconds. */
   lastDrift = 0;
 
-  constructor(private opened: Opened, private getResolved: () => Resolved, private words: readonly { w: string; s: number; e: number }[] | null, private lufs: (src: string) => number | null) {
+  /** Layers above the top-most comp track (captions, titles over an animation). */
+  private topCanvas: HTMLCanvasElement | null = null;
+  /** Holds one iframe per HyperFrames comp in view. */
+  private compLayer: HTMLElement | null = null;
+  private comps = new Map<string, CompSlot>();
+  /** Bumped when comp files change (Claude edited a scene): iframes reload. */
+  compVersion = new Map<string, number>();
+
+  constructor(private opened: Opened, private getResolved: () => Resolved, private getWords: () => readonly { w: string; s: number; e: number }[] | null, private lufs: (src: string) => number | null) {
     this.limiter = this.ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -1.5;
     this.limiter.knee.value = 0;
@@ -87,14 +148,30 @@ export class Player {
     };
   }
 
-  attach(canvas: HTMLCanvasElement | null) {
+  attach(canvas: HTMLCanvasElement | null, top: HTMLCanvasElement | null = null, compLayer: HTMLElement | null = null) {
     this.canvas = canvas;
+    this.topCanvas = top;
+    this.compLayer = compLayer;
+    for (const c of this.comps.values()) c.el.remove();
+    this.comps.clear();
     this.dirty = true;
+  }
+
+  private get words() {
+    return this.getWords();
   }
 
   /** Call after the project changed (an edit, an undo). */
   rebuild() {
     this.index = new TimelineIndex(this.project, this.getResolved());
+    // comps whose clip changed (other file, new version) are re-created on the next frame
+    for (const [id, slot] of [...this.comps]) {
+      const c = this.index.tracks.get(slot.track)?.spans.find((sp) => sp.id === id)?.clip;
+      if (!c || c.type !== 'comp' || this.compUrl(c) !== slot.url) {
+        slot.el.remove();
+        this.comps.delete(id);
+      }
+    }
     this.captions.clear();
     if (this.playing) this.restartAudio();
     this.dirty = true;
@@ -176,7 +253,7 @@ export class Player {
    * Draw the frame at `t` once every video involved has seeked, then return it as a PNG (works even when the
    * page isn't visible and animation frames are paused).
    */
-  async snapshot(t: number): Promise<Blob> {
+  async snapshot(t: number, box: [number, number, number, number] | null = null, layer: 'all' | 'base' | 'top' = 'all'): Promise<Blob> {
     this.pause();
     this.anchorT = Math.max(0, Math.min(t, this.duration));
     this.syncVideo(this.anchorT);
@@ -197,9 +274,35 @@ export class Player {
     this.draw(this.anchorT); // creates image elements for stills in view
     for (const i of this.images.values()) if (!i.complete) await new Promise((r) => i.addEventListener('load', r, { once: true }));
     this.draw(this.anchorT);
-    const cv = this.canvas;
-    if (!cv) throw new Error('no viewer canvas');
-    return new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'));
+    const base = this.canvas;
+    if (!base) throw new Error('no viewer canvas');
+    // base + layers painted over the comps (comps themselves are iframes; the server adds them for frames)
+    const out = document.createElement('canvas');
+    out.width = base.width;
+    out.height = base.height;
+    const ctx = out.getContext('2d')!;
+    if (layer !== 'top') ctx.drawImage(base, 0, 0);
+    if (layer !== 'base' && this.topCanvas) ctx.drawImage(this.topCanvas, 0, 0);
+    if (box) {
+      ctx.strokeStyle = '#FFD400';
+      ctx.lineWidth = Math.max(4, out.width / 270);
+      ctx.setLineDash([18, 10]);
+      ctx.strokeRect(box[0], box[1], box[2], box[3]);
+    }
+    return new Promise((res, rej) => out.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), 'image/png'));
+  }
+
+  /** What a frame needs from the server to be complete: the comps on screen and their local times. */
+  compsAt(t: number): { clip: string; comp: string; local: number; vars: Record<string, unknown> }[] {
+    const out: { clip: string; comp: string; local: number; vars: Record<string, unknown> }[] = [];
+    const idx = this.index;
+    if (!idx) return out;
+    for (const track of this.project.tracks) {
+      if (track.kind !== 'graphics' || track.hidden) continue;
+      for (const sp of idx.tracks.get(track.id)?.at(t) ?? [])
+        if (sp.clip.type === 'comp') out.push({ clip: sp.id, comp: sp.clip.comp, local: Math.round((t - sp.start) * 1e4) / 1e4, vars: this.getResolved().clips.get(sp.id)?.vars ?? {} });
+    }
+    return out;
   }
 
   dispose() {
@@ -285,13 +388,15 @@ export class Player {
         src.loop = true;
         // toolbox bed: 50 ms fade in, 1.3 s fade out at the end of the video
         g.gain.setValueAtTime(0, Math.max(at, this.ctx.currentTime));
-        g.gain.linearRampToValueAtTime(level, Math.max(at, this.ctx.currentTime) + (s.start >= t ? 0.05 : 0.01));
-        const fadeStart = when + (end - 1.3 - t);
-        if (fadeStart > at) {
+        g.gain.linearRampToValueAtTime(level, Math.max(at, this.ctx.currentTime) + (s.start >= t ? (c.fadeIn ?? 0.05) : 0.01));
+        const fo = c.fadeOut ?? 1.3;
+        const fadeEnd = Math.min(stopAt, when + (end - t));
+        const fadeStart = fadeEnd - fo;
+        if (fadeStart > at && fo > 0) {
           g.gain.setValueAtTime(level, fadeStart);
-          g.gain.linearRampToValueAtTime(0, fadeStart + 1.3);
+          g.gain.linearRampToValueAtTime(0, fadeEnd);
         }
-      } else g.gain.value = level;
+      } else envelope(g.gain, level, when + (s.start - t), stopAt, c.fadeIn ?? 0, c.fadeOut ?? 0, this.ctx.currentTime);
       src.connect(g);
       const startCtx = Math.max(at, this.ctx.currentTime);
       const lateBy = startCtx - at; // async decode may finish after the start time
@@ -308,7 +413,7 @@ export class Player {
     el.playbackRate = speed;
     const node = this.ctx.createMediaElementSource(el);
     node.connect(g);
-    g.gain.value = level;
+    envelope(g.gain, level, when + (s.start - t), stopAt, c.fadeIn ?? 0, c.fadeOut ?? 0, this.ctx.currentTime);
     const expected = (now: number) => inPt + (now - s.start) * speed;
     el.currentTime = Math.max(inPt, offset);
     const startIn = Math.max(0, at - this.ctx.currentTime);
@@ -470,18 +575,111 @@ export class Player {
     // the toolbox lays Shorts out on a 1080-wide frame; scale for other formats
     const k = p.width / 1080;
     ctx.setTransform(k, 0, 0, k, 0, 0);
-    for (const track of p.tracks) {
-      if (track.hidden) continue;
-      if (track.kind === 'captions') {
-        if (track.enabled !== false) this.drawCaptions(ctx, track.id, (track.style ?? {}) as { y?: number; max_words?: number }, t);
-        continue;
+    // tracks above the last one holding a comp paint on the top canvas, over the comp iframes
+    let lastComp = -1;
+    p.tracks.forEach((tr, i) => {
+      if (!tr.hidden && tr.kind === 'graphics' && tr.clips.some((c) => c.type === 'comp')) lastComp = i;
+    });
+    const top = this.topCanvas;
+    let tctx: CanvasRenderingContext2D | null = null;
+    if (top) {
+      if (top.width !== p.width || top.height !== p.height) {
+        top.width = p.width;
+        top.height = p.height;
       }
-      if (track.kind === 'audio') continue;
-      let spans = idx.tracks.get(track.id)?.at(t) ?? [];
-      if (track.kind === 'graphics')
-        spans = [...spans].sort((a, b) => layerOf(a.clip) - layerOf(b.clip) || a.order - b.order);
-      for (const s of spans) this.drawClip(ctx, s, t);
+      tctx = top.getContext('2d');
+      if (tctx) {
+        tctx.setTransform(1, 0, 0, 1, 0, 0);
+        tctx.clearRect(0, 0, top.width, top.height);
+        tctx.setTransform(k, 0, 0, k, 0, 0);
+      }
     }
+    const wanted = new Set<string>();
+    for (const [ti, track] of p.tracks.entries()) {
+      if (track.hidden) continue;
+      if (track.kind === 'graphics' && this.compLayer)
+        for (const sp of idx.tracks.get(track.id)?.query(t - 0.05, t + PREROLL) ?? [])
+          if (sp.clip.type === 'comp') {
+            wanted.add(sp.id);
+            this.syncComp(sp, track.id, ti, t);
+          }
+      this.drawTrack(lastComp >= 0 && ti > lastComp && tctx ? tctx : ctx, track, t);
+    }
+    for (const [id, slot] of [...this.comps])
+      if (!wanted.has(id)) {
+        slot.el.remove();
+        this.comps.delete(id);
+      }
+  }
+
+  private drawTrack(ctx: CanvasRenderingContext2D, track: Project['tracks'][number], t: number) {
+    const idx = this.index!;
+    if (track.kind === 'captions') {
+      if (track.enabled !== false) this.drawCaptions(ctx, track.id, (track.style ?? {}) as { y?: number; max_words?: number }, t);
+      return;
+    }
+    if (track.kind === 'audio') return;
+    let spans = idx.tracks.get(track.id)?.at(t) ?? [];
+    if (track.kind === 'graphics') spans = [...spans].sort((a, b) => layerOf(a.clip) - layerOf(b.clip) || a.order - b.order);
+    for (const s of spans) this.drawClip(ctx, s, t);
+  }
+
+  // --- HyperFrames comps -------------------------------------------------------------------------
+  compUrl(c: Clip): string {
+    if (c.type !== 'comp') return '';
+    const v = Math.max(this.compVersion.get(c.id) ?? 0, this.compVersion.get('*') ?? 0);
+    const vars = JSON.stringify(this.getResolved().clips.get(c.id)?.vars ?? {});
+    const folder = /^([a-z]:[\\/]|[\\/])/i.test(c.comp) ? c.comp : `${this.opened.dir.replace(/[\\/]$/, '')}/${c.comp}`;
+    return `/comp/${tokenOf(folder)}/index.html?${new URLSearchParams({ clip: c.id, v: String(v), vars })}`;
+  }
+
+  /** One iframe per comp clip in view (or about to be), seeked to clip-local time every frame. */
+  private syncComp(sp: Span, trackId: string, z: number, t: number) {
+    const c = sp.clip as CompClip;
+    let slot = this.comps.get(sp.id);
+    const url = this.compUrl(c);
+    if (!slot || slot.url !== url) {
+      slot?.el.remove();
+      const el = document.createElement('iframe');
+      el.className = 'comp-frame';
+      el.src = url;
+      el.dataset.clip = sp.id;
+      el.setAttribute('scrolling', 'no');
+      el.style.width = `${this.project.width}px`;
+      el.style.height = `${this.project.height}px`;
+      el.style.zIndex = String(z);
+      const s2: CompSlot = { el, url, track: trackId, ready: false, lastT: -1 };
+      el.addEventListener('load', () => {
+        s2.ready = true;
+        s2.lastT = -1;
+        this.dirty = true;
+      });
+      this.compLayer!.appendChild(el);
+      this.comps.set(sp.id, s2);
+      slot = s2;
+    }
+    const active = t >= sp.start && t < sp.end;
+    slot.el.style.visibility = active ? 'visible' : 'hidden';
+    if (!active || !slot.ready) return;
+    const local = Math.max(0, t - sp.start);
+    if (Math.abs(local - slot.lastT) < 1e-4) return;
+    slot.lastT = local;
+    seekComp(slot.el, local);
+  }
+
+  /** Comps on screen now, top first: their iframes and clip-local times (for picking and for frames). */
+  activeComps(t = this.time()): { clip: string; el: HTMLIFrameElement; local: number }[] {
+    const out: { clip: string; el: HTMLIFrameElement; local: number }[] = [];
+    for (const [id, slot] of this.comps) {
+      const sp = this.index?.tracks.get(slot.track)?.spans.find((x) => x.id === id);
+      if (sp && t >= sp.start && t < sp.end) out.push({ clip: id, el: slot.el, local: t - sp.start });
+    }
+    return out.sort((a, b) => Number(b.el.style.zIndex) - Number(a.el.style.zIndex));
+  }
+
+  /** The top canvas (layers over comps), for snapshots. */
+  get overlayCanvas() {
+    return this.topCanvas;
   }
 
   private drawClip(ctx: CanvasRenderingContext2D, s: Span, t: number) {
@@ -507,6 +705,7 @@ export class Player {
     }
     if (c.type === 'title') return drawTitle(ctx, c as TitleClip, local, s.end - s.start);
     if (c.type === 'comp') {
+      if (this.compLayer) return; // drawn by its iframe
       ctx.fillStyle = 'rgba(255,179,71,0.18)';
       ctx.fillRect(0, 0, 1080, 1920);
       ctx.fillStyle = '#ffb347';
@@ -544,6 +743,13 @@ export class Player {
       return;
     }
     ctx.save();
+    const dur = s.end - s.start;
+    const fi = c.fadeIn ?? 0;
+    const fo = c.fadeOut ?? 0;
+    let alpha = 1;
+    if (fi > 0 && local < fi) alpha = Math.min(alpha, local / fi);
+    if (fo > 0 && dur - local < fo) alpha = Math.min(alpha, (dur - local) / fo);
+    ctx.globalAlpha = Math.max(0, alpha);
     if (c.dim) ctx.filter = 'blur(6px) brightness(0.72)';
     ctx.drawImage(source, geo.sx * scale, geo.sy * scale, geo.sw * scale, geo.sh * scale, geo.dx, geo.dy, geo.dw, geo.dh);
     ctx.filter = 'none';

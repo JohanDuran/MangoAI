@@ -1,0 +1,196 @@
+// Requests: point at something (click a graphic, or draw a box over a time range) and say what you want.
+// They're saved in cut.json with the rest of the edit, so Claude sees them after you Save. Claude answers
+// in the chat and sets each one to working / done / rejected; comp edits keep versions you can flip between.
+import type { CompClip, Request } from '@mangoai/core';
+import { useEffect, useState } from 'react';
+import { api } from '../api';
+import type { Player } from '../engine/player';
+import { studio, useStudio } from '../store';
+import { setCompFields } from './Inspector';
+import { timecode } from './Transport';
+
+const STATUS: Record<Request['status'], string> = { open: '○ open', working: '◐ Claude is on it', done: '● done', rejected: '✕ not done' };
+
+export function Requests({ player }: { player: Player | null }) {
+  const s = useStudio();
+  const [text, setText] = useState('');
+  const [assets, setAssets] = useState<string[]>([]);
+  const p = s.editor!.project;
+  const fps = p.fps;
+  const list = p.requests ?? [];
+  const t = player?.time() ?? 0;
+  const picked = s.picked;
+  const kind: Request['kind'] = picked ? 'change' : 'create';
+  const range = s.range ?? (s.region ? ([Math.round(t * 1e3) / 1e3, Math.round((t + 3) * 1e3) / 1e3] as [number, number]) : null);
+
+  const add = async () => {
+    const ed = studio.editor;
+    if (!ed || !text.trim()) return;
+    const id = ed.freshId('r');
+    const req: Request = {
+      id,
+      kind,
+      status: 'open',
+      text: text.trim(),
+      t: Math.round(t * 1e4) / 1e4,
+      created: new Date().toISOString(),
+      ...(picked && { clip: picked.clip }),
+      ...(picked && (picked.selector || picked.box) && {
+        element: { ...(picked.selector && { selector: picked.selector }), ...(picked.id && { id: picked.id }), ...(picked.text && { text: picked.text }), ...(picked.box && { box: picked.box }) },
+      }),
+      ...(!picked && range && { range }),
+      ...(s.region && { region: s.region }),
+      ...(assets.length && { assets }),
+    };
+    // a still of the frame with the target boxed, so Claude sees what you saw
+    if (player) {
+      try {
+        const box = picked?.box ?? (s.region ? [s.region[0] * p.width, s.region[1] * p.height, s.region[2] * p.width, s.region[3] * p.height] : null);
+        const blob = await player.snapshot(t, box as [number, number, number, number] | null);
+        const res = await fetch(`/api/snapshot?${new URLSearchParams({ dir: studio.opened!.dir, name: `request-${id}`, folder: 'requests' })}`, { method: 'POST', body: blob });
+        const out = (await res.json()) as { rel?: string };
+        if (out.rel) req.still = out.rel;
+      } catch {}
+    }
+    if (studio.apply([{ op: 'add_request', request: req }], `request ${id}: ${req.text}`)) {
+      setText('');
+      setAssets([]);
+      studio.setPicked(null);
+      studio.setRegion(null);
+      studio.flash('Request added. Save (Ctrl+S) and Claude will see it on your next message');
+    }
+  };
+
+  return (
+    <div className="panel side-body">
+      <div className="panel-body">
+        <div className={`compose ${s.mode === 'request' ? 'on' : ''}`}>
+          <div className="row">
+            <button className={s.mode === 'request' ? 'on' : ''} onClick={() => studio.setMode(s.mode === 'request' ? 'edit' : 'request')}>
+              {s.mode === 'request' ? 'Pointing… (Esc to stop)' : '✎ Point in the viewer'}
+            </button>
+          </div>
+          <div className="target small">
+            {picked ? (
+              <>
+                <b>Change</b> {picked.clip}
+                {picked.selector && <> › <code>{picked.selector}</code></>}
+                {picked.text && <div className="muted">“{picked.text.slice(0, 60)}”</div>}
+              </>
+            ) : s.region || s.range ? (
+              <>
+                <b>New</b> {range ? `${timecode(range[0], fps)} – ${timecode(range[1], fps)}` : ''}
+                {s.region && <span className="muted"> · box {s.region.map((v) => v.toFixed(2)).join(', ')}</span>}
+                {!s.range && <div className="muted">Set the time range with I / O or Shift-drag on the ruler (default: 3 s from the playhead)</div>}
+              </>
+            ) : (
+              <span className="muted">Click a graphic in the viewer to change it, or draw a box (and set a range) for something new. Or just describe it.</span>
+            )}
+          </div>
+          <textarea
+            rows={3}
+            placeholder={picked ? 'What should change? e.g. count up slower, make it yellow' : 'What should go here? e.g. animated diagram of the request going through 3 servers'}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void add();
+            }}
+          />
+          <div
+            className="assets small"
+            onDragOver={(e) => e.dataTransfer.types.includes('text/mango-path') && e.preventDefault()}
+            onDrop={(e) => {
+              const path = e.dataTransfer.getData('text/mango-path');
+              if (path) setAssets((a) => [...new Set([...a, studio.srcOf(path)])]);
+            }}
+          >
+            {assets.length ? assets.map((a) => (
+              <span key={a} className="chip">
+                {a.split('/').pop()} <button className="link" onClick={() => setAssets((x) => x.filter((y) => y !== a))}>✕</button>
+              </span>
+            )) : <span className="muted">Drop files from the media pool here to use them (a logo, a screenshot)</span>}
+          </div>
+          <button className="primary" disabled={!text.trim()} onClick={() => void add()}>
+            Add request
+          </button>
+        </div>
+
+        <h4>Requests ({list.length})</h4>
+        {list.length === 0 && <div className="muted small">None yet.</div>}
+        <ul className="requests">
+          {[...list].reverse().map((r) => (
+            <li key={r.id} className={`req ${r.status}`}>
+              <div className="row">
+                <span className="small">{STATUS[r.status]}</span>
+                <span className="spacer" />
+                <button className="ghost tc small" onClick={() => player?.seek(r.range?.[0] ?? r.t ?? 0)}>
+                  {timecode(r.range?.[0] ?? r.t ?? 0, fps)}
+                </button>
+              </div>
+              <div>{r.text}</div>
+              <div className="muted small">
+                {r.id} · {r.kind === 'change' ? `change ${r.clip ?? ''}${r.element?.selector ? ` › ${r.element.selector}` : ''}` : `new ${r.range ? `${(r.range[1] - r.range[0]).toFixed(1)} s` : ''}`}
+                {r.assets?.length ? ` · ${r.assets.length} asset(s)` : ''}
+              </div>
+              {r.reply && <div className="reply small">Claude: {r.reply}</div>}
+              <div className="row small">
+                {r.status !== 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'open' } }], `reopened ${r.id}`)}>reopen</button>}
+                {r.status === 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'done' } }], `closed ${r.id}`)}>mark done</button>}
+                <button className="link" onClick={() => studio.apply([{ op: 'remove_request', id: r.id }], `removed ${r.id}`)}>remove</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+interface Versions {
+  versions: { v: number; at: string; note?: string }[];
+  current: number | null;
+}
+
+/** Comp clip fields in the inspector: the scene folder and its versions (◀ v3 / v4 ▶). */
+function CompFieldsWithVersions({ clip }: { clip: CompClip }) {
+  const dir = studio.opened?.dir ?? '';
+  const [ver, setVer] = useState<Versions | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get<Versions>(`/api/comp/versions?${new URLSearchParams({ dir, clip: clip.id, comp: clip.comp })}`).then(setVer, () => setVer(null));
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clip.id, clip.comp, studio.compVersion.get(clip.id)]);
+  const go = async (action: 'switch' | 'snapshot', v?: number) => {
+    setBusy(true);
+    try {
+      await api.post('/api/comp/versions', { dir, clip: clip.id, comp: clip.comp, action, v });
+      await load();
+    } catch (e) {
+      studio.flash((e as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const list = ver?.versions ?? [];
+  const cur = ver?.current ?? null;
+  const i = cur === null ? list.length : list.findIndex((x) => x.v === cur);
+  return (
+    <>
+      <dt>Comp</dt>
+      <dd className="small" title={clip.comp}>{clip.comp}</dd>
+      <dt>Vars</dt>
+      <dd className="small">{clip.vars ? <code>{JSON.stringify(clip.vars)}</code> : <span className="muted">none</span>}</dd>
+      <dt>Versions</dt>
+      <dd className="row small">
+        <button disabled={busy || i <= 0} onClick={() => void go('switch', list[i - 1]!.v)} title="Older version">◀</button>
+        <span>{list.length === 0 ? 'only this one' : cur === null ? `current (after v${list[list.length - 1]!.v})` : `v${cur} of ${list.length}`}</span>
+        <button disabled={busy || cur === null || i >= list.length - 1} onClick={() => void go('switch', list[i + 1]!.v)} title="Newer version">▶</button>
+        <button className="ghost" disabled={busy} onClick={() => void go('snapshot')} title="Keep a copy of the comp as it is now">Keep a copy</button>
+      </dd>
+    </>
+  );
+}
+
+setCompFields(CompFieldsWithVersions);

@@ -1,0 +1,16 @@
+{
+  "name": "@mangoai/mcp",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "MangoAI tools for Claude (MCP server over stdio) and the Claude Code hook that reports what changed.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@mangoai/core": "0.0.1",
+    "@modelcontextprotocol/sdk": "1.12.1",
+    "zod": "3.25.76"
+  }
+}

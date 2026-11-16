@@ -2,7 +2,8 @@
 // Pure and O(clips + words); a broken expression becomes a Problem on that item instead of failing the
 // whole timeline, so the editor can still show everything else.
 import type { Clip, Problem, Project } from './schema.js';
-import { evalTime, frameOf, TimeError, WordIndex, type TimeScope } from './time.js';
+import { evalTime, frameOf, TimeError, WordIndex, type TimeScope, type Word } from './time.js';
+import { hasMappedTranscripts, mapWords, type TimelineWord } from './wordmap.js';
 
 export interface ResolvedSection {
   id: string;
@@ -20,6 +21,8 @@ export interface ResolvedClip {
   speed?: number;
   /** Zoom keys with times resolved (clip-local seconds, as the toolbox uses them). */
   keys?: [number, number, number, number][];
+  /** Comp variables with "@" time expressions turned into seconds from the clip's start. */
+  vars?: Record<string, unknown>;
 }
 
 export interface Resolved {
@@ -29,15 +32,40 @@ export interface Resolved {
   /** End of the timeline: the last section's end, else the latest clip end. */
   end: number;
   problems: Problem[];
+  /** The words as heard on the timeline (mapped through the clips that carry a transcript). */
+  words: readonly TimelineWord[];
+  /** What `word:` terms were looked up in (the first transcript, on the timeline). */
+  wordIndex?: WordIndex;
 }
 
 export interface ResolveOptions {
   words?: WordIndex;
   /** Media lengths in seconds by src, to give audio clips without `end` a length. */
   durations?: ReadonlyMap<string, number>;
+  /** Every transcript's words in source time, by name; lets words follow the clips that play them. */
+  transcripts?: Readonly<Record<string, readonly Word[]>>;
 }
 
+/**
+ * Resolve every time. When clips carry a transcript (a recording, the narration), words are first mapped
+ * through those clips onto the timeline, then `word:` terms are looked up in the mapped words: cut or move
+ * the voice and everything linked to its words follows.
+ */
 export function resolveProject(project: Project, opts: ResolveOptions = {}): Resolved {
+  const first = resolveOnce(project, opts);
+  if (!opts.transcripts || !hasMappedTranscripts(project)) {
+    const name = Object.keys(project.transcripts)[0];
+    const words: TimelineWord[] = (opts.words?.words ?? []).map((w, i) => ({ ...w, transcript: name ?? '', i }));
+    return { ...first, words, ...(opts.words && { wordIndex: opts.words }) };
+  }
+  const all = mapWords(project, first.clips, opts.transcripts);
+  const name = Object.keys(project.transcripts)[0];
+  const index = new WordIndex(all.filter((w) => w.transcript === name));
+  const second = resolveOnce(project, { ...opts, words: index });
+  return { ...second, words: all, wordIndex: index };
+}
+
+function resolveOnce(project: Project, opts: ResolveOptions): Omit<Resolved, 'words' | 'wordIndex'> {
   const problems: Problem[] = [];
   const names = new Map<string, number>();
   const anchors = new Map<string, number>();
@@ -116,6 +144,16 @@ export function resolveProject(project: Project, opts: ResolveOptions = {}): Res
           if (t !== undefined) out.keys!.push([t, k[1], k[2], k[3]]);
         });
       }
+    }
+    if (c.type === 'comp' && c.vars) {
+      const vars: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(c.vars)) {
+        if (typeof v === 'string' && v.startsWith('@')) {
+          const at = tryEval(v.slice(1), `${path}.vars.${k}`);
+          vars[k] = at === undefined ? null : Math.round((at - start) * 1e4) / 1e4;
+        } else vars[k] = v;
+      }
+      out.vars = vars;
     }
     if (end !== null && end < start) problems.push({ path: `${path}.end`, message: `clip ${c.id} ends before it starts` });
     clips.set(c.id, out);

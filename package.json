@@ -9,7 +9,9 @@
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "mango": "tsx packages/core/src/cli.ts",
-    "start": "npm start -w @mangoai/server"
+    "start": "npm start -w @mangoai/server",
+    "claude-setup": "tsx packages/mcp/src/install.ts",
+    "mcp": "tsx packages/mcp/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "22.10.2",

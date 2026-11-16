@@ -113,7 +113,7 @@ export function importShortJson(spec: Json, opts: ImportOptions = {}): Project {
     const ax = split(s.audio, ['narration', 'music', 'music_db', 'sfx']);
     const a = ax.known as { narration?: string; music?: string; music_db?: number; sfx?: Json[] };
     if (a.narration !== undefined)
-      tracks.push({ id: 'A1', kind: 'audio', role: 'voice', name: 'Voice', clips: [{ id: 'voice', type: 'media', src: a.narration, start: 0, origin: 'narration' }] });
+      tracks.push({ id: 'A1', kind: 'audio', role: 'voice', name: 'Voice', clips: [{ id: 'voice', type: 'media', src: a.narration, start: 0, origin: 'narration', transcript: 'voice' }] });
     const sfxClips: MediaClip[] = [];
     (a.sfx ?? []).forEach((fx, i) => {
       const fxx = split(fx, ['file', 'peak', 'at', 'gain']);

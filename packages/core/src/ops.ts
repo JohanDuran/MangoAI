@@ -1,7 +1,7 @@
 // Every change to a project, from the mouse or from Claude, is a list of small ops. Ops mutate the project
 // in place through an index (so a drag on a 2,000-clip timeline doesn't copy anything), and each applied op
 // records its exact inverse. Undo history is ops, never snapshots.
-import { Anchor, Clip, clipAllowedOn, Section, Track, type Project, type TimeExpr } from './schema.js';
+import { Anchor, Clip, clipAllowedOn, Request, Section, Track, type Project, type TimeExpr } from './schema.js';
 import { resolveProject, type Resolved, type ResolveOptions } from './resolve.js';
 import { round4 } from './time.js';
 
@@ -21,7 +21,10 @@ export type Op =
   | { op: 'add_section'; section: Section; index?: number }
   | { op: 'remove_section'; id: string }
   | { op: 'update_section'; id: string; set: Patch<Omit<Section, 'id'>> }
-  | { op: 'set_title'; title: string | null };
+  | { op: 'set_title'; title: string | null }
+  | { op: 'add_request'; request: Request; index?: number }
+  | { op: 'update_request'; id: string; set: Record<string, unknown> }
+  | { op: 'remove_request'; id: string };
 
 export type Author = 'you' | 'claude';
 
@@ -53,7 +56,7 @@ export class Editor {
   /** Goes up on every applied change; cheap "did anything change" check for views. */
   version = 0;
 
-  constructor(project: Project, private readonly resolveOpts: ResolveOptions = {}) {
+  constructor(project: Project, readonly resolveOpts: ResolveOptions = {}) {
     this.project = project;
     this.reindex();
   }
@@ -85,6 +88,81 @@ export class Editor {
   }
   get history(): readonly Change[] {
     return this.undoStack;
+  }
+
+  // --- saving -----------------------------------------------------------------------------
+  /** The undo stack as it was at the last save; what's different from it is unsaved. */
+  private savedStack: Change[] = [];
+
+  markSaved() {
+    this.savedStack = [...this.undoStack];
+  }
+
+  private commonPrefix(): number {
+    let k = 0;
+    while (k < this.savedStack.length && k < this.undoStack.length && this.savedStack[k] === this.undoStack[k]) k++;
+    return k;
+  }
+
+  /** Changes between the saved state and now (undoing past a save counts as an unsaved change too). */
+  unsaved(): Change[] {
+    const k = this.commonPrefix();
+    const undone = this.savedStack
+      .slice(k)
+      .reverse()
+      .map((c): Change => ({ ...c, label: `undo: ${c.label}`, ops: c.inverse, inverse: c.ops, summary: c.summary.map((x) => `undid: ${x}`) }));
+    return [...undone, ...this.undoStack.slice(k)];
+  }
+
+  get dirty(): boolean {
+    return this.unsaved().length > 0;
+  }
+
+  /**
+   * Someone else saved `ops` on top of our saved state (Claude through the MCP server). Put them under our
+   * unsaved changes: back to the saved state, apply theirs, replay ours. Ours that no longer fit are dropped
+   * and returned.
+   */
+  rebase(ops: Op[], meta: { author: Author; label?: string }): { change: Change; dropped: Change[] } {
+    const local = this.unsaved();
+    const k = this.commonPrefix();
+    for (const c of this.undoStack.slice(k).reverse()) for (const op of c.inverse) this.applyOne(op);
+    for (const c of this.savedStack.slice(k)) for (const op of c.ops) this.applyOne(op);
+    this.undoStack = [...this.savedStack];
+    this.redoStack = [];
+    this.touch();
+    const change = this.apply(ops, meta);
+    this.markSaved();
+    const dropped: Change[] = [];
+    for (const c of local) {
+      try {
+        this.apply(c.ops, { author: c.author, label: c.label });
+      } catch {
+        dropped.push(c);
+      }
+    }
+    return { change, dropped };
+  }
+
+  /** Apply ops, run `fn` on the result, then put everything back (nothing reaches the undo stack). */
+  trial<T>(ops: Op[], fn: () => T): T {
+    const inverse: Op[] = [];
+    try {
+      for (const op of ops) inverse.unshift(...this.applyOne(op));
+      this.touch();
+      return fn();
+    } finally {
+      for (const inv of inverse) this.applyOne(inv);
+      this.touch();
+    }
+  }
+
+  /** Ids not used yet: `${prefix}1`, `${prefix}2`, … */
+  freshId(prefix: string, taken: Set<string> = new Set()): string {
+    for (let i = 1; ; i++) {
+      const id = `${prefix}${i}`;
+      if (!this.clipIndex.has(id) && !this.trackIndex.has(id) && !taken.has(id) && !(this.project.requests ?? []).some((r) => r.id === id)) return id;
+    }
   }
 
   // --- writing ----------------------------------------------------------------------------
@@ -314,6 +392,32 @@ export class Editor {
         else p.title = op.title;
         return { op: 'set_title', title: old };
       }
+      case 'add_request': {
+        const r = Request.parse(op.request);
+        const list = (p.requests ??= []);
+        if (list.some((x) => x.id === r.id)) throw new OpError(`request id ${r.id} is already used`);
+        const i = op.index === undefined ? list.length : Math.max(0, Math.min(op.index, list.length));
+        list.splice(i, 0, r);
+        return { op: 'remove_request', id: r.id };
+      }
+      case 'update_request': {
+        const r = (p.requests ?? []).find((x) => x.id === op.id);
+        if (!r) throw new OpError(`no request ${op.id}`);
+        const copy = { ...r } as Record<string, unknown>;
+        patchObject(copy, op.set, ['id']);
+        const parsed = Request.safeParse(copy);
+        if (!parsed.success) throw new OpError(`update_request ${op.id}: ${parsed.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`);
+        const before = patchObject(r as unknown as Record<string, unknown>, op.set, ['id']);
+        return { op: 'update_request', id: op.id, set: before };
+      }
+      case 'remove_request': {
+        const list = p.requests ?? [];
+        const i = list.findIndex((x) => x.id === op.id);
+        if (i < 0) throw new OpError(`no request ${op.id}`);
+        const [r] = list.splice(i, 1);
+        if (list.length === 0) delete p.requests;
+        return { op: 'add_request', request: r!, index: i };
+      }
     }
   }
 
@@ -351,6 +455,14 @@ export class Editor {
         return `changed section ${op.id}: ${Object.keys(op.set).join(', ')}`;
       case 'set_title':
         return `set the title to ${JSON.stringify(op.title)}`;
+      case 'add_request':
+        return `added request ${op.request.id}: "${op.request.text}"`;
+      case 'update_request':
+        return `request ${op.id}: ${Object.entries(op.set)
+          .map(([k, v]) => `${k} → ${v === null ? '(none)' : JSON.stringify(v)}`)
+          .join(', ')}`;
+      case 'remove_request':
+        return `removed request ${op.id}`;
     }
   }
 }

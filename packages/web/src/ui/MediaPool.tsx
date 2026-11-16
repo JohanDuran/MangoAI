@@ -56,7 +56,17 @@ export function MediaPool() {
           <div key={folder} className="pool-group">
             <div className="pool-folder">{folder}</div>
             {fs.map((f) => (
-              <div key={f.path} className={`pool-file ${used.has(f.path.toLowerCase()) ? 'used' : ''}`} title={`${f.rel} · ${size(f.size)}${used.has(f.path.toLowerCase()) ? ' · on the timeline' : ''}`}>
+              <div
+                key={f.path}
+                className={`pool-file ${used.has(f.path.toLowerCase()) ? 'used' : ''}`}
+                draggable={f.kind !== 'other'}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/mango-path', f.path);
+                  e.dataTransfer.setData('text/mango-kind', f.kind);
+                  e.dataTransfer.effectAllowed = 'copy';
+                }}
+                title={`${f.rel} · ${size(f.size)}${used.has(f.path.toLowerCase()) ? ' · on the timeline' : ''} · drag onto the timeline to add it`}
+              >
                 <span>{ICON[f.kind] ?? '📄'}</span>
                 <span className="name">{f.rel.split('/').pop()}</span>
                 <span className="muted small">{size(f.size)}</span>

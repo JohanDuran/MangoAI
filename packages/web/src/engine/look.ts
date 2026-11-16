@@ -279,3 +279,22 @@ export function cardGeometry(region: [number, number, number, number], cardW: nu
   const oy = Math.min(Math.max(fy - vh / 2, 0), h - vh);
   return { sx: x + ox, sy: y + oy, sw: vw, sh: vh, dx: Math.round((1080 - cardW) / 2), dy: Math.round(cy - ch / 2), dw: cardW, dh: ch };
 }
+
+/** Approximate box of a title in 1080-wide frame units [x, y, w, h], for clicking on it in the viewer. */
+export function titleBounds(ctx: CanvasRenderingContext2D, c: TitleClip): [number, number, number, number] {
+  const st = STYLES[c.style ?? 'Head'] ?? STYLES.Head!;
+  const [x, y] = c.pos ?? [540, 960];
+  if (c.shape) {
+    const sh = c.shape as { w: number; h: number };
+    return [x, y, sh.w, sh.h];
+  }
+  const fs = c.fs ?? st.size;
+  const text = c.runs ? c.runs.map((r) => r[0]).join('') : (c.text ?? '');
+  const lines = splitLines(text);
+  ctx.save();
+  ctx.font = font(st, fs, c.bold);
+  const w = Math.max(10, ...lines.map((l) => ctx.measureText(l).width)) + (st.box ? st.outline * 2 : st.outline);
+  ctx.restore();
+  const h = lines.length * fs * ASS_FONT_SCALE * 1.25 + (st.box ? st.outline * 2 : 0);
+  return st.align === 7 ? [x, y, w, h] : [x - w / 2, y - h / 2, w, h];
+}

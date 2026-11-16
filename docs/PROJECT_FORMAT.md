@@ -23,7 +23,8 @@ One `cut.json` per project folder. It holds **only edit data**: no transcript wo
 | `anchors` | `[{ name, at }]`, named times, resolved top to bottom |
 | `sections` | `[{ id, end, note? }]`, back to back (each starts where the previous ends): the shots of a Short, the chapters of a long video |
 | `tracks` | see below; listed in **paint order**, first = bottom |
-| `master` | optional `{ loudness, limiter }` |
+| `requests` | optional: what you pointed at in the editor and asked for (below) |
+| `master` | optional `{ loudness, limiter }` (export aims for `loudness`, default −14 LUFS) |
 | `extra` | fields kept from an import that MangoAI doesn't model yet (never lost) |
 
 ## Times
@@ -69,16 +70,31 @@ the media), optional `pivot`, `label`, `origin`, `extra`.
 
 | `type` | Fields |
 |---|---|
-| `media` | `src` (source name or path), `in`, `speed`, `speedTo: [from, to]`, `still`, `region`, `blur`, `cardW`, `cy`, `dim`, `keys: [[t, zoom, fx, fy], …]`, `gain` (dB), `loop` |
+| `media` | `src` (source name or path), `in`, `speed`, `speedTo: [from, to]`, `still`, `region`, `blur`, `cardW`, `cy`, `dim`, `keys: [[t, zoom, fx, fy], …]`, `gain` (dB), `fadeIn`/`fadeOut` (s), `loop`, `transcript` (its source's words: they follow this clip on the timeline) |
 | `generator` | `generator`: `radial-gradient` / `color` / `image`, `params` |
 | `title` | `style`, `pos`, `text` or `runs`, `fs`, `bold`, `color`, `box`, `strike`, `pop`, `fade`, `shape`, `layer` |
-| `comp` | `comp` (HyperFrames folder), `vars` (values passed in; may be time expressions) |
+| `comp` | `comp` (HyperFrames folder), `vars` (values passed to the comp; a string starting with `@` is a time expression passed as seconds from the clip start, e.g. `"@word:hundred"`) |
+
+## Words on the timeline
+
+A media clip with `transcript: "<name>"` says its source's words are in `transcripts[name]` (in source time).
+Those words are mapped through every such clip onto the timeline, and `word:` terms are looked up in the mapped
+words of the first transcript. So cutting, moving or re-recording the voice moves everything linked to its words.
+An imported Short's narration clip carries `transcript: "voice"`. With no such clip, the first transcript is taken
+as timeline time.
+
+## Requests
+
+`{ id, kind: change | create, status: open | working | done | rejected, text, t?, clip?, element?: { selector, id,
+text, box }, range?: [a, b], region?: [x, y, w, h] (0-1), assets?: [paths], still?: path, reply?, created }`
 
 ## Edits (ops)
 
 Every change, by you or by Claude, is a list of ops applied as one undoable change:
 `add_track`, `remove_track`, `update_track`, `add_clip`, `remove_clip`, `update_clip` (`set`, `null` removes a
-field), `move_clip`, `split_clip`, `set_anchor`, `add_section`, `remove_section`, `update_section`, `set_title`.
+field), `move_clip`, `split_clip`, `set_anchor`, `add_section`, `remove_section`, `update_section`, `set_title`,
+`add_request`, `update_request`, `remove_request`. Editing commands built on them (move, trim, split, ripple,
+cut ranges, link to a word…) are in `commands.ts` and shared by the editor and Claude's `edit` tool.
 A change is all-or-nothing, records its exact inverse, and carries a one-line summary per op
 ("changed media s1: start → 2.3, gain → -6") for the history and for Claude.
 
