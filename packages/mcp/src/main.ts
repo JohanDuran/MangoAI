@@ -171,7 +171,7 @@ server.tool(
 
 server.tool(
   'apply_ops',
-  'Low-level edit: a list of ops applied as one change (all or nothing). Ops: add_track, remove_track, update_track{id,set}, add_clip{track,clip}, remove_clip{id}, update_clip{id,set} (null removes a field), move_clip{id,track}, split_clip{id,at,newId}, set_anchor{name,at}, add_section, update_section, remove_section, set_title, add_request, update_request{id,set}, remove_request. See MangoAI docs/PROJECT_FORMAT.md for clip fields.',
+  'Low-level edit: a list of ops applied as one change (all or nothing). Ops: add_track, remove_track, update_track{id,set}, add_clip{track,clip}, remove_clip{id}, update_clip{id,set} (null removes a field), move_clip{id,track}, split_clip{id,at,newId}, set_anchor{name,at}, add_section, update_section, remove_section, set_title, set_transcript{name,file|null}, add_request, update_request{id,set}, remove_request. See MangoAI docs/PROJECT_FORMAT.md for clip fields.',
   { dir: dirArg, base: z.number().int(), ops: z.array(z.record(z.unknown())), label: z.string().optional() },
   async (a) => {
     try {

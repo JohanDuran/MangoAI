@@ -22,6 +22,8 @@ export type Op =
   | { op: 'remove_section'; id: string }
   | { op: 'update_section'; id: string; set: Patch<Omit<Section, 'id'>> }
   | { op: 'set_title'; title: string | null }
+  /** Register (or with `file: null` drop) a transcript: a .words.tsv relative to the project folder. */
+  | { op: 'set_transcript'; name: string; file: string | null }
   | { op: 'add_request'; request: Request; index?: number }
   | { op: 'update_request'; id: string; set: Record<string, unknown> }
   | { op: 'remove_request'; id: string };
@@ -392,6 +394,13 @@ export class Editor {
         else p.title = op.title;
         return { op: 'set_title', title: old };
       }
+      case 'set_transcript': {
+        if (!/^[A-Za-z0-9_.-]+$/.test(op.name)) throw new OpError(`transcript name ${JSON.stringify(op.name)}: use letters, digits, _ . -`);
+        const old = p.transcripts[op.name] ?? null;
+        if (op.file === null) delete p.transcripts[op.name];
+        else p.transcripts[op.name] = op.file;
+        return { op: 'set_transcript', name: op.name, file: old };
+      }
       case 'add_request': {
         const r = Request.parse(op.request);
         const list = (p.requests ??= []);
@@ -455,6 +464,8 @@ export class Editor {
         return `changed section ${op.id}: ${Object.keys(op.set).join(', ')}`;
       case 'set_title':
         return `set the title to ${JSON.stringify(op.title)}`;
+      case 'set_transcript':
+        return op.file === null ? `removed transcript ${op.name}` : `set transcript ${op.name} to ${op.file}`;
       case 'add_request':
         return `added request ${op.request.id}: "${op.request.text}"`;
       case 'update_request':

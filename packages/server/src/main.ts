@@ -16,6 +16,7 @@ import {
   linkTime,
   moveClips,
   OpError,
+  parseWordsTsv,
   pauses,
   rippleDelete,
   rippleDeleteClips,
@@ -50,6 +51,7 @@ import {
   saveFromEditor,
   setDraft,
 } from './projects.js';
+import * as toolbox from './toolbox.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, '../../web');
@@ -69,6 +71,16 @@ class HttpError extends Error {
 }
 
 /** Only paths under the home folder, resolved (no ../ escapes). */
+/** Toolbox failures (down, bad input, a failed job) reach the editor as a readable 502. */
+async function viaToolbox<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof toolbox.ToolboxError) throw new HttpError(502, e.message);
+    throw e;
+  }
+}
+
 function safePath(p: string | null | undefined): string {
   if (!p) throw new HttpError(400, 'path is required');
   const abs = path.resolve(p);
@@ -591,6 +603,41 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       const b = await body<{ dir: string; clip?: string }>(req);
       broadcast(safePath(b.dir), { type: 'comp-changed', ...(b.clip && { clip: b.clip }) });
       return json(res, 200, { ok: true });
+    }
+
+    // the media toolbox: GPU models only (transcription, voices, sounds); see toolbox.ts
+    case '/api/toolbox/status':
+      return json(res, 200, await toolbox.status());
+    case '/api/toolbox/library':
+      return json(res, 200, { sounds: await viaToolbox(() => toolbox.library(q.get('q') ?? '')) });
+    case '/api/toolbox/sfx': {
+      const b = await body<{ prompt: string; seconds?: number; variations?: number }>(req);
+      if (!b.prompt?.trim()) throw new HttpError(400, 'describe the sound');
+      const seconds = Math.max(0.5, Math.min(47, Number(b.seconds) || 3));
+      const variations = Math.max(1, Math.min(4, Math.round(Number(b.variations) || 3)));
+      return json(res, 200, { sounds: await viaToolbox(() => toolbox.generateSfx(b.prompt.trim(), seconds, variations)) });
+    }
+    case '/api/toolbox/used': {
+      const b = await body<{ dir: string; file: string }>(req);
+      await viaToolbox(() => toolbox.markUsed(b.file, path.basename(safePath(b.dir))));
+      return json(res, 200, { ok: true });
+    }
+    case '/api/toolbox/speak': {
+      const b = await body<{ dir: string; text: string; voice?: string; clone?: string; speed?: number; name?: string }>(req);
+      const dir = safePath(b.dir);
+      if (!b.text?.trim()) throw new HttpError(400, 'type the line to say');
+      const r = await viaToolbox(() => toolbox.speak(dir, b.text.trim(), b));
+      return json(res, 200, { path: r.path, seconds: r.seconds ?? null });
+    }
+    case '/api/toolbox/transcribe': {
+      // transcribe one source of the project; the editor then registers it (set_transcript) and links the clip
+      const b = await body<{ dir: string; src: string; language?: string }>(req);
+      const dir = safePath(b.dir);
+      const file = safePath(path.resolve(dir, b.src));
+      const r = await viaToolbox(() => toolbox.transcribe(dir, file, b.language));
+      const rel = path.relative(dir, r.wordsTsv).split(path.sep).join('/');
+      const words = parseWordsTsv(await fs.readFile(r.wordsTsv, 'utf-8'));
+      return json(res, 200, { file: rel, words });
     }
 
     // export

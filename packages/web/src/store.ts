@@ -446,6 +446,24 @@ export class Studio {
     void this.loadPeaks();
   }
 
+  /**
+   * A transcript the toolbox just made: load its words, register it (`set_transcript`) and point the given
+   * clips at it, so its words follow those clips on the timeline. One undoable change; Save keeps it.
+   */
+  addTranscript(name: string, file: string, words: Word[], clipIds: string[]): boolean {
+    const o = this.opened;
+    const e = this.editor;
+    if (!o || !e) return false;
+    o.transcripts = { ...o.transcripts, [name]: words };
+    if (!this.rawWords) {
+      this.rawWords = new WordIndex(words);
+      o.words = words;
+    }
+    this.editor = rebuildEditor(e, this.rawWords, this.durations, o.transcripts);
+    const ops: Op[] = [{ op: 'set_transcript', name, file }, ...clipIds.map((id): Op => ({ op: 'update_clip', id, set: { transcript: name } }))];
+    return this.apply(ops, `transcribed ${name} (${words.length} words)`);
+  }
+
   /** Media pool path → a clip src (relative to the project folder when inside it). */
   srcOf(path: string): string {
     const norm = (p: string) => p.replace(/\\/g, '/');

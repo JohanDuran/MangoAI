@@ -8,12 +8,13 @@ import { duplicate, Inspector, paste, type ClipCopy } from './Inspector';
 import { MediaPool } from './MediaPool';
 import { OpenDialog } from './OpenDialog';
 import { Requests } from './Requests';
+import { ToolboxPanel } from './Toolbox';
 import { Timeline } from './Timeline';
 import { Transcript } from './Transcript';
 import { Transport } from './Transport';
 import { Viewer } from './Viewer';
 
-type Tab = 'inspect' | 'requests' | 'transcript' | 'history' | 'export';
+type Tab = 'inspect' | 'requests' | 'transcript' | 'history' | 'toolbox' | 'export';
 
 export function App() {
   const s = useStudio();
@@ -217,6 +218,7 @@ export function App() {
                 ['requests', `Requests${open ? ` (${open})` : ''}`],
                 ['transcript', 'Transcript'],
                 ['history', 'History'],
+                ['toolbox', 'Toolbox'],
                 ['export', 'Export'],
               ] as [Tab, string][]
             ).map(([k, label]) => (
@@ -229,6 +231,7 @@ export function App() {
           {tab === 'requests' && <Requests player={player} />}
           {tab === 'transcript' && <Transcript player={player} />}
           {tab === 'history' && <History />}
+          {tab === 'toolbox' && <ToolboxPanel player={player} />}
           {tab === 'export' && <ExportPanel player={player} />}
         </aside>
       </main>

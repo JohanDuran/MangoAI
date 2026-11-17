@@ -33,6 +33,20 @@ Open http://localhost:4780 and pick a project folder (one with a `cut.json` or `
 
 Snapping a clip's start onto a word, marker or section links it there (it follows if the voice changes).
 
+## The media toolbox
+
+MangoAI edits and renders; the [media toolbox](https://github.com/JohanDuran/media-toolbox) (Docker, GPU) runs the
+models. The **Toolbox** tab calls it at `http://127.0.0.1:8765` (override with `MANGO_TOOLBOX_URL`):
+
+- **Sounds**: search the shared sound library, or generate new ones with Stable Audio; listen, drag onto the
+  timeline or add at the playhead (the library records which project used it).
+- **Voice a line**: Kokoro, or a cloned voice from `media-studio/voices` (Chatterbox); the WAV goes in
+  `audio/lines/` and onto a voice track.
+- **Transcribe**: WhisperX for any recording on the timeline without words; the transcript goes in `transcripts/`
+  and its words follow those clips (one undoable change).
+
+Without Docker the tab says so and everything else keeps working.
+
 ## With Claude
 
 `packages/mcp` is an MCP server with the editor's tools (state, selection, frame, edit, apply_ops, requests,

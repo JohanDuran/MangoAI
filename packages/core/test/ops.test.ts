@@ -97,6 +97,17 @@ describe('Editor ops', () => {
     expect(e.project).toEqual(sample());
   });
 
+  it('registers a transcript and undoes it exactly', () => {
+    const e = new Editor(sample());
+    const before = structuredClone(e.project);
+    e.apply([{ op: 'set_transcript', name: 'rec', file: 'transcripts/rec.words.tsv' }], { author: 'you' });
+    expect(e.project.transcripts.rec).toBe('transcripts/rec.words.tsv');
+    expect(validateProject(e.project).ok).toBe(true);
+    e.undo();
+    expect(e.project).toEqual(before);
+    expect(() => e.apply([{ op: 'set_transcript', name: 'bad name', file: 'x.tsv' }], { author: 'you' })).toThrow(/transcript name/);
+  });
+
   it('resolve() is cached until the next change', () => {
     const e = new Editor(sample());
     const r1 = e.resolve();

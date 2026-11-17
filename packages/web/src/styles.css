@@ -151,3 +151,21 @@ table.tracks input { width: 56px; }
 .job.failed .bar div { background: var(--danger); }
 .segments li.cached button { color: #3ddc84; }
 .segments li.stale button { color: var(--muted); }
+
+/* Toolbox tab: the media toolbox's GPU models (sounds, voices, transcription) */
+.toolbox h4 { margin: 12px 0 6px; }
+.toolbox .row { flex-wrap: nowrap; margin: 4px 0; }
+.toolbox .row input { flex: 1; width: auto; min-width: 0; }
+.toolbox .row input.secs { flex: 0 0 44px; text-align: center; }
+.toolbox textarea { width: 100%; }
+.tb-status { display: flex; align-items: center; gap: 6px; }
+.tb-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.tb-status.ok .dot { background: #3ccf7a; }
+.tb-status.down .dot { background: #ff4d4d; }
+.tb-busy { margin-top: 6px; color: var(--accent); }
+.tb-err { margin-top: 6px; color: #ff6b6b; white-space: pre-wrap; }
+.sounds { list-style: none; margin: 4px 0; padding: 0; max-height: 220px; overflow-y: auto; }
+.sound { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; cursor: grab; }
+.sound:hover { background: var(--panel-2); }
+.sound .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { background: var(--accent); color: #000; border-radius: 6px; padding: 0 5px; font-size: 10px; font-weight: 700; }
