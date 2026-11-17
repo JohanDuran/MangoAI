@@ -30,7 +30,7 @@ import {
   type Op,
   type Project,
 } from '@mangoai/core';
-import { compPage, compStills, folderOf, freeGraphicsTrack, HF_RUNTIME, scaffoldComp, snapshot, snapshotVersion, switchVersion, tokenOf, versions, watchProject } from './comps.js';
+import { compPage, compStills, folderOf, freeGraphicsTrack, HF_RUNTIME, renderFolder, scaffoldComp, snapshot, snapshotVersion, switchVersion, tokenOf, versions, watchProject } from './comps.js';
 import { broadcast, connected, sendToNewest, subscribe } from './events.js';
 import { exportOtio, jobOf, plan, startExport, waitFor } from './export.js';
 import { kindOf, peaks, probe, proxyState, type MediaInfo } from './media.js';
@@ -71,6 +71,16 @@ class HttpError extends Error {
 }
 
 /** Only paths under the home folder, resolved (no ../ escapes). */
+interface RenderJob {
+  id: string;
+  state: 'running' | 'done' | 'error';
+  folder: string;
+  output?: string;
+  seconds?: number;
+  error?: string;
+}
+const renderJobs = new Map<string, RenderJob>();
+
 /** Toolbox failures (down, bad input, a failed job) reach the editor as a readable 502. */
 async function viaToolbox<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -598,6 +608,29 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       const n = Math.max(1, Math.min(9, b.n ?? 3));
       const times = b.times ?? Array.from({ length: n }, (_, i) => Math.round(((dur * (i + 0.5)) / n) * 1000) / 1000);
       return json(res, 200, { stills: await compStills(dir, c, times, rc.vars ?? {}), times });
+    }
+    case '/api/comp/render': {
+      // any HyperFrames folder (absolute, or relative to dir) to an mp4 / mov / webm file. Renders can take longer
+      // than one HTTP request should, so POST starts a job and GET ?id=&wait= waits for it.
+      if (req.method === 'GET') {
+        const j = renderJobs.get(q.get('id') ?? '');
+        if (!j) throw new HttpError(404, 'no such render job');
+        const until = Date.now() + Math.min(240, Number(q.get('wait') ?? 0)) * 1000;
+        while (j.state === 'running' && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
+        return json(res, 200, j);
+      }
+      const b = await body<{ dir?: string; folder: string; output?: string; format?: 'mp4' | 'mov' | 'webm'; fps?: number; quality?: 'draft' | 'looks' | 'delivery'; vars?: Record<string, unknown> }>(req);
+      const folder = safePath(b.dir ? path.resolve(safePath(b.dir), b.folder) : b.folder);
+      const output = b.output ? safePath(b.dir ? path.resolve(safePath(b.dir), b.output) : b.output) : undefined;
+      if (b.format && !['mp4', 'mov', 'webm'].includes(b.format)) throw new HttpError(400, 'format: mp4, mov or webm');
+      const id = Math.random().toString(36).slice(2, 10);
+      const job: RenderJob = { id, state: 'running', folder };
+      renderJobs.set(id, job);
+      renderFolder(folder, { ...b, output }).then(
+        (r) => Object.assign(job, { state: 'done', ...r }),
+        (e: Error) => Object.assign(job, { state: 'error', error: e.message.split(/\r?\n/).slice(-6).join('\n') }),
+      );
+      return json(res, 200, job);
     }
     case '/api/comp/changed': {
       const b = await body<{ dir: string; clip?: string }>(req);

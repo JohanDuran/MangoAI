@@ -274,6 +274,31 @@ server.tool('export_plan', 'What an export would render now (cached vs stale par
   }
 });
 
+server.tool(
+  'comp_render',
+  'Render a HyperFrames folder to a video file: a whole-shot graphic for a short.json (into <project>/edit/), a single-composition video, or a transparent overlay (format mov). The only HyperFrames renderer in the studio; local, never cloud. Comps on a MangoAI timeline do not need this: export renders them.',
+  {
+    folder: z.string().describe('The HyperFrames folder (with index.html): absolute, or relative to dir'),
+    dir: z.string().optional().describe('A project folder that folder and output are relative to'),
+    output: z.string().optional().describe('Output file (default <folder>/renders/<name>.<format>)'),
+    format: z.enum(['mp4', 'mov', 'webm']).optional().describe('mov = ProRes 4444 with alpha'),
+    fps: z.number().int().optional(),
+    quality: z.enum(['draft', 'looks', 'delivery']).optional(),
+    vars: z.record(z.unknown()).optional().describe('Composition variables'),
+  },
+  async (a) => {
+    try {
+      let j = await call<{ id: string; state: string; error?: string }>('POST', '/api/comp/render', a);
+      const until = Date.now() + 3600_000;
+      while (j.state === 'running' && Date.now() < until) j = await call('GET', '/api/comp/render', { id: j.id, wait: 120 });
+      if (j.state === 'error') throw new Error(j.error ?? 'render failed');
+      return text(j);
+    } catch (e) {
+      return fail(e);
+    }
+  },
+);
+
 server.tool('export_otio', 'Write the edit as OpenTimelineIO (.otio) to finish in DaVinci Resolve.', { dir: dirArg }, async (a) => {
   try {
     return text(await call('POST', '/api/export/otio', a));

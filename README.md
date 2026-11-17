@@ -50,7 +50,7 @@ Without Docker the tab says so and everything else keeps working.
 ## With Claude
 
 `packages/mcp` is an MCP server with the editor's tools (state, selection, frame, edit, apply_ops, requests,
-comp_create / comp_versions / comp_stills, transcript, export, export_otio …), and `packages/mcp/hook.mjs` tells
+comp_create / comp_versions / comp_stills, comp_render (any HyperFrames folder to MP4/MOV: the studio's only HyperFrames renderer), transcript, export, export_otio …), and `packages/mcp/hook.mjs` tells
 Claude on your next message what you saved since it last looked. To register both with Claude Code (user scope):
 
 ```bash

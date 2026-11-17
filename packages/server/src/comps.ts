@@ -256,6 +256,35 @@ export async function renderComp(dir: string, clip: CompClip, opts: { fps: numbe
   return { file, cached: false };
 }
 
+/** Folders nothing may be written into (raw recordings). */
+const PROTECTED = (process.env.MANGO_PROTECTED_DIRS ?? path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', 'media-studio', 'recordings'))
+  .split(';')
+  .filter(Boolean)
+  .map((d) => path.resolve(d).toLowerCase() + path.sep);
+
+/**
+ * Render any HyperFrames folder to a file: a whole-shot graphic for a short.json, a single-composition video, a
+ * transparent overlay (mov). The one HyperFrames renderer in the studio (the toolbox no longer has one).
+ */
+export async function renderFolder(
+  folder: string,
+  o: { output?: string; format?: 'mp4' | 'mov' | 'webm'; fps?: number; quality?: 'draft' | 'looks' | 'delivery'; vars?: Record<string, unknown> },
+): Promise<{ output: string; seconds: number }> {
+  if (!(await fs.stat(path.join(folder, 'index.html')).then(() => true, () => false))) throw new Error(`no index.html in ${folder}`);
+  const format = o.format ?? 'mp4';
+  const output = path.resolve(o.output ?? path.join(folder, 'renders', `${path.basename(folder)}.${format}`));
+  if (PROTECTED.some((d) => (output.toLowerCase() + path.sep).startsWith(d))) throw new Error(`${output} is in a protected folder (raw recordings are read-only)`);
+  await fs.mkdir(path.dirname(output), { recursive: true });
+  const t0 = Date.now();
+  const tmp = `${output}.tmp.${format}`;
+  const args = ['render', folder, '--output', tmp, '--format', format, '--fps', String(o.fps ?? 30), '--quality', o.quality ?? 'looks'];
+  if (o.vars && Object.keys(o.vars).length) args.push('--variables', JSON.stringify(o.vars));
+  await hyperframes(args, folder, 3600000);
+  await fs.rm(output, { force: true });
+  await fs.rename(tmp, output);
+  return { output, seconds: (Date.now() - t0) / 1000 };
+}
+
 export async function compCached(dir: string, clip: CompClip, opts: { fps: number; dur: number; vars: Record<string, unknown>; width: number; height: number }): Promise<boolean> {
   try {
     const key = await compHash(compDir(dir, clip.comp), { ...opts, v: 1 });
