@@ -133,20 +133,33 @@ export function Timeline({ player }: { player: Player }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.w, index.end]);
 
-  // redraw on every player frame (playhead) and on view changes
+  // redraw on every player frame (playhead) and after every render (view, edits). One pending draw at a
+  // time and never cancelled: the player emits from its own animation frame, and the timeline may re-render
+  // while playing, so cancelling and re-requesting would push the draw back a frame, every frame, until
+  // playback stops (the playhead then only moved on pause). The subscription is made once; it always calls
+  // the latest draw.
+  const drawRef = useRef<() => void>(() => {});
+  drawRef.current = () => draw();
+  const paintRef = useRef<() => void>(() => {});
   useEffect(() => {
     let raf = 0;
     const paint = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => draw());
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        drawRef.current();
+      });
     };
+    paintRef.current = paint;
     const off = player.onChange(paint);
     paint();
     return () => {
       off();
       cancelAnimationFrame(raf);
+      paintRef.current = () => {};
     };
-  });
+  }, [player]);
+  useEffect(() => paintRef.current());
 
   // keep the playhead in view while playing (page like an NLE)
   useEffect(
