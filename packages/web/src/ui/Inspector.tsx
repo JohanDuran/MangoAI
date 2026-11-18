@@ -575,6 +575,20 @@ function ProjectInspector({ player }: { player: Player | null }) {
                     {t.kind === 'audio' && (
                       <>
                         <Field value={t.gain} placeholder="0" title="Volume of the whole track in dB" onCommit={(v) => studio.apply([{ op: 'update_track', id: t.id, set: { gain: v === null ? null : Number(v) } }], `gain of track ${t.id}`)} /> dB
+                        {t.role !== 'voice' && (
+                          <label className="small duck" title="Ducking: lower this track while the voice speaks (e.g. -10 dB on the music). Empty = off">
+                            {' '}duck{' '}
+                            <Field
+                              value={t.duck}
+                              placeholder="off"
+                              onCommit={(v) => {
+                                const n = v === null ? null : -Math.abs(Number(v));
+                                if (n !== null && !Number.isFinite(n)) return;
+                                studio.apply([{ op: 'update_track', id: t.id, set: { duck: n === 0 ? null : n } }], n ? `duck ${t.id} by ${n} dB under the voice` : `no ducking on ${t.id}`);
+                              }}
+                            />
+                          </label>
+                        )}
                       </>
                     )}
                     {t.kind === 'captions' && (

@@ -98,6 +98,9 @@ export class Player {
   readonly ctx = new AudioContext({ latencyHint: 'interactive' });
   private master: GainNode;
   private limiter: DynamicsCompressorNode;
+  private meter: AnalyserNode;
+  private meterBuf: Float32Array | null = null;
+  private peakHold = { db: -Infinity, at: 0 };
   private playing = false;
   private anchorCtx = 0;
   private anchorT = 0;
@@ -133,6 +136,9 @@ export class Player {
     this.limiter.release.value = 0.1;
     this.master = this.ctx.createGain();
     this.master.connect(this.limiter).connect(this.ctx.destination);
+    this.meter = this.ctx.createAnalyser();
+    this.meter.fftSize = 16384; // ~0.34 s at 48 kHz: close to a short-term reading
+    this.limiter.connect(this.meter);
     this.rebuild();
     this.preloadAudio();
     this.loop();
@@ -153,6 +159,29 @@ export class Player {
 
   time(): number {
     return this.playing ? this.anchorT + (this.ctx.currentTime - this.anchorCtx) : this.anchorT;
+  }
+
+  /**
+   * What's playing now: RMS level over the last ~0.3 s and the peak (held 1.5 s), in dBFS. RMS of a mix
+   * sits close to its loudness in LUFS, so it's a fair guide to how loud the export will be before levelling.
+   */
+  levels(): { rms: number; peak: number } {
+    if (!this.playing) return { rms: -Infinity, peak: -Infinity };
+    const buf = (this.meterBuf ??= new Float32Array(this.meter.fftSize));
+    this.meter.getFloatTimeDomainData(buf);
+    let sum = 0;
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i]!;
+      sum += v * v;
+      const a = Math.abs(v);
+      if (a > peak) peak = a;
+    }
+    const rms = 10 * Math.log10(sum / buf.length + 1e-12);
+    const pk = 20 * Math.log10(peak + 1e-12);
+    const now = performance.now();
+    if (pk >= this.peakHold.db || now - this.peakHold.at > 1500) this.peakHold = { db: pk, at: now };
+    return { rms, peak: this.peakHold.db };
   }
 
   onChange(fn: () => void): () => void {

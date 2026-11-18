@@ -24,6 +24,28 @@ export function Transport({ player }: { player: Player }) {
       <span className="tc">{timecode(player.time(), fps)}</span>
       <span className="muted">/ {timecode(player.duration, fps)}</span>
       {player.isPlaying && <span className="muted small" title="Worst video drift from the audio clock this frame">sync {(player.lastDrift * 1000).toFixed(0)} ms</span>}
+      <Meter player={player} />
     </div>
+  );
+}
+
+/** Level meter: RMS (about the loudness) and peak of what's playing, in dB. */
+function Meter({ player }: { player: Player }) {
+  const { rms, peak } = player.levels();
+  const pos = (db: number) => `${Math.max(0, Math.min(100, ((db + 48) / 48) * 100))}%`;
+  const hot = peak > -1;
+  return (
+    <span
+      className={`meter ${hot ? 'hot' : ''}`}
+      title={`Level while playing: ${Number.isFinite(rms) ? `${rms.toFixed(1)} dB RMS (about the loudness)` : 'silent'}, peak ${Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '-'}.
+The export levels the whole mix to the target in the Export tab; red means a peak near 0 dB (the limiter catches it).`}
+    >
+      <span className="bar">
+        <span className="fill" style={{ width: pos(rms) }} />
+        <span className="peak" style={{ left: pos(peak) }} />
+        <span className="mark" style={{ left: pos(-14) }} />
+      </span>
+      <span className="small">{Number.isFinite(rms) ? rms.toFixed(0) : '–'} dB</span>
+    </span>
   );
 }

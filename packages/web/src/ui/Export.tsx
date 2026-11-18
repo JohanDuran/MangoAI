@@ -13,6 +13,14 @@ interface Plan {
   estimate: string;
 }
 
+/** Common loudness targets: [LUFS, where it's used]. */
+const LOUDNESS: [number, string][] = [
+  [-14, 'YouTube, TikTok, Instagram, Spotify'],
+  [-16, 'Apple, podcasts'],
+  [-18, 'quieter, more headroom'],
+  [-23, 'broadcast (EBU R128)'],
+];
+
 export function ExportPanel({ player }: { player: Player | null }) {
   const s = useStudio();
   const dir = s.opened?.dir ?? '';
@@ -87,6 +95,23 @@ export function ExportPanel({ player }: { player: Player | null }) {
             </ul>
           </>
         )}
+        <div className="row small loudness">
+          <span title="The export measures the whole mix and sets one gain so it lands at this loudness (then a limiter catches peaks)">Loudness</span>
+          <select
+            value={String(s.editor?.project.master?.loudness ?? -14)}
+            title="Target loudness of the export"
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              studio.apply([{ op: 'set_master', set: { loudness: v === -14 ? null : v } }], `loudness target ${v} LUFS`);
+            }}
+          >
+            {LOUDNESS.map(([v, label]) => (
+              <option key={v} value={v}>
+                {v} LUFS · {label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="actions">
           <button className="primary" disabled={!!busy} onClick={() => void start()} title="Render the whole video; parts already rendered are reused">
             {busy ? 'Exporting…' : 'Export'}
