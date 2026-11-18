@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { VERSION } from '@mangoai/core';
 
 const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -33,9 +34,13 @@ async function ensureServer(): Promise<void> {
   const logDir = path.join(os.homedir(), '.mangoai');
   fs.mkdirSync(logDir, { recursive: true });
   const log = fs.openSync(path.join(logDir, 'server.log'), 'a');
-  const tsx = path.join(REPO, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  const child = spawn(process.execPath, [tsx, path.join(REPO, 'packages', 'server', 'src', 'main.ts'), '--port', String(PORT)], {
-    cwd: REPO,
+  // Published package: dist/mcp.js sits next to dist/server.js. From source: run the server's main.ts with tsx.
+  const bundled = path.join(here, 'server.js');
+  const cmd = fs.existsSync(bundled)
+    ? [bundled]
+    : [path.join(REPO, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(REPO, 'packages', 'server', 'src', 'main.ts')];
+  const child = spawn(process.execPath, [...cmd, '--port', String(PORT)], {
+    cwd: fs.existsSync(bundled) ? here : REPO,
     detached: true,
     stdio: ['ignore', log, log],
     windowsHide: true,
@@ -80,11 +85,11 @@ async function preview(file: string, width = 540): Promise<{ type: 'image'; data
   }
 }
 
-const dirArg = z.string().describe('The project folder (absolute path), e.g. C:\\Users\\me\\media-studio\\jdkoder_shorts\\Railway_AI_Keys');
+const dirArg = z.string().describe('The project folder (absolute path), e.g. C:\\Users\\me\\media-studio\\my-channel\\my-short');
 
 // --- tools ------------------------------------------------------------------------------------------
 const server = new McpServer(
-  { name: 'mangoai', version: '0.1.0' },
+  { name: 'mangoai', version: VERSION },
   {
     instructions: `MangoAI is the user's video editor (a browser tab on localhost:4780). The edit lives in <project>/cut.json.
 - Start with project_open (opens the editor for the user) or project_state. Times are seconds on the timeline.

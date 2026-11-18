@@ -1,0 +1,29 @@
+{
+  "name": "mangoai",
+  "version": "0.2.0",
+  "description": "MangoAI: a local video editor that Claude drives and you can touch. Editor server, MCP server for Claude and the save-report hook, in one package.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/JohanDuran/MangoAI",
+  "repository": { "type": "git", "url": "git+https://github.com/JohanDuran/MangoAI.git", "directory": "packages/cli" },
+  "keywords": ["video", "editor", "mcp", "claude", "hyperframes", "video-studio"],
+  "bin": { "mangoai": "dist/bin.js" },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.12.1",
+    "hyperframes": "0.9.52",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@mangoai/core": "0.0.1",
+    "@mangoai/mcp": "0.0.1",
+    "@mangoai/server": "0.0.1",
+    "@mangoai/web": "0.0.1",
+    "esbuild": "0.23.1"
+  }
+}

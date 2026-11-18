@@ -25,6 +25,7 @@ import {
   splitAt,
   trimClip,
   unlinkTime,
+  VERSION,
   type CompClip,
   type Editor,
   type Op,
@@ -54,11 +55,13 @@ import {
 import * as toolbox from './toolbox.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// From source (npm start) the editor is served by Vite in dev mode from packages/web. In the published
+// `mangoai` package the server is bundled to dist/server.js and the editor is prebuilt next to it in dist/web.
 const webRoot = path.resolve(here, '../../web');
+const builtWeb = path.resolve(here, 'web');
 const HOME = path.resolve(os.homedir());
 const args = process.argv.slice(2);
 const port = Number(args[args.indexOf('--port') + 1]) || Number(process.env.MANGOAI_PORT) || 4780;
-const VERSION = '0.1.0';
 
 class HttpError extends Error {
   constructor(
@@ -718,7 +721,21 @@ async function comp(req: http.IncomingMessage, res: http.ServerResponse, url: UR
 // --- server --------------------------------------------------------------------------------------
 const LOCAL_HOSTS = new Set([`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]);
 
-async function main() {
+/** The editor's own files: the prebuilt bundle when there is one, otherwise Vite in dev mode. */
+async function editorPages(): Promise<(req: http.IncomingMessage, res: http.ServerResponse, url: URL, fail: (e: Error) => void) => void> {
+  const built = await fs.stat(path.join(builtWeb, 'index.html')).then(
+    (s) => s.isFile(),
+    () => false,
+  );
+  if (built) {
+    return (req, res, url, fail) => {
+      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+      const file = path.resolve(builtWeb, rel || 'index.html');
+      const inside = !path.relative(builtWeb, file).startsWith('..');
+      const target = inside && path.extname(file) ? file : path.join(builtWeb, 'index.html'); // SPA fallback
+      sendFile(req, res, target).catch(fail);
+    };
+  }
   const { createServer } = await import('vite');
   const vite = await createServer({
     root: webRoot,
@@ -726,6 +743,11 @@ async function main() {
     server: { middlewareMode: true, hmr: { port: port + 1 } },
     appType: 'spa',
   });
+  return (req, res) => vite.middlewares(req, res);
+}
+
+async function main() {
+  const pages = await editorPages();
   const server = http.createServer((req, res) => {
     // DNS-rebinding guard: only answer requests addressed to this machine.
     if (!LOCAL_HOSTS.has(req.headers.host ?? '')) {
@@ -748,7 +770,7 @@ async function main() {
     if (url.pathname.startsWith('/api/')) return void api(req, res, url).catch(fail);
     if (url.pathname.startsWith('/comp/')) return void comp(req, res, url).catch(fail);
     if (url.pathname === '/hf-runtime.js') return void sendFile(req, res, HF_RUNTIME).catch(fail);
-    vite.middlewares(req, res);
+    pages(req, res, url, fail);
   });
   server.listen(port, '127.0.0.1', () => console.log(`MangoAI → http://localhost:${port}`));
 }
