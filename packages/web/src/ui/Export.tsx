@@ -4,7 +4,7 @@ import type { Check } from '@mangoai/core';
 import { useEffect, useState } from 'react';
 import { api, type ExportJob } from '../api';
 import type { Player } from '../engine/player';
-import { studio, useStudio } from '../store';
+import { recent, studio, useStudio } from '../store';
 import { timecode } from './Transport';
 
 interface Plan {
@@ -59,6 +59,100 @@ function Checks({ checks, player }: { checks: Check[]; player: Player | null }) 
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+interface BatchItem {
+  dir: string;
+  name: string;
+  state: 'waiting' | 'exporting' | 'done' | 'failed';
+  message?: string;
+  output?: string;
+  took?: number;
+}
+
+/** Export several projects one after another (e.g. a week of Shorts overnight). */
+function Batch() {
+  const s = useStudio();
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<BatchItem[]>([]);
+  const [running, setRunning] = useState(false);
+  const [pick, setPick] = useState<Set<string>>(new Set());
+  const here = s.opened?.dir ?? '';
+  const choices = [...new Set([here, ...recent()])].filter(Boolean);
+  const refresh = () =>
+    api.get<{ running: boolean; items: BatchItem[] }>('/api/export/batch').then((r) => {
+      setItems(r.items);
+      setRunning(r.running);
+    }, () => {});
+  useEffect(() => {
+    if (!open) return;
+    void refresh();
+    const t = window.setInterval(() => void refresh(), 2000);
+    return () => clearInterval(t);
+  }, [open]);
+  const add = async () => {
+    if (pick.has(here) && studio.dirty && !(await studio.save())) return;
+    await api.post('/api/export/batch', { dirs: [...pick] }).catch((e: Error) => studio.flash(e.message, true));
+    setPick(new Set());
+    void refresh();
+  };
+  const ICONS = { waiting: '○', exporting: '◐', done: '●', failed: '✕' } as const;
+  return (
+    <div className="batch">
+      <button className="link small" onClick={() => setOpen(!open)} title="Export several projects one after another">
+        {open ? '▾' : '▸'} Batch export{running ? ' (running)' : items.length ? ` (${items.filter((x) => x.state === 'done').length}/${items.length} done)` : ''}
+      </button>
+      {open && (
+        <div className="small">
+          <div className="muted">Pick projects to export one after another. You can close this tab; the export keeps going while the editor runs.</div>
+          <ul className="batch-pick">
+            {choices.map((d) => (
+              <li key={d}>
+                <label title={d}>
+                  <input
+                    type="checkbox"
+                    checked={pick.has(d)}
+                    onChange={(e) => {
+                      const n = new Set(pick);
+                      if (e.target.checked) n.add(d);
+                      else n.delete(d);
+                      setPick(n);
+                    }}
+                  />{' '}
+                  {d.split(/[\\/]/).slice(-2).join('/')}
+                  {d === here ? ' (this one)' : ''}
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="row">
+            <button disabled={!pick.size} onClick={() => void add()} title="Add the ticked projects to the queue; it starts right away">
+              Export {pick.size || ''} in a row
+            </button>
+            {items.some((x) => x.state === 'done' || x.state === 'failed') && (
+              <button className="ghost" onClick={() => void api.post('/api/export/batch', { clear: 'done' }).then(refresh)} title="Remove finished items from the list">
+                Clear finished
+              </button>
+            )}
+            {items.some((x) => x.state === 'waiting') && (
+              <button className="ghost" onClick={() => void api.post('/api/export/batch', { clear: 'all' }).then(refresh)} title="Remove the ones that haven't started (the current export finishes)">
+                Cancel waiting
+              </button>
+            )}
+          </div>
+          {items.length > 0 && (
+            <ul className="batch-items">
+              {items.map((it, i) => (
+                <li key={i} className={it.state} title={it.output ?? it.dir}>
+                  {ICONS[it.state]} <b>{it.name}</b> <span className="muted">{it.state === 'done' ? `done${it.took ? ` in ${Math.round(it.took)} s` : ''}` : it.message ?? it.state}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -138,6 +232,7 @@ export function ExportPanel({ player }: { player: Player | null }) {
             </ul>
           </>
         )}
+        <Batch />
         <div className="row small loudness">
           <span title="The export measures the whole mix and sets one gain so it lands at this loudness (then a limiter catches peaks)">Loudness</span>
           <select

@@ -53,6 +53,7 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           </ul>
         </>
       )}
+      {b && <FromTemplate dir={b.dir} isProject={b.isProject} onOpen={onOpen} />}
       {b && (
         <>
           <h3>{b.dir}</h3>
@@ -76,6 +77,47 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           </ul>
         </>
       )}
+    </div>
+  );
+}
+
+/** Start a new project in this folder (or a new subfolder) from a saved template. */
+function FromTemplate({ dir, isProject, onOpen }: { dir: string; isProject?: boolean | undefined; onOpen: (dir: string) => void }) {
+  const [list, setList] = useState<{ name: string; tracks: number; clips: number; size: string }[]>([]);
+  const [name, setName] = useState('');
+  const [folder, setFolder] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    api.get<{ templates: typeof list }>('/api/templates').then((r) => {
+      setList(r.templates);
+      setName((n) => n || r.templates[0]?.name || '');
+    }, () => setList([]));
+  }, []);
+  if (!list.length) return null;
+  const target = folder.trim() ? `${dir.replace(/[\/]$/, '')}/${folder.trim()}` : dir;
+  const create = async () => {
+    try {
+      await api.post('/api/template/new', { dir: target, name, ...(folder.trim() && { title: folder.trim() }) });
+      onOpen(target);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  return (
+    <div className="from-template small">
+      <b title="Saved with Save as template in a project's Inspector">New from a template</b>
+      <select value={name} onChange={(e) => setName(e.target.value)} title="Which template">
+        {list.map((t) => (
+          <option key={t.name} value={t.name}>
+            {t.name} ({t.size}, {t.tracks} tracks{t.clips ? `, ${t.clips} clips` : ''})
+          </option>
+        ))}
+      </select>
+      <input placeholder={isProject ? 'new folder name (needed: this folder has a project)' : 'new folder name (optional)'} value={folder} onChange={(e) => setFolder(e.target.value)} title="Make a new folder here for the project; leave empty to use this folder" />
+      <button disabled={!name || (isProject && !folder.trim())} onClick={() => void create()} title={`Write cut.json in ${target} and open it`}>
+        Create
+      </button>
+      {err && <span className="error-text">{err}</span>}
     </div>
   );
 }

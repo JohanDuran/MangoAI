@@ -16,6 +16,7 @@ import {
   type Track,
 } from '@mangoai/core';
 import { useEffect, useState } from 'react';
+import { api } from '../api';
 import type { Player } from '../engine/player';
 import { keyed, STYLES } from '../engine/look';
 import { studio, useStudio } from '../store';
@@ -537,10 +538,29 @@ function ProjectInspector({ player }: { player: Player | null }) {
   const r = s.resolved()!;
   const p = s.editor!.project;
   const fps = p.fps;
+  const saveTemplate = async (keepClips: boolean) => {
+    const name = prompt(keepClips ? 'Template name (keeps the tracks, mix, caption style and all clips):' : 'Template name (keeps the tracks, mix and caption style, no clips):', p.title ?? '');
+    if (!name) return;
+    if (studio.dirty && !(await studio.save())) return;
+    try {
+      const out = await api.post<{ path: string }>('/api/template/save', { dir: studio.opened!.dir, name, keepClips });
+      studio.flash(`Saved the template: ${out.path}`);
+    } catch (e) {
+      studio.flash((e as Error).message, true);
+    }
+  };
   return (
     <aside className="inspector panel">
       <div className="panel-head">Project</div>
       <div className="panel-body">
+        <div className="actions">
+          <button onClick={() => void saveTemplate(false)} title="Save this project's set-up (format, tracks, their volume and ducking, caption style, loudness) to start the next video from it">
+            Save as template
+          </button>
+          <button className="ghost" onClick={() => void saveTemplate(true)} title="Same, and keep every clip too (an intro, an outro, the music bed); times become fixed numbers">
+            …with clips
+          </button>
+        </div>
         <dl>
           <dt>Title</dt>
           <dd>

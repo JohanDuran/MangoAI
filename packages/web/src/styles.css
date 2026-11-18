@@ -139,6 +139,12 @@ table.tracks input { width: 56px; }
 .checks li.error { color: var(--danger); }
 .checks li.info { color: var(--muted); }
 .warn-text { color: #ffb347; }
+.batch { margin: 6px 0; }
+.batch-pick, .batch-items { list-style: none; margin: 4px 0; padding: 0; }
+.batch-pick li, .batch-items li { padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-items li.failed { color: var(--danger); }
+.batch-items li.done { color: #3ddc84; }
+.from-template { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 8px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .viewer.requesting .stage { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent); }
 .stage .hint { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.75); padding: 4px 10px; border-radius: 6px; font-size: 12px; white-space: nowrap; pointer-events: none; }
 

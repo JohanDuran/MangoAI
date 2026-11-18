@@ -35,7 +35,9 @@ import {
 } from '@mangoai/core';
 import { compPage, compStills, folderOf, freeGraphicsTrack, HF_RUNTIME, renderFolder, scaffoldComp, snapshot, snapshotVersion, switchVersion, tokenOf, versions, watchProject } from './comps.js';
 import { broadcast, connected, sendToNewest, subscribe } from './events.js';
+import { addToBatch, batchState, clearBatch } from './batch.js';
 import { exportOtio, jobOf, plan, startExport, waitFor } from './export.js';
+import { listTemplates, newFromTemplate, saveTemplate } from './templates.js';
 import { kindOf, peaks, probe, proxyState, type MediaInfo } from './media.js';
 import {
   applyClaude,
@@ -138,7 +140,7 @@ async function apiOpen(dir: string) {
   return { dir, name: path.basename(dir), from: st.from, project: st.project, words: st.words, transcripts: st.transcripts, media, draft: await getDraft(dir), comps: {} };
 }
 
-const SKIP = new Set(['.mangoai', 'node_modules', '.git', '.hyperframes']);
+const SKIP = new Set(['.mangoai', 'node_modules', '.git', '.hyperframes', 'templates']);
 
 async function apiPool(dir: string) {
   const out: { path: string; rel: string; kind: string; size: number }[] = [];
@@ -173,7 +175,8 @@ async function apiBrowse(dir: string | null) {
       }),
   );
   const parent = path.dirname(root);
-  return { dir: root, parent: parent !== root && !path.relative(HOME, parent).startsWith('..') ? parent : null, folders: folders.sort((a, b) => a.name.localeCompare(b.name)) };
+  const isProject = (await fs.access(path.join(root, 'cut.json')).then(() => true, () => false)) || (await fs.access(path.join(root, 'short.json')).then(() => true, () => false));
+  return { dir: root, isProject, parent: parent !== root && !path.relative(HOME, parent).startsWith('..') ? parent : null, folders: folders.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
 const TYPES: Record<string, string> = {
@@ -706,6 +709,32 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       const b = await body<{ dir: string; range?: [number, number] }>(req);
       try {
         return json(res, 200, { job: startExport(safePath(b.dir), b.range) });
+      } catch (e) {
+        throw new HttpError(409, (e as Error).message);
+      }
+    }
+    case '/api/export/batch': {
+      if (req.method === 'POST') {
+        const b = await body<{ dirs?: string[]; clear?: 'done' | 'all' }>(req);
+        if (b.clear) return json(res, 200, clearBatch(b.clear === 'all'));
+        return json(res, 200, addToBatch((b.dirs ?? []).map((d) => safePath(d))));
+      }
+      return json(res, 200, batchState());
+    }
+    case '/api/templates':
+      return json(res, 200, { templates: await listTemplates(await studioRoot()) });
+    case '/api/template/save': {
+      const b = await body<{ dir: string; name: string; keepClips?: boolean }>(req);
+      try {
+        return json(res, 200, { path: await saveTemplate(await studioRoot(), safePath(b.dir), b.name, !!b.keepClips) });
+      } catch (e) {
+        throw new HttpError(422, (e as Error).message);
+      }
+    }
+    case '/api/template/new': {
+      const b = await body<{ dir: string; name: string; title?: string }>(req);
+      try {
+        return json(res, 200, { path: await newFromTemplate(await studioRoot(), safePath(b.dir), b.name, b.title) });
       } catch (e) {
         throw new HttpError(409, (e as Error).message);
       }
