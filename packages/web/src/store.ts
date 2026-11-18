@@ -42,6 +42,11 @@ export class Studio {
   /** The element picked inside a graphic (request mode). */
   picked: Picked | null = null;
   mode: 'edit' | 'request' = 'edit';
+  /** A side tab another view wants shown (the App switches to it). */
+  wantTab: string | null = null;
+  /** Clips Claude just changed, with when the highlight ends (ms); the timeline outlines them. */
+  touched = new Map<string, number>();
+  private touchTimer = 0;
   error: string | null = null;
   notice: string | null = null;
   /** Unsaved edits found in .mangoai/draft.json when the project opened. */
@@ -184,6 +189,26 @@ export class Studio {
 
   setMode(m: 'edit' | 'request') {
     this.mode = m;
+    this.emit();
+  }
+
+  openTab(tab: string) {
+    this.wantTab = tab;
+    this.emit();
+  }
+
+  /** Outline these clips for a few seconds (Claude changed them), then let the highlight fade. */
+  markTouched(ids: string[], ms = 6000) {
+    const until = Date.now() + ms;
+    for (const id of ids) this.touched.set(id, until);
+    clearTimeout(this.touchTimer);
+    const tick = () => {
+      const now = Date.now();
+      for (const [id, u] of this.touched) if (u <= now) this.touched.delete(id);
+      this.emit();
+      if (this.touched.size) this.touchTimer = window.setTimeout(tick, 500);
+    };
+    this.touchTimer = window.setTimeout(tick, 500);
     this.emit();
   }
 
@@ -367,6 +392,7 @@ export class Studio {
             await this.refreshMedia(ev.ops);
             const { dropped } = e.rebase(ev.ops, { author: ev.author, label: ev.label });
             e.project.revision = ev.revision;
+            if (ev.author === 'claude') this.markTouched(touchedBy(ev.ops));
             this.flash(
               `${who} saved revision ${ev.revision}: ${ev.label}` +
                 (dropped.length ? `. Kept out ${dropped.length} of your unsaved edits that no longer fit: ${dropped.map((d) => d.label).join('; ')}` : ''),
@@ -396,6 +422,7 @@ export class Studio {
       }
       case 'comp-changed':
         this.compVersion.set(ev.clip ?? '*', Date.now());
+        if (ev.clip) this.markTouched([ev.clip]);
         for (const fn of this.editListeners) fn();
         this.emit();
         return;
@@ -485,6 +512,21 @@ function rebuildEditor(old: Editor, words: WordIndex, durations: Map<string, num
     } catch {}
   }
   return ed;
+}
+
+/** The clips a list of ops changes (to highlight what Claude did). */
+function touchedBy(ops: Op[]): string[] {
+  const out = new Set<string>();
+  for (const op of ops) {
+    if (op.op === 'add_clip') out.add(op.clip.id);
+    else if (op.op === 'add_track') for (const c of op.track.clips) out.add(c.id);
+    else if (op.op === 'update_clip' || op.op === 'move_clip') out.add(op.id);
+    else if (op.op === 'split_clip') {
+      out.add(op.id);
+      out.add(op.newId);
+    }
+  }
+  return [...out];
 }
 
 function slimChange(c: Change) {

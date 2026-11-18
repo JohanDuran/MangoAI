@@ -18,6 +18,7 @@ import {
   OpError,
   parseWordsTsv,
   pauses,
+  requestSeenKey,
   rippleDelete,
   rippleDeleteClips,
   setFades,
@@ -30,6 +31,7 @@ import {
   type Editor,
   type Op,
   type Project,
+  type Request,
 } from '@mangoai/core';
 import { compPage, compStills, folderOf, freeGraphicsTrack, HF_RUNTIME, renderFolder, scaffoldComp, snapshot, snapshotVersion, switchVersion, tokenOf, versions, watchProject } from './comps.js';
 import { broadcast, connected, sendToNewest, subscribe } from './events.js';
@@ -319,7 +321,7 @@ async function requestsFor(dir: string, status?: string) {
       spoken: words,
     };
   });
-  await markSeen(dir, st.from === 'cut.json' ? p.revision : 0, list.map((x) => x.id));
+  await markSeen(dir, st.from === 'cut.json' ? p.revision : 0, list.map(requestSeenKey));
   return { revision: st.from === 'cut.json' ? p.revision : 0, size: [p.width, p.height], requests: out };
 }
 
@@ -549,6 +551,27 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     }
     case '/api/requests':
       return json(res, 200, await requestsFor(dirQ(), q.get('status') ?? undefined));
+    case '/api/requests/update': {
+      // Claude's status change and answer: the answer also goes on the request's conversation
+      const b = await body<{ dir: string; base?: number; id: string; status: Request['status']; reply?: string }>(req);
+      const dir = safePath(b.dir);
+      const st = await load(dir);
+      const cur = st.project.requests?.find((x) => x.id === b.id);
+      if (!cur) throw new HttpError(404, `no request ${b.id}`);
+      const set: Record<string, unknown> = { status: b.status };
+      if (b.reply !== undefined) {
+        set.reply = b.reply;
+        set.notes = [...(cur.notes ?? []), { by: 'claude', text: b.reply, at: new Date().toISOString() }];
+      }
+      try {
+        const out = await applyClaude(dir, b.base, [{ op: 'update_request', id: b.id, set }], `request ${b.id} ${b.status}`);
+        return json(res, 200, { ...out, open_tabs: connected(dir) });
+      } catch (e) {
+        if (e instanceof Conflict) throw new HttpError(409, `changed since you last looked (now revision ${e.revision}). Read the state again, then retry with base ${e.revision}.`, { revision: e.revision });
+        if (e instanceof OpError) throw new HttpError(422, e.message);
+        throw e;
+      }
+    }
     case '/api/transcript': {
       const dir = dirQ();
       const st = await load(dir);

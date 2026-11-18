@@ -6,4 +6,6 @@ export * from './import/shortJson.js';
 export * from './commands.js';
 export * from './transcript.js';
 export * from './wordmap.js';
+export * from './mixing.js';
+export * from './checks.js';
 export { VERSION } from './version.js';

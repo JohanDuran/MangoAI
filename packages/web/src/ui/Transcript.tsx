@@ -110,6 +110,18 @@ export function Transcript({ player }: { player: Player | null }) {
         <button disabled={!sel} onClick={cutSel} title="Cut the selected words out of every track and close the gap">
           ✂ Cut words
         </button>
+        <button
+          disabled={!sel}
+          onClick={() => {
+            if (!sel) return;
+            studio.setPicked(null);
+            studio.setRange([words[sel[0]]!.s, words[sel[1]]!.e]);
+            studio.openTab('requests');
+          }}
+          title="Ask Claude for something over these words (a graphic, a change): opens a request with their time range"
+        >
+          ✎ Request
+        </button>
         <button onClick={() => setSuggest({ kind: 'pauses', ranges: pauses(words, 0.8) })} title="Find silences over 0.8 s">
           Pauses
         </button>

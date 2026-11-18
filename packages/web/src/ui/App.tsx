@@ -27,6 +27,13 @@ export function App() {
     if (dir) void studio.open(dir);
   }, []);
 
+  useEffect(() => {
+    if (s.wantTab) {
+      setTab(s.wantTab as Tab);
+      s.wantTab = null;
+    }
+  }, [s.wantTab]);
+
   const opened = s.opened;
   const player = useMemo(() => {
     if (!opened || !s.editor) return null;
@@ -181,6 +188,15 @@ export function App() {
           {opened.from === 'short.json' && ' · imported from short.json (Save writes cut.json next to it)'}
         </span>
         <span className="spacer" />
+        {(() => {
+          const busy = (ed?.project.requests ?? []).filter((r) => r.status === 'working');
+          return busy.length ? (
+            <button className="ghost claude-busy small" onClick={() => setTab('requests')} title={busy.map((r) => `${r.id}: ${r.text}`).join('\n')}>
+              <span className="pulse" /> Claude is on {busy.length > 1 ? `${busy.length} requests` : `${busy[0]!.id}: ${busy[0]!.text.slice(0, 40)}`}
+            </button>
+          ) : null;
+        })()}
+        {s.touched.size > 0 && <span className="small touched-note" title="Outlined in blue on the timeline">Claude changed {s.touched.size} clip{s.touched.size > 1 ? 's' : ''}</span>}
         <button onClick={() => studio.undo()} disabled={!ed?.canUndo} title="Undo (Ctrl+Z)">↶</button>
         <button onClick={() => studio.redo()} disabled={!ed?.canRedo} title="Redo (Ctrl+Shift+Z)">↷</button>
         <button

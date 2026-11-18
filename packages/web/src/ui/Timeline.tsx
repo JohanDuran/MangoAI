@@ -481,6 +481,19 @@ export function Timeline({ player }: { player: Player }) {
         ctx.arc(x0 + 4, top + laneH - 7, 2, 0, Math.PI * 2);
         ctx.fill();
       }
+      if (s.touched.has(c.id)) {
+        // Claude just changed this clip: a glow that fades out
+        const left = Math.max(0, Math.min(1, (s.touched.get(c.id)! - Date.now()) / 6000));
+        ctx.save();
+        ctx.globalAlpha = 0.35 + 0.65 * left;
+        ctx.shadowColor = '#7fd6ff';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#7fd6ff';
+        roundRect(ctx, x0 - 1, top - 1, Math.max(1.5, x1 - x0) + 2, laneH, 4);
+        ctx.stroke();
+        ctx.restore();
+      }
       if (problemIds.has(c.id) || sel) {
         ctx.lineWidth = 2;
         ctx.strokeStyle = sel ? COLORS.select : COLORS.problem;
@@ -705,6 +718,7 @@ export function Timeline({ player }: { player: Player }) {
     const rc = resolved.clips.get(c.id);
     const name = ('label' in c && c.label) || ('src' in c && typeof c.src === 'string' && c.src.split('/').pop()) || c.id;
     const span = rc ? ` · ${tc(rc.start)}${rc.end !== null ? ` – ${tc(rc.end)}` : ''}` : '';
+    if (s.touched.has(c.id)) return `${name}${span} · just changed by Claude`;
     if (h.row?.track.locked) return `${name}${span} · track is locked`;
     if (h.edge) return `${name} · drag to trim the ${h.edge} (Alt: no snap)`;
     return `${name}${span} · drag to move · double-click to jump here · S splits at the playhead`;

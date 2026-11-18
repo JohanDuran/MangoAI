@@ -15,6 +15,7 @@ export function Requests({ player }: { player: Player | null }) {
   const s = useStudio();
   const [text, setText] = useState('');
   const [assets, setAssets] = useState<string[]>([]);
+  const [compare, setCompare] = useState<Request | null>(null);
   const p = s.editor!.project;
   const fps = p.fps;
   const list = p.requests ?? [];
@@ -133,8 +134,13 @@ export function Requests({ player }: { player: Player | null }) {
                 {r.id} · {r.kind === 'change' ? `change ${r.clip ?? ''}${r.element?.selector ? ` › ${r.element.selector}` : ''}` : `new ${r.range ? `${(r.range[1] - r.range[0]).toFixed(1)} s` : ''}`}
                 {r.assets?.length ? ` · ${r.assets.length} asset(s)` : ''}
               </div>
-              {r.reply && <div className="reply small">Claude: {r.reply}</div>}
+              <Thread r={r} />
               <div className="row small">
+                {(r.status === 'done' || r.status === 'rejected') && r.still && player && (
+                  <button className="link" onClick={() => setCompare(r)} title="See the frame as it was when you asked, next to how it looks now">
+                    before / after
+                  </button>
+                )}
                 {r.status !== 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'open' } }], `reopened ${r.id}`)} title="Set it back to open so Claude looks at it again">reopen</button>}
                 {r.status === 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'done' } }], `closed ${r.id}`)} title="Close it yourself">mark done</button>}
                 <button className="link" onClick={() => studio.apply([{ op: 'remove_request', id: r.id }], `removed ${r.id}`)} title="Delete this request">remove</button>
@@ -142,6 +148,98 @@ export function Requests({ player }: { player: Player | null }) {
             </li>
           ))}
         </ul>
+      </div>
+      {compare && player && <Compare r={compare} player={player} onClose={() => setCompare(null)} />}
+    </div>
+  );
+}
+
+/** The conversation on a request: Claude's answers and your follow-ups, plus a box to write one. */
+function Thread({ r }: { r: Request }) {
+  const [text, setText] = useState('');
+  // older requests only have `reply`; show it when there are no notes yet
+  const notes = r.notes ?? (r.reply ? [{ by: 'claude' as const, text: r.reply, at: '' }] : []);
+  const send = () => {
+    const t = text.trim();
+    if (!t) return;
+    const next = [...(r.notes ?? (r.reply ? [{ by: 'claude' as const, text: r.reply, at: r.created }] : [])), { by: 'you' as const, text: t, at: new Date().toISOString() }];
+    if (studio.apply([{ op: 'update_request', id: r.id, set: { notes: next, status: 'open' } }], `follow-up on ${r.id}: ${t.slice(0, 60)}`)) {
+      setText('');
+      studio.flash('Follow-up added. Save (Ctrl+S) and Claude will see it on your next message');
+    }
+  };
+  return (
+    <>
+      {notes.map((n, i) => (
+        <div key={i} className={`note small ${n.by}`}>
+          <b>{n.by === 'claude' ? 'Claude' : 'You'}:</b> {n.text}
+        </div>
+      ))}
+      {r.status !== 'working' && (
+        <div className="row small follow">
+          <input
+            placeholder={r.status === 'open' ? 'Add a detail…' : 'Not quite? Say what to change…'}
+            title="A follow-up on this request; it reopens the request for Claude (Enter to send)"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') send();
+            }}
+          />
+          <button className="small" disabled={!text.trim()} onClick={send} title="Send the follow-up (Enter)">
+            Reply
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Before (the still taken when you asked) and after (the frame now), with a wipe between them. */
+function Compare({ r, player, onClose }: { r: Request; player: Player; onClose: () => void }) {
+  const [after, setAfter] = useState<string | null>(null);
+  const [wipe, setWipe] = useState(50);
+  const p = player.project;
+  const dir = studio.opened?.dir ?? '';
+  const before = `/api/file?path=${encodeURIComponent(`${dir}/${r.still}`)}`;
+  useEffect(() => {
+    let url: string | null = null;
+    const box = r.element?.box ?? (r.region ? [r.region[0] * p.width, r.region[1] * p.height, r.region[2] * p.width, r.region[3] * p.height] : null);
+    void player.snapshot(r.t ?? r.range?.[0] ?? 0, box as [number, number, number, number] | null).then((b) => {
+      url = URL.createObjectURL(b);
+      setAfter(url);
+    });
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [r.id]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+  return (
+    <div className="modal" onMouseDown={onClose}>
+      <div className="modal-body compare" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="row">
+          <b>{r.id}</b> <span className="muted small">{r.text}</span>
+          <span className="spacer" />
+          <button className="ghost" onClick={onClose} title="Close (Esc)">✕</button>
+        </div>
+        <div className="wipe" style={{ aspectRatio: `${p.width} / ${p.height}` }}>
+          {after ? <img src={after} alt="after" /> : <div className="muted small pad">Drawing the frame now…</div>}
+          <img src={before} alt="before" style={{ clipPath: `inset(0 ${100 - wipe}% 0 0)` }} />
+          <div className="wipe-line" style={{ left: `${wipe}%` }} />
+          <span className="tag l">before</span>
+          <span className="tag r">after</span>
+        </div>
+        <input type="range" min={0} max={100} value={wipe} onChange={(e) => setWipe(Number(e.target.value))} title="Drag to wipe between before (left) and after (right)" />
       </div>
     </div>
   );
