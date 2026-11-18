@@ -65,7 +65,7 @@ describe('checks', () => {
     const out = checkProject(e.project, e.resolve(), { missing: new Set(['a.mp4']) });
     const text = out.map((c) => c.message).join('\n');
     expect(text).toContain('black at 0.00 s');
-    expect(text).toContain('a.mp4 is missing');
+    expect(text).toContain('Missing file a.mp4');
     expect(text).toContain('Request r1');
   });
 });

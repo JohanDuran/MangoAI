@@ -20,13 +20,26 @@ export function checkProject(p: Project, r: Resolved, opts: CheckOptions = {}): 
   const out: Check[] = [];
   for (const pr of r.problems) out.push({ level: 'error', message: `${pr.path}: ${pr.message}` });
 
-  // media files that aren't there
+  // media files that aren't there: one line per file, pointing at its first clip
+  const bySrc = new Map<string, { first: string; t?: number; n: number }>();
   for (const t of p.tracks)
     for (const c of t.clips)
       if (c.type === 'media' && opts.missing?.has(c.src)) {
         const rc = r.clips.get(c.id);
-        out.push({ level: 'error', message: `${c.label ?? c.id}: the file ${c.src} is missing`, clip: c.id, ...(rc && { t: rc.start }) });
+        const cur = bySrc.get(c.src);
+        if (!cur) bySrc.set(c.src, { first: c.id, n: 1, ...(rc && { t: rc.start }) });
+        else {
+          cur.n++;
+          if (rc && (cur.t === undefined || rc.start < cur.t)) {
+            cur.t = rc.start;
+            cur.first = c.id;
+          }
+        }
       }
+  for (const [src, x] of bySrc) {
+    const file = src.split(/[\\/]/).pop();
+    out.push({ level: 'error', message: `Missing file ${file} (${x.n} clip${x.n > 1 ? 's' : ''}; looked for ${src})`, clip: x.first, ...(x.t !== undefined && { t: x.t }) });
+  }
 
   // black gaps: times where no visible video clip covers the frame
   const spans: [number, number][] = [];

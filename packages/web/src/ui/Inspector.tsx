@@ -383,8 +383,10 @@ function ZoomKeys({ clip, player }: { clip: MediaClip; player: Player | null }) 
   const addAtPlayhead = () => {
     const local = Math.max(0, Math.round(((player?.time() ?? 0) - (rc?.start ?? 0)) * 1e3) / 1e3);
     const [z, fx, fy] = resolvedKeys.length ? keyed(resolvedKeys, local) : [1, region[2] / 2, region[3] / 2];
-    const next = [...keys, [local, round(z, 3), Math.round(fx), Math.round(fy)] as (typeof keys)[number]];
-    next.sort((a, b) => (typeof a[0] === 'number' && typeof b[0] === 'number' ? a[0] - b[0] : 0));
+    // keep keys in time order (their times may be expressions like "dur": use the resolved ones)
+    const at = resolvedKeys.length === keys.length ? resolvedKeys.findIndex((k) => k[0] > local) : -1;
+    const next = [...keys];
+    next.splice(at < 0 ? next.length : at, 0, [local, round(z, 3), Math.round(fx), Math.round(fy)]);
     write(next, `zoom key at ${local.toFixed(2)} s on ${clip.id}`);
   };
   return (

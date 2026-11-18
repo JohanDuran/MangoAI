@@ -604,7 +604,8 @@ export class Player {
     const now = performance.now();
     if (this.playing && this.lastFrame) {
       const gap = now - this.lastFrame;
-      if (gap > 25) this.dropped += Math.round(gap / 16.7) - 1;
+      // a late frame drops a frame or a few; a long pause means the tab was in the background, not slow
+      if (gap > 25 && gap < 250 && document.visibilityState === 'visible') this.dropped += Math.round(gap / 16.7) - 1;
     }
     this.lastFrame = this.playing ? now : 0;
     let t = this.time();

@@ -135,7 +135,7 @@ table.tracks input { width: 56px; }
 .checks { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; }
 .checks.ok { color: #3ddc84; }
 .checks ul { list-style: none; margin: 4px 0 0; padding: 0; }
-.checks li { padding: 2px 0; }
+.checks li { padding: 2px 0; overflow-wrap: anywhere; }
 .checks li.error { color: var(--danger); }
 .checks li.info { color: var(--muted); }
 .warn-text { color: #ffb347; }
@@ -222,8 +222,10 @@ table.tracks input { width: 56px; }
 .sound .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { background: var(--accent); color: #000; border-radius: 6px; padding: 0 5px; font-size: 10px; font-weight: 700; }
 
-.meter { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
-.meter .bar { position: relative; width: 120px; height: 8px; background: #23262e; border-radius: 4px; overflow: hidden; }
+.meter { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; white-space: nowrap; }
+.transport { flex-wrap: wrap; row-gap: 4px; }
+.transport .tc { white-space: nowrap; }
+.meter .bar { position: relative; width: 80px; height: 8px; background: #23262e; border-radius: 4px; overflow: hidden; }
 .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #2b9e34, #3ddc84 70%, #ffd400 90%); }
 .meter .peak { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; }
 .meter .mark { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.35); }

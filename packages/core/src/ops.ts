@@ -486,7 +486,14 @@ export class Editor {
         return `added request ${op.request.id}: "${op.request.text}"`;
       case 'update_request':
         return `request ${op.id}: ${Object.entries(op.set)
-          .map(([k, v]) => `${k} → ${v === null ? '(none)' : JSON.stringify(v)}`)
+          .map(([k, v]) => {
+            if (k === 'notes' && Array.isArray(v)) {
+              // just the newest message, not the whole conversation
+              const last = v[v.length - 1] as { by?: string; text?: string } | undefined;
+              return last ? `${last.by === 'claude' ? 'Claude' : 'you'} wrote "${String(last.text).slice(0, 120)}"` : 'notes cleared';
+            }
+            return `${k} → ${v === null ? '(none)' : JSON.stringify(v)}`;
+          })
           .join(', ')}`;
       case 'remove_request':
         return `removed request ${op.id}`;
