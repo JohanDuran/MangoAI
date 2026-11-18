@@ -4,7 +4,7 @@ import { Player } from '../engine/player';
 import { studio, useStudio } from '../store';
 import { ExportPanel } from './Export';
 import { History } from './History';
-import { duplicate, Inspector, paste, type ClipCopy } from './Inspector';
+import { copyClips, duplicate, Inspector, paste, storedClips, type ClipCopy } from './Inspector';
 import { MediaPool } from './MediaPool';
 import { OpenDialog } from './OpenDialog';
 import { Requests } from './Requests';
@@ -96,15 +96,15 @@ export function App() {
       } else if (ctrl && key === 's') {
         e.preventDefault();
         void studio.save();
-      } else if (ctrl && key === 'c') {
-        const r = studio.resolved();
-        clipboard.current = sel
-          .map((id) => ({ c: studio.editor?.clip(id), tr: studio.editor?.trackOf(id), rc: r?.clips.get(id) }))
-          .filter((x) => x.c && x.tr && x.rc && x.rc.end !== null)
-          .map((x) => ({ clip: structuredClone(x.c!), track: x.tr!.id, start: x.rc!.start, end: x.rc!.end! }));
-        if (clipboard.current.length) studio.flash(`Copied ${clipboard.current.length} clip(s)`);
+      } else if (ctrl && (key === 'c' || key === 'x')) {
+        clipboard.current = copyClips(sel);
+        if (!clipboard.current.length) return;
+        if (key === 'x') studio.run((ed) => deleteClips(ed, sel), `cut ${sel.length} clip(s)`);
+        studio.flash(`${key === 'x' ? 'Cut' : 'Copied'} ${clipboard.current.length} clip(s): paste here or in another project`);
       } else if (ctrl && key === 'v') {
-        paste(clipboard.current, t);
+        // the latest copy, from this tab or another project's tab
+        const stored = storedClips();
+        paste(stored.length ? stored : clipboard.current, t);
       } else if (ctrl && key === 'd') {
         e.preventDefault();
         duplicate(sel);

@@ -12,6 +12,39 @@ interface Line {
   summary: string[];
 }
 
+/** The undo history as a list: done steps, then undone ones (greyed) that redo would bring back. */
+function Steps() {
+  const s = useStudio();
+  const e = s.editor;
+  if (!e) return null;
+  const done = e.history;
+  const future = e.future;
+  if (!done.length && !future.length) return <div className="muted small">No edits yet in this session.</div>;
+  return (
+    <ul className="history steps">
+      <li className={done.length === 0 ? 'here' : ''}>
+        <button className="link small" onClick={() => studio.jumpTo(0)} title="Go back to before the first edit">
+          (opened)
+        </button>
+      </li>
+      {done.map((c, i) => (
+        <li key={`d${i}`} className={i === done.length - 1 ? 'here' : ''}>
+          <button className="link small" onClick={() => studio.jumpTo(i + 1)} title={c.summary.join('\n')}>
+            <span className={`who ${c.author}`}>{c.author === 'claude' ? 'Claude' : 'you'}</span> {c.label}
+          </button>
+        </li>
+      ))}
+      {future.map((c, i) => (
+        <li key={`f${i}`} className="undone">
+          <button className="link small" onClick={() => studio.jumpTo(done.length + i + 1)} title={`Undone. Click to redo up to here.\n${c.summary.join('\n')}`}>
+            <span className={`who ${c.author}`}>{c.author === 'claude' ? 'Claude' : 'you'}</span> {c.label}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function History() {
   const s = useStudio();
   const [lines, setLines] = useState<Line[]>([]);
@@ -34,6 +67,8 @@ export function History() {
   return (
     <div className="panel side-body">
       <div className="panel-body">
+        <h4 title="Every edit since the project opened; click one to go back (or forward) to right after it">Edit steps</h4>
+        <Steps />
         <h4>Not saved yet ({unsaved.length})</h4>
         {unsaved.length === 0 ? (
           <div className="muted small">Nothing. Edits you make stay here until you Save.</div>

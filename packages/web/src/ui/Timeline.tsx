@@ -470,6 +470,25 @@ export function Timeline({ player }: { player: Player }) {
       ctx.globalAlpha = 1;
       if (track.kind === 'audio' && c.type === 'media') drawWave(ctx, c, start, x0, x1, top, laneH - 2);
       drawFades(ctx, c, x0, x1, top, laneH - 2);
+      if (c.type === 'media' && x1 - x0 > 8) {
+        // keyframes: zoom keys (white) and volume keys (green) as small diamonds along the bottom
+        const ks: [number, string][] = [
+          ...(resolved.clips.get(c.id)?.keys ?? []).map((k): [number, string] => [k[0], '#ffffff']),
+          ...(c.gainKeys ?? []).map((k): [number, string] => [k[0], '#3ddc84']),
+        ];
+        for (const [lt, col] of ks) {
+          const kx = tToX(start + lt);
+          if (kx < x0 || kx > x1) continue;
+          const ky = top + laneH - 7;
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.moveTo(kx, ky - 4);
+          ctx.lineTo(kx + 4, ky);
+          ctx.lineTo(kx, ky + 4);
+          ctx.lineTo(kx - 4, ky);
+          ctx.fill();
+        }
+      }
       if (c.pivot && x1 - x0 > 4) {
         const hx = tToX(start + c.pivot); // the SFX hit point
         ctx.fillStyle = '#ffd400';

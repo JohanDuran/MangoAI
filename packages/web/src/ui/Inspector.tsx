@@ -5,17 +5,19 @@ import {
   linkTime,
   rippleDeleteClips,
   setFades,
+  gainKeyAt,
   setGain,
   splitAt,
   unlinkTime,
   type Clip,
+  type MediaClip,
   type Op,
   type TimeExpr,
   type Track,
 } from '@mangoai/core';
 import { useEffect, useState } from 'react';
 import type { Player } from '../engine/player';
-import { STYLES } from '../engine/look';
+import { keyed, STYLES } from '../engine/look';
 import { studio, useStudio } from '../store';
 import { timecode } from './Transport';
 
@@ -241,6 +243,18 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
                   <dd>
                     <input type="checkbox" title="Blur and darken the picture" checked={!!clip.dim} onChange={(e) => set(id, { dim: e.target.checked || null })} />
                   </dd>
+                  <dt title="Zoom and pan over time: each key sets the zoom and the point it centres on, eased between keys">Zoom keys</dt>
+                  <dd>
+                    <ZoomKeys clip={clip} player={player} />
+                  </dd>
+                </>
+              )}
+              {track.kind === 'audio' && (
+                <>
+                  <dt title="Volume over time: each key is a level in dB at a time in the clip; it moves in a straight line between keys">Volume keys</dt>
+                  <dd>
+                    <GainKeys clip={clip} player={player} />
+                  </dd>
                 </>
               )}
             </>
@@ -355,6 +369,73 @@ function MultiInspector({ ids }: { ids: string[] }) {
   );
 }
 
+/** Zoom keys of a video clip: [time from the clip's start, zoom, focus x, focus y] (source pixels). */
+function ZoomKeys({ clip, player }: { clip: MediaClip; player: Player | null }) {
+  const s = useStudio();
+  const rc = s.resolved()?.clips.get(clip.id);
+  const m = s.opened?.media[clip.src];
+  const p = s.editor!.project;
+  const region: [number, number, number, number] = Array.isArray(clip.region) ? clip.region : typeof clip.region === 'string' && p.regions[clip.region] ? p.regions[clip.region]! : [0, 0, m?.width ?? p.width, m?.height ?? p.height];
+  const keys = clip.keys ?? [];
+  const resolvedKeys = rc?.keys ?? [];
+  const write = (next: typeof keys, label: string) => studio.apply([{ op: 'update_clip', id: clip.id, set: { keys: next.length ? next : null } }], label);
+  const addAtPlayhead = () => {
+    const local = Math.max(0, Math.round(((player?.time() ?? 0) - (rc?.start ?? 0)) * 1e3) / 1e3);
+    const [z, fx, fy] = resolvedKeys.length ? keyed(resolvedKeys, local) : [1, region[2] / 2, region[3] / 2];
+    const next = [...keys, [local, round(z, 3), Math.round(fx), Math.round(fy)] as (typeof keys)[number]];
+    next.sort((a, b) => (typeof a[0] === 'number' && typeof b[0] === 'number' ? a[0] - b[0] : 0));
+    write(next, `zoom key at ${local.toFixed(2)} s on ${clip.id}`);
+  };
+  return (
+    <div className="keys">
+      {keys.map((k, i) => (
+        <div key={i} className="row small">
+          <Field value={k[0]} title="Time: seconds from the clip's start (or start / dur terms)" onCommit={(v) => v !== null && write(keys.map((x, j) => (j === i ? [v, x[1], x[2], x[3]] : x)), `zoom key ${i + 1} of ${clip.id}`)} />
+          <Field value={k[1]} title="Zoom: 1 shows the whole picture, 2 is twice as close" onCommit={(v) => v !== null && write(keys.map((x, j) => (j === i ? [x[0], Number(v), x[2], x[3]] : x)), `zoom key ${i + 1} of ${clip.id}`)} />
+          <Field value={k[2]} title="Focus x: the point to centre on, in source pixels from the left of the crop" onCommit={(v) => v !== null && write(keys.map((x, j) => (j === i ? [x[0], x[1], Number(v), x[3]] : x)), `zoom key ${i + 1} of ${clip.id}`)} />
+          <Field value={k[3]} title="Focus y: in source pixels from the top of the crop" onCommit={(v) => v !== null && write(keys.map((x, j) => (j === i ? [x[0], x[1], x[2], Number(v)] : x)), `zoom key ${i + 1} of ${clip.id}`)} />
+          <button className="link" onClick={() => player?.seek((rc?.start ?? 0) + (resolvedKeys[i]?.[0] ?? 0))} title="Go to this key">⏵</button>
+          <button className="link" onClick={() => write(keys.filter((_, j) => j !== i), `removed zoom key ${i + 1} of ${clip.id}`)} title="Remove this key">✕</button>
+        </div>
+      ))}
+      {keys.length > 0 && <div className="muted small">time · zoom · focus x · focus y</div>}
+      <button className="small" onClick={addAtPlayhead} title="Add a key at the playhead with the zoom it has there now; then change its values">
+        + key at playhead
+      </button>
+    </div>
+  );
+}
+
+/** Volume keys of an audio clip: [seconds from the clip's start, dB], on top of its gain. */
+function GainKeys({ clip, player }: { clip: MediaClip; player: Player | null }) {
+  const s = useStudio();
+  const rc = s.resolved()?.clips.get(clip.id);
+  const keys = clip.gainKeys ?? [];
+  const write = (next: [number, number][], label: string) =>
+    studio.apply([{ op: 'update_clip', id: clip.id, set: { gainKeys: next.length ? [...next].sort((a, b) => a[0] - b[0]) : null } }], label);
+  const addAtPlayhead = () => {
+    const local = Math.max(0, Math.round(((player?.time() ?? 0) - (rc?.start ?? 0)) * 1e3) / 1e3);
+    write([...keys, [local, round(gainKeyAt(keys, local), 1)]], `volume key at ${local.toFixed(2)} s on ${clip.id}`);
+  };
+  return (
+    <div className="keys">
+      {keys.map((k, i) => (
+        <div key={i} className="row small">
+          <Field value={k[0]} title="Seconds from the clip's start" onCommit={(v) => v !== null && write(keys.map((x, j) => (j === i ? [Number(v), x[1]] : x)), `volume key ${i + 1} of ${clip.id}`)} />
+          <Field value={k[1]} title="Level in dB (0 = as is, -6 about half as loud, -40 nearly silent)" onCommit={(v) => v !== null && write(keys.map((x, j) => (j === i ? [x[0], Number(v)] : x)), `volume key ${i + 1} of ${clip.id}`)} /> dB
+          <button className="link" onClick={() => player?.seek((rc?.start ?? 0) + k[0])} title="Go to this key">⏵</button>
+          <button className="link" onClick={() => write(keys.filter((_, j) => j !== i), `removed volume key ${i + 1} of ${clip.id}`)} title="Remove this key">✕</button>
+        </div>
+      ))}
+      <button className="small" onClick={addAtPlayhead} title="Add a key at the playhead with the level it has there now; then change it (e.g. -30 to fade the music down)">
+        + key at playhead
+      </button>
+    </div>
+  );
+}
+
+const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
+
 /** Copies of clips right after the last one, on the same tracks (times become plain numbers). */
 export function duplicate(ids: string[]) {
   const ed = studio.editor;
@@ -372,6 +453,41 @@ export interface ClipCopy {
   track: string;
   start: number;
   end: number;
+  /** Where it was copied from, so a paste into another project can find its files and a matching track. */
+  dir?: string;
+  kind?: Track['kind'];
+  /** The media file's full path (src may be relative to the project it came from). */
+  abs?: string;
+}
+
+const CLIPBOARD = 'mangoai.clipboard';
+
+/** Copy clips: kept in this tab and in the browser, so you can paste them into another project. */
+export function copyClips(ids: string[]): ClipCopy[] {
+  const r = studio.resolved();
+  const ed = studio.editor;
+  const o = studio.opened;
+  if (!r || !ed || !o) return [];
+  const items = ids
+    .map((id) => ({ c: ed.clip(id), tr: ed.trackOf(id), rc: r.clips.get(id) }))
+    .filter((x) => x.c && x.tr && x.rc && x.rc.end !== null)
+    .map((x): ClipCopy => {
+      const c = x.c!;
+      const abs = c.type === 'media' ? o.media[c.src]?.path : c.type === 'comp' ? `${o.dir}/${c.comp}` : undefined;
+      return { clip: structuredClone(c), track: x.tr!.id, kind: x.tr!.kind, start: x.rc!.start, end: x.rc!.end!, dir: o.dir, ...(abs && { abs }) };
+    });
+  try {
+    localStorage.setItem(CLIPBOARD, JSON.stringify(items));
+  } catch {}
+  return items;
+}
+
+export function storedClips(): ClipCopy[] {
+  try {
+    return JSON.parse(localStorage.getItem(CLIPBOARD) ?? '[]') as ClipCopy[];
+  } catch {
+    return [];
+  }
 }
 
 export function paste(items: ClipCopy[], at: number) {
@@ -381,14 +497,27 @@ export function paste(items: ClipCopy[], at: number) {
   const taken = new Set<string>();
   const ops: Op[] = [];
   const ids: string[] = [];
+  const here = studio.opened?.dir;
   for (const it of items) {
-    if (!ed.track(it.track)) continue;
+    // another project: the same track id if it fits, else the first track of the same kind
+    const fits = (tid: string) => {
+      const tr = ed.track(tid);
+      return !!tr && (!it.kind || tr.kind === it.kind);
+    };
+    const track = fits(it.track) ? it.track : ed.project.tracks.find((t) => t.kind === it.kind)?.id;
+    if (!track) continue;
+    it.track = track;
     const id = ed.freshId(`${it.clip.id.replace(/(\.copy|\.split)\d+$/, '')}.copy`, taken);
     taken.add(id);
     ids.push(id);
     const c = structuredClone(it.clip) as Clip & Record<string, unknown>;
     c.id = id;
     delete c.origin;
+    if (it.dir && here && it.dir !== here && it.abs) {
+      // files are named relative to the project they came from: use their full path here
+      if (c.type === 'media') c.src = it.abs.replace(/\\/g, '/');
+      if (c.type === 'comp') c.comp = it.abs.replace(/\\/g, '/');
+    }
     const dt = at - first;
     c.start = Math.round((it.start + dt + (c.pivot ?? 0)) * 1e4) / 1e4;
     c.end = Math.round((it.end + dt) * 1e4) / 1e4;

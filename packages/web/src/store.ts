@@ -286,6 +286,19 @@ export class Studio {
     }
   }
 
+  /** Undo or redo until `n` changes are applied (a click in the session history). */
+  jumpTo(n: number) {
+    const e = this.editor;
+    if (!e) return;
+    let moved = 0;
+    while (e.history.length > n && e.undo()) moved++;
+    while (e.history.length < n && e.redo()) moved++;
+    if (moved) {
+      this.flash(`Went ${moved} step${moved > 1 ? 's' : ''} ${e.history.length < n ? 'back' : 'through the history'}`);
+      this.edited();
+    }
+  }
+
   flash(msg: string, isError = false) {
     clearTimeout(this.noticeTimer);
     if (isError) this.error = msg;

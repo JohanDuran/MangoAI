@@ -93,6 +93,10 @@ export class Editor {
   get history(): readonly Change[] {
     return this.undoStack;
   }
+  /** Undone changes that redo would bring back, next one first. */
+  get future(): readonly Change[] {
+    return [...this.redoStack].reverse();
+  }
 
   // --- saving -----------------------------------------------------------------------------
   /** The undo stack as it was at the last save; what's different from it is unsaved. */

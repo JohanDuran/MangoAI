@@ -1,7 +1,7 @@
 // Live playback: an AudioContext is the master clock; video elements and the canvas follow it.
 // Nothing is rendered to a file. Short audio (SFX, music, a Short's narration) is decoded into buffers
 // and scheduled sample-accurately; long audio (a 50-min voice track) streams through a media element.
-import type { Clip, CompClip, MediaClip, Project, Resolved, TitleClip } from '@mangoai/core';
+import { duckAmount, gainKeyAt, speechSpans, type Clip, type CompClip, type MediaClip, type Project, type Resolved, type TitleClip } from '@mangoai/core';
 import type { Opened, MediaInfo } from '../api';
 import { TimelineIndex, type Span } from './index';
 import { captionGroups, cardGeometry, color, drawCaption, drawTitle, findGroup, titleLayer, type CaptionGroup } from './look';
@@ -56,6 +56,20 @@ export function seekComp(el: HTMLIFrameElement, local: number) {
 }
 
 /** Gain envelope for a clip: fade in from its start, fade out to its end, from wherever we are now. */
+/** Steps per second for volume curves (ducking, volume keys): smooth enough, cheap to build. */
+const CURVE_RATE = 30;
+
+/** Drive `p` from context time `from` for `dur` seconds with `f(seconds since from)`, as one value curve. */
+function curve(p: AudioParam, from: number, dur: number, f: (x: number) => number) {
+  if (!(dur > 0.05)) return;
+  const n = Math.max(2, Math.min(200000, Math.ceil(dur * CURVE_RATE)));
+  const v = new Float32Array(n);
+  for (let i = 0; i < n; i++) v[i] = f((i / (n - 1)) * dur);
+  try {
+    p.setValueCurveAtTime(v, from, dur);
+  } catch {}
+}
+
 function envelope(p: AudioParam, level: number, a: number, b: number, fi: number, fo: number, now: number) {
   const val = (x: number) => {
     let v = level;
@@ -354,8 +368,16 @@ export class Player {
       const tIdx = idx.tracks.get(track.id);
       if (!tIdx) continue;
       const trackGain = this.ctx.createGain();
-      trackGain.gain.value = dbToGain(track.gain ?? 0);
+      const base = dbToGain(track.gain ?? 0);
+      trackGain.gain.value = base;
       trackGain.connect(this.master);
+      if (track.duck && track.duck < 0) {
+        // dip while the voice speaks (same phrases and ramps as the export)
+        const spans = speechSpans(this.project, this.getResolved());
+        const depth = 1 - dbToGain(track.duck);
+        const from = Math.max(when, this.ctx.currentTime);
+        curve(trackGain.gain, from, end - t, (x) => base * (1 - depth * duckAmount(spans, t + (from - when) + x)));
+      }
       const spans = tIdx.query(t, Infinity);
       for (const s of spans) {
         const c = s.clip as MediaClip;
@@ -372,7 +394,16 @@ export class Player {
     const inPt = r?.in ?? 0;
     const speed = r?.speed ?? 1;
     const g = this.ctx.createGain();
-    g.connect(out);
+    if (c.gainKeys?.length) {
+      // volume keys: a second gain after the fades, following the keys in dB
+      const kg = this.ctx.createGain();
+      kg.gain.value = dbToGain(gainKeyAt(c.gainKeys, Math.max(0, t - s.start)));
+      g.connect(kg).connect(out);
+      const from = Math.max(when + Math.max(0, s.start - t), this.ctx.currentTime);
+      const local0 = Math.max(0, t - s.start) + (from - when - Math.max(0, s.start - t));
+      const len = Math.min(s.end, end) - Math.max(s.start, t);
+      curve(kg.gain, from, len, (x) => dbToGain(gainKeyAt(c.gainKeys, local0 + x)));
+    } else g.connect(out);
     const level = dbToGain(db);
     const at = when + Math.max(0, s.start - t); // context time the clip (or its remainder) starts
     const offset = inPt + Math.max(0, t - s.start) * speed;

@@ -141,6 +141,12 @@ table.tracks input { width: 56px; }
 .req.working { border-left: 3px solid #50a0f0; padding-left: 6px; }
 .reply { color: #9fd3a8; margin-top: 3px; }
 .note { margin-top: 3px; }
+.keys { display: flex; flex-direction: column; gap: 3px; }
+.keys .row input { width: 52px; }
+.steps li { padding: 2px 0; }
+.steps li.here { border-left: 3px solid var(--accent); padding-left: 6px; }
+.steps li.undone { opacity: 0.45; }
+.steps .link { text-align: left; }
 .note.claude { color: #9fd3a8; }
 .note.you { color: var(--text); }
 .req .follow { margin-top: 4px; }
