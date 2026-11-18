@@ -118,6 +118,11 @@ export class Player {
   private dirty = true;
   /** Measured each frame while playing: worst |video time − expected| in seconds. */
   lastDrift = 0;
+  /** Draw at half resolution while playing (smoother on heavy projects); paused frames are always full. */
+  light = false;
+  /** Frames the display missed since playback started (late animation frames). */
+  dropped = 0;
+  private lastFrame = 0;
 
   /** Layers above the top-most comp track (captions, titles over an animation). */
   private topCanvas: HTMLCanvasElement | null = null;
@@ -239,6 +244,7 @@ export class Player {
         new Promise((r) => setTimeout(r, 600)),
       ]);
       this.playing = true;
+      this.dropped = 0;
       this.anchorCtx = this.ctx.currentTime + 0.03;
       // the clock starts where the picture already is (it got a head start while starting up)
       const lead = active[0];
@@ -595,6 +601,12 @@ export class Player {
   // --- drawing ---------------------------------------------------------------------------------
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
+    const now = performance.now();
+    if (this.playing && this.lastFrame) {
+      const gap = now - this.lastFrame;
+      if (gap > 25) this.dropped += Math.round(gap / 16.7) - 1;
+    }
+    this.lastFrame = this.playing ? now : 0;
     let t = this.time();
     if (this.playing && t >= this.duration) {
       this.pause();
@@ -625,15 +637,18 @@ export class Player {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     const p = this.project;
-    if (cv.width !== p.width || cv.height !== p.height) {
-      cv.width = p.width;
-      cv.height = p.height;
+    const q = this.light && this.playing ? 0.5 : 1;
+    const W = Math.round(p.width * q);
+    const H = Math.round(p.height * q);
+    if (cv.width !== W || cv.height !== H) {
+      cv.width = W;
+      cv.height = H;
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cv.width, cv.height);
     // the toolbox lays Shorts out on a 1080-wide frame; scale for other formats
-    const k = p.width / 1080;
+    const k = (p.width / 1080) * q;
     ctx.setTransform(k, 0, 0, k, 0, 0);
     // tracks above the last one holding a comp paint on the top canvas, over the comp iframes
     let lastComp = -1;
@@ -643,9 +658,9 @@ export class Player {
     const top = this.topCanvas;
     let tctx: CanvasRenderingContext2D | null = null;
     if (top) {
-      if (top.width !== p.width || top.height !== p.height) {
-        top.width = p.width;
-        top.height = p.height;
+      if (top.width !== W || top.height !== H) {
+        top.width = W;
+        top.height = H;
       }
       tctx = top.getContext('2d');
       if (tctx) {

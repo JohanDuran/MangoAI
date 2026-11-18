@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { duckExpr, gainKeysExpr, speechSpans, type Clip, type CompClip, type MediaClip, type Project, type Resolved, type TitleClip, type Track } from '@mangoai/core';
+import { checkProject, duckExpr, gainKeysExpr, speechSpans, type Check, type Clip, type CompClip, type MediaClip, type Project, type Resolved, type TitleClip, type Track } from '@mangoai/core';
 import { compCached, compDir, compHash, renderComp } from './comps.js';
 import { broadcast } from './events.js';
 import { peaks, probe, type MediaInfo } from './media.js';
@@ -317,6 +317,8 @@ export interface PlanOut {
   comps: { clip: string; comp: string; cached: boolean }[];
   output: string;
   estimate: string;
+  /** Probable mistakes to look at before exporting (missing files, black gaps, open requests…). */
+  checks: Check[];
 }
 
 function outputOf(c: Ctx): string {
@@ -345,7 +347,10 @@ export async function plan(dir: string): Promise<PlanOut> {
   const stale = segments.filter((s) => !s.cached).reduce((n, s) => n + (s.t1 - s.t0), 0);
   const compsTodo = comps.filter((x) => !x.cached).length;
   const est = stale * 0.5 + compsTodo * 20 + 3;
+  const missing = new Set<string>();
+  for (const t of c.p.tracks) for (const cl of t.clips) if (cl.type === 'media' && !c.media.get(cl.src)?.exists) missing.add(cl.src);
   return {
+    checks: checkProject(c.p, c.r, { missing }),
     segments,
     comps,
     output: outputOf(c),

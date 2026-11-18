@@ -1,5 +1,6 @@
 // Export: render once at the end, re-rendering only what changed. The plan shows which parts are already
 // rendered (green on the timeline's cache bar) and which comps need a HyperFrames render.
+import type { Check } from '@mangoai/core';
 import { useEffect, useState } from 'react';
 import { api, type ExportJob } from '../api';
 import type { Player } from '../engine/player';
@@ -11,6 +12,7 @@ interface Plan {
   comps: { clip: string; comp: string; cached: boolean }[];
   output: string;
   estimate: string;
+  checks?: Check[];
 }
 
 /** Common loudness targets: [LUFS, where it's used]. */
@@ -20,6 +22,46 @@ const LOUDNESS: [number, string][] = [
   [-18, 'quieter, more headroom'],
   [-23, 'broadcast (EBU R128)'],
 ];
+
+const ICON: Record<Check['level'], string> = { error: '⛔', warn: '⚠', info: 'ℹ' };
+
+/** Before exporting: what looks wrong, each with a jump to where it is. */
+function Checks({ checks, player }: { checks: Check[]; player: Player | null }) {
+  if (!checks.length)
+    return (
+      <div className="checks ok small" title="Missing files, black gaps, muted or hidden tracks, captions, open requests, sound">
+        ✓ Checks passed
+      </div>
+    );
+  const errors = checks.filter((c) => c.level === 'error').length;
+  return (
+    <div className="checks small">
+      <b title="Things that are probably mistakes. Nothing here stops the export">
+        Before you export ({errors ? `${errors} problem${errors > 1 ? 's' : ''}, ` : ''}
+        {checks.length - errors} note{checks.length - errors === 1 ? '' : 's'})
+      </b>
+      <ul>
+        {checks.map((c, i) => (
+          <li key={i} className={c.level}>
+            <span>{ICON[c.level]}</span> {c.message}{' '}
+            {(c.t !== undefined || c.clip) && (
+              <button
+                className="link"
+                onClick={() => {
+                  if (c.t !== undefined) player?.seek(c.t);
+                  if (c.clip) studio.select(c.clip);
+                }}
+                title="Go there"
+              >
+                go
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export function ExportPanel({ player }: { player: Player | null }) {
   const s = useStudio();
@@ -69,6 +111,7 @@ export function ExportPanel({ player }: { player: Player | null }) {
     <div className="panel side-body">
       <div className="panel-body">
         {err && <div className="error-text small">{err}</div>}
+        {plan?.checks && <Checks checks={plan.checks} player={player} />}
         {plan && (
           <>
             <dl>

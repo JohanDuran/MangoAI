@@ -24,6 +24,24 @@ export function Transport({ player }: { player: Player }) {
       <span className="tc">{timecode(player.time(), fps)}</span>
       <span className="muted">/ {timecode(player.duration, fps)}</span>
       {player.isPlaying && <span className="muted small" title="Worst video drift from the audio clock this frame">sync {(player.lastDrift * 1000).toFixed(0)} ms</span>}
+      <button
+        className={`ghost small ${player.light ? 'on' : ''}`}
+        onClick={() => {
+          player.light = !player.light;
+          try {
+            localStorage.setItem('mangoai.light', player.light ? '1' : '0');
+          } catch {}
+          tick((n) => n + 1);
+        }}
+        title={player.light ? 'Light playback is on: half resolution while playing (paused frames stay sharp). Click for full' : 'Light playback: draw at half resolution while playing, for smoother playback on heavy projects'}
+      >
+        {player.light ? '◐ light' : '● full'}
+      </button>
+      {player.isPlaying && player.dropped > 0 && (
+        <span className={`small ${player.dropped > 30 ? 'warn-text' : 'muted'}`} title="Frames the preview couldn't draw in time since you pressed play. If this climbs, try light playback">
+          dropped {player.dropped}
+        </span>
+      )}
       <Meter player={player} />
     </div>
   );

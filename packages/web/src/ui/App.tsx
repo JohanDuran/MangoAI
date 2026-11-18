@@ -37,7 +37,11 @@ export function App() {
   const opened = s.opened;
   const player = useMemo(() => {
     if (!opened || !s.editor) return null;
-    return new Player(opened, () => studio.resolved()!, () => studio.resolved()?.words ?? null, (src) => studio.peaks.get(src)?.lufs ?? null);
+    const pl = new Player(opened, () => studio.resolved()!, () => studio.resolved()?.words ?? null, (src) => studio.peaks.get(src)?.lufs ?? null);
+    try {
+      pl.light = localStorage.getItem('mangoai.light') === '1';
+    } catch {}
+    return pl;
     // a new player per opened project
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened]);

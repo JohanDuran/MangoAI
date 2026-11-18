@@ -165,6 +165,7 @@ export function Viewer({ player }: { player: Player }) {
           )}
           {pickedBox && <rect x={pickedBox[0]} y={pickedBox[1]} width={pickedBox[2]} height={pickedBox[3]} className="picked" />}
         </svg>
+        <SafeZones width={p.width} height={p.height} />
         <PendingRequests player={player} />
         {requestMode && (
           <div className="hint">Click a graphic to ask for a change, or drag a box where something new should go</div>
@@ -175,6 +176,59 @@ export function Viewer({ player }: { player: Player }) {
 }
 
 const SHOW_KEY = 'mangoai.showRequests';
+const ZONE_KEY = 'mangoai.safeZone';
+
+/**
+ * Where each app draws its own buttons and text over a vertical video, in 1080×1920 pixels (approximate,
+ * from the apps' published guides): [x, y, w, h] boxes to keep text out of.
+ */
+const ZONES: Record<string, { label: string; boxes: [number, number, number, number][] }> = {
+  tiktok: { label: 'TikTok', boxes: [[0, 0, 1080, 160], [0, 1440, 1080, 480], [940, 640, 140, 800]] },
+  reels: { label: 'Reels', boxes: [[0, 0, 1080, 220], [0, 1500, 1080, 420], [960, 900, 120, 600]] },
+  shorts: { label: 'Shorts', boxes: [[0, 0, 1080, 140], [0, 1540, 1080, 380], [950, 980, 130, 560]] },
+};
+
+/** Shade the parts of the frame an app covers with its own UI, so text and faces stay clear of them. */
+function SafeZones({ width, height }: { width: number; height: number }) {
+  const vertical = height > width;
+  const [zone, setZone] = useState<string>(() => {
+    try {
+      return localStorage.getItem(ZONE_KEY) ?? 'off';
+    } catch {
+      return 'off';
+    }
+  });
+  const order = vertical ? ['off', 'tiktok', 'reels', 'shorts', 'all'] : ['off', 'title'];
+  const next = () => {
+    const z = order[(order.indexOf(zone) + 1) % order.length]!;
+    setZone(z);
+    try {
+      localStorage.setItem(ZONE_KEY, z);
+    } catch {}
+  };
+  const k = width / 1080;
+  const shown = zone === 'all' ? Object.keys(ZONES) : ZONES[zone] ? [zone] : [];
+  const label = zone === 'off' || !order.includes(zone) ? 'safe zones' : zone === 'all' ? 'all apps' : zone === 'title' ? 'title safe' : ZONES[zone]!.label;
+  return (
+    <>
+      <svg className="overlay zones" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        {vertical &&
+          shown.flatMap((z) =>
+            ZONES[z]!.boxes.map((b, i) => <rect key={`${z}${i}`} x={b[0] * k} y={b[1] * k} width={b[2] * k} height={b[3] * k} className={`zone ${zone === 'all' ? 'faint' : ''}`} />),
+          )}
+        {!vertical && zone === 'title' && <rect x={width * 0.05} y={height * 0.05} width={width * 0.9} height={height * 0.9} className="title-safe" />}
+      </svg>
+      <button
+        className={`zone-toggle small ${zone !== 'off' && order.includes(zone) ? 'on' : ''}`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={next}
+        title={vertical ? 'Show where TikTok, Reels or Shorts put their buttons and captions (click to switch app; approximate)' : 'Show the title-safe area (90% of the frame)'}
+      >
+        ▦ {label}
+      </button>
+    </>
+  );
+}
 
 /** Where and when a request sits on the frame: the box it points at (frame pixels) and the time it covers. */
 function placeOf(r: Request, W: number, H: number): { box: Box | null; from: number; to: number } | null {

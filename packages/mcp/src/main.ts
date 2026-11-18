@@ -271,7 +271,7 @@ server.tool('export', 'Render the video (or just a range, for an exact check). O
   }
 });
 
-server.tool('export_plan', 'What an export would render now (cached vs stale parts, comps) and an estimate.', { dir: dirArg }, async (a) => {
+server.tool('export_plan', 'What an export would render now (cached vs stale parts, comps), an estimate, and checks: probable mistakes to fix or mention first (missing files, black gaps, captions off, open requests).', { dir: dirArg }, async (a) => {
   try {
     return text(await call('GET', '/api/export/plan', a));
   } catch (e) {
