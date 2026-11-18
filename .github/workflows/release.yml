@@ -1,0 +1,38 @@
+# Release MangoAI: push a tag vX.Y.Z (matching packages/cli/package.json and packages/core/src/version.ts).
+# Builds the `mangoai` package, attaches the tarball to a GitHub release, and publishes it to npm when the
+# NPM_TOKEN secret is set. The video-studio plugin pins this version (its .mcp.json and compatibility table):
+# bump it there in the same release. See docs/ECOSYSTEM.md.
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, registry-url: 'https://registry.npmjs.org' }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Tag matches the package version
+        shell: bash
+        run: |
+          v=$(node -p "require('./packages/cli/package.json').version")
+          [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but package is $v"; exit 1; }
+      - run: npm run build
+      - run: mkdir dist && npm pack -w mangoai --pack-destination dist
+        shell: bash
+      - name: GitHub release with the tarball
+        shell: bash
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tgz --generate-notes
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
+        run: npm publish -w mangoai --access public

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Claude Code UserPromptSubmit hook: when you've saved edits in MangoAI (or left requests) since Claude last
 // looked, tell Claude on your next message. Fast and quiet: reads a few small files, prints nothing when
-// there's nothing new. Registered by `npm run mango -- install-claude` (or by hand, see README).
+// there's nothing new. Registered by the video-studio plugin, or by `mangoai setup` / `npm run claude-setup`.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
