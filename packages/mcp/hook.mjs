@@ -31,6 +31,11 @@ for (const { dir, opened } of registry.slice(0, 10)) {
   const meta = read(metaFile) ?? {};
   const seen = meta.seen ?? 0;
   const seenReq = new Set(meta.requests ?? []);
+  // a request's key changes when you write a follow-up on it (same as requestSeenKey in @mangoai/core)
+  const keyOf = (r) => {
+    const n = (r.notes ?? []).filter((x) => x.by === 'you').length;
+    return n ? `${r.id}#${n}` : r.id;
+  };
   const lines = [];
   if (cut.revision > seen) {
     let hist = [];
@@ -48,13 +53,19 @@ for (const { dir, opened } of registry.slice(0, 10)) {
     }
     if (!hist.length) lines.push(`  now at revision ${cut.revision} (you last saw ${seen}); cut.json was changed`);
   }
-  const fresh = (cut.requests ?? []).filter((r) => r.status === 'open' && !seenReq.has(r.id));
-  if (fresh.length) lines.push(`  ${fresh.length} new request${fresh.length > 1 ? 's' : ''}: ${fresh.map((r) => `${r.id} "${String(r.text).slice(0, 80)}"`).join('; ')}`);
+  const fresh = (cut.requests ?? []).filter((r) => r.status === 'open' && !seenReq.has(keyOf(r)));
+  const added = fresh.filter((r) => !(r.notes ?? []).some((x) => x.by === 'you'));
+  const followed = fresh.filter((r) => (r.notes ?? []).some((x) => x.by === 'you'));
+  if (added.length) lines.push(`  ${added.length} new request${added.length > 1 ? 's' : ''}: ${added.map((r) => `${r.id} "${String(r.text).slice(0, 80)}"`).join('; ')}`);
+  for (const r of followed) {
+    const last = [...r.notes].reverse().find((x) => x.by === 'you');
+    lines.push(`  follow-up on request ${r.id} "${String(r.text).slice(0, 60)}": "${String(last.text).slice(0, 160)}"`);
+  }
   if (!lines.length) continue;
   notes.push(`MangoAI project ${dir} (revision ${cut.revision}):\n${lines.join('\n')}`);
   try {
     fs.mkdirSync(path.dirname(metaFile), { recursive: true });
-    fs.writeFileSync(metaFile, JSON.stringify({ ...meta, seen: cut.revision, requests: [...seenReq, ...fresh.map((r) => r.id)], at: new Date().toISOString() }, null, 1));
+    fs.writeFileSync(metaFile, JSON.stringify({ ...meta, seen: cut.revision, requests: [...seenReq, ...fresh.map(keyOf)], at: new Date().toISOString() }, null, 1));
   } catch {}
 }
 

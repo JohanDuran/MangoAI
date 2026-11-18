@@ -91,6 +91,10 @@ export function Timeline({ player }: { player: Player }) {
   const [size, setSize] = useState({ w: 800, h: 300 });
   const drag = useRef<Drag | null>(null);
   const [hover, setHover] = useState<string>('default');
+  // hover help for what's drawn on the canvas: shown after a short pause on the same thing
+  const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const tipWait = useRef<{ text: string; timer: number } | null>(null);
+  useEffect(() => () => clearTimeout(tipWait.current?.timer), []);
 
   const project = s.editor!.project;
   const resolved = s.resolved()!;
@@ -466,6 +470,25 @@ export function Timeline({ player }: { player: Player }) {
       ctx.globalAlpha = 1;
       if (track.kind === 'audio' && c.type === 'media') drawWave(ctx, c, start, x0, x1, top, laneH - 2);
       drawFades(ctx, c, x0, x1, top, laneH - 2);
+      if (c.type === 'media' && x1 - x0 > 8) {
+        // keyframes: zoom keys (white) and volume keys (green) as small diamonds along the bottom
+        const ks: [number, string][] = [
+          ...(resolved.clips.get(c.id)?.keys ?? []).map((k): [number, string] => [k[0], '#ffffff']),
+          ...(c.gainKeys ?? []).map((k): [number, string] => [k[0], '#3ddc84']),
+        ];
+        for (const [lt, col] of ks) {
+          const kx = tToX(start + lt);
+          if (kx < x0 || kx > x1) continue;
+          const ky = top + laneH - 7;
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.moveTo(kx, ky - 4);
+          ctx.lineTo(kx + 4, ky);
+          ctx.lineTo(kx, ky + 4);
+          ctx.lineTo(kx - 4, ky);
+          ctx.fill();
+        }
+      }
       if (c.pivot && x1 - x0 > 4) {
         const hx = tToX(start + c.pivot); // the SFX hit point
         ctx.fillStyle = '#ffd400';
@@ -476,6 +499,19 @@ export function Timeline({ player }: { player: Player }) {
         ctx.beginPath();
         ctx.arc(x0 + 4, top + laneH - 7, 2, 0, Math.PI * 2);
         ctx.fill();
+      }
+      if (s.touched.has(c.id)) {
+        // Claude just changed this clip: a glow that fades out
+        const left = Math.max(0, Math.min(1, (s.touched.get(c.id)! - Date.now()) / 6000));
+        ctx.save();
+        ctx.globalAlpha = 0.35 + 0.65 * left;
+        ctx.shadowColor = '#7fd6ff';
+        ctx.shadowBlur = 10;
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = '#7fd6ff';
+        roundRect(ctx, x0 - 1, top - 1, Math.max(1.5, x1 - x0) + 2, laneH, 4);
+        ctx.stroke();
+        ctx.restore();
       }
       if (problemIds.has(c.id) || sel) {
         ctx.lineWidth = 2;
@@ -656,7 +692,68 @@ export function Timeline({ player }: { player: Player }) {
     return null;
   }
 
+  /** What the pointer is over, in words: the hover help for the canvas. */
+  function tipAt(x: number, y: number): string | null {
+    const fps = project.fps;
+    const tc = (t: number) => timecode(t, fps);
+    if (x < HEADER) {
+      if (y < TOP) return null;
+      const row = rowAt(y);
+      if (!row) return null;
+      const field = toggleAt(row, x, y);
+      const t = row.track;
+      if (field === 'locked') return t.locked ? 'Unlock track' : 'Lock track: no moving or trimming its clips';
+      if (field === 'muted') return t.muted ? 'Unmute track' : 'Mute track';
+      if (field === 'hidden') return t.hidden ? 'Show track' : 'Hide track: leave it out of the preview and export';
+      const kind = t.kind === 'audio' ? `${t.role ?? 'audio'} audio` : t.kind;
+      return `${t.id}${t.name ? ` · ${t.name}` : ''} · ${kind} track${t.gain ? ` · ${t.gain > 0 ? '+' : ''}${t.gain} dB` : ''}`;
+    }
+    const t = xToT(x);
+    if (y < RULER) {
+      const a = anchorAt(x, y);
+      if (a) return `Marker "${a}" at ${tc(resolved.anchors.get(a) ?? 0)} · drag to move it`;
+      for (const r of project.requests ?? []) {
+        if (r.status === 'done' || r.status === 'rejected') continue;
+        const at = r.range?.[0] ?? r.t;
+        if (at !== undefined && Math.abs(tToX(at) - x) <= 6) return `Request ${r.id} (${r.status === 'working' ? 'Claude is on it' : 'open'}): ${r.text}`;
+      }
+      return 'Ruler: click or drag to move the playhead · Shift-drag (or I / O) to set a range';
+    }
+    if (y < RULER + SECTIONS) {
+      for (const r of project.requests ?? []) {
+        if (r.status === 'done' || r.status === 'rejected' || !r.range) continue;
+        if (t >= r.range[0] && t < r.range[1]) return `Request ${r.id} (${r.status === 'working' ? 'Claude is on it' : 'open'}): ${r.text}`;
+      }
+      const sec = resolved.sections.find((x2) => t >= x2.t0 && t < x2.t1);
+      if (!sec) return null;
+      const note = project.sections.find((x2) => x2.id === sec.id)?.note;
+      return `Section ${sec.id} · ${tc(sec.t0)} – ${tc(sec.t1)}${note ? ` · ${note}` : ''}`;
+    }
+    if (y < TOP) return 'Export cache: green is already rendered, grey renders on the next export';
+    const h = hit(x, y);
+    if (h.row?.track.kind === 'captions') return 'Captions, made from the transcript: edit the words in the Transcript tab';
+    if (!h.clip) return null;
+    const c = h.clip;
+    const rc = resolved.clips.get(c.id);
+    const name = ('label' in c && c.label) || ('src' in c && typeof c.src === 'string' && c.src.split('/').pop()) || c.id;
+    const span = rc ? ` · ${tc(rc.start)}${rc.end !== null ? ` – ${tc(rc.end)}` : ''}` : '';
+    if (s.touched.has(c.id)) return `${name}${span} · just changed by Claude`;
+    if (h.row?.track.locked) return `${name}${span} · track is locked`;
+    if (h.edge) return `${name} · drag to trim the ${h.edge} (Alt: no snap)`;
+    return `${name}${span} · drag to move · double-click to jump here · S splits at the playhead`;
+  }
+
+  const showTip = (text: string | null, x: number, y: number) => {
+    const w = tipWait.current;
+    if (text && w?.text === text) return;
+    if (w) clearTimeout(w.timer);
+    setTip(null);
+    tipWait.current = text ? { text, timer: window.setTimeout(() => setTip({ text, x, y }), 450) } : null;
+  };
+  const hideTip = () => showTip(null, 0, 0);
+
   const onDown = (e: React.MouseEvent) => {
+    hideTip();
     if (e.button !== 0) return;
     const r = cv.current!.getBoundingClientRect();
     const x = e.clientX - r.left;
@@ -827,6 +924,7 @@ export function Timeline({ player }: { player: Player }) {
       if (row && toggleAt(row, x, y)) cursor = 'pointer';
     }
     if (cursor !== hover) setHover(cursor);
+    showTip(tipAt(x, y), x, y);
   };
 
   // drop files from the media pool
@@ -895,10 +993,10 @@ export function Timeline({ player }: { player: Player }) {
   return (
     <section className="timeline">
       <div className="timeline-bar">
-        <span>Timeline</span>
+        <span title="Scroll to pan, Ctrl + wheel to zoom">Timeline</span>
         <button className="ghost" onClick={fit} title="Fit the whole timeline">Fit</button>
-        <button className="ghost" onClick={() => setView((v) => ({ ...v, pps: v.pps * 1.5 }))}>＋</button>
-        <button className="ghost" onClick={() => setView((v) => ({ ...v, pps: v.pps / 1.5 }))}>－</button>
+        <button className="ghost" onClick={() => setView((v) => ({ ...v, pps: v.pps * 1.5 }))} title="Zoom in (Ctrl + wheel)">＋</button>
+        <button className="ghost" onClick={() => setView((v) => ({ ...v, pps: v.pps / 1.5 }))} title="Zoom out (Ctrl + wheel)">－</button>
         <span className="muted small">
           drag to move · drag edges to trim · Alt: no snap · S split · Del delete · Shift+Del ripple · , . nudge · Shift-drag the ruler or I / O: range · M marker
         </span>
@@ -911,7 +1009,12 @@ export function Timeline({ player }: { player: Player }) {
         }}
         onDrop={(e) => void onDrop(e)}
       >
-        <canvas ref={cv} style={{ width: size.w, height: size.h, cursor: hover }} onMouseDown={onDown} onMouseMove={onHover} onDoubleClick={onDouble} />
+        <canvas ref={cv} style={{ width: size.w, height: size.h, cursor: hover }} onMouseDown={onDown} onMouseMove={onHover} onMouseLeave={hideTip} onDoubleClick={onDouble} />
+        {tip && (
+          <div className="canvas-tip" style={{ left: Math.min(tip.x + 12, size.w - 320), top: tip.y + 18 > size.h - 30 ? tip.y - 30 : tip.y + 18 }}>
+            {tip.text}
+          </div>
+        )}
       </div>
     </section>
   );

@@ -56,7 +56,7 @@ the timeline still resolves.
 | `video` | `media`, `generator` | footage, stills, backdrops |
 | `graphics` | `title`, `comp` | built-in titles and HyperFrames compositions |
 | `captions` | none | draws from `transcript` with `style` (`y`, `max_words`, …); `enabled` |
-| `audio` | `media` | `role`: `voice`, `sfx`, `music`, `other` |
+| `audio` | `media` | `role`: `voice`, `sfx`, `music`, `other`; `duck` (dB ≤ 0): lower the track while the voice speaks |
 
 ## Clips
 
@@ -70,7 +70,7 @@ the media), optional `pivot`, `label`, `origin`, `extra`.
 
 | `type` | Fields |
 |---|---|
-| `media` | `src` (source name or path), `in`, `speed`, `speedTo: [from, to]`, `still`, `region`, `blur`, `cardW`, `cy`, `dim`, `keys: [[t, zoom, fx, fy], …]`, `gain` (dB), `fadeIn`/`fadeOut` (s), `loop`, `transcript` (its source's words: they follow this clip on the timeline) |
+| `media` | `src` (source name or path), `in`, `speed`, `speedTo: [from, to]`, `still`, `region`, `blur`, `cardW`, `cy`, `dim`, `keys: [[t, zoom, fx, fy], …]`, `gain` (dB), `gainKeys: [[t, dB], …]` (volume keyframes, `t` in seconds from the clip's start, linear between keys, added to `gain`), `fadeIn`/`fadeOut` (s), `loop`, `transcript` (its source's words: they follow this clip on the timeline) |
 | `generator` | `generator`: `radial-gradient` / `color` / `image`, `params` |
 | `title` | `style`, `pos`, `text` or `runs`, `fs`, `bold`, `color`, `box`, `strike`, `pop`, `fade`, `shape`, `layer` |
 | `comp` | `comp` (HyperFrames folder), `vars` (values passed to the comp; a string starting with `@` is a time expression passed as seconds from the clip start, e.g. `"@word:hundred"`) |
@@ -86,13 +86,18 @@ as timeline time.
 ## Requests
 
 `{ id, kind: change | create, status: open | working | done | rejected, text, t?, clip?, element?: { selector, id,
-text, box }, range?: [a, b], region?: [x, y, w, h] (0-1), assets?: [paths], still?: path, reply?, created }`
+text, box }, range?: [a, b], region?: [x, y, w, h] (0-1), assets?: [paths], still?: path, reply?, notes?: [{ by: you |
+claude, text, at }], created }`
+
+`notes` is the conversation after the request was made: your follow-ups (which set it back to `open`) and Claude's
+answers (`request_update` with a reply adds one). Claude counts a request as unseen again when you add a follow-up
+(`requestSeenKey`).
 
 ## Edits (ops)
 
 Every change, by you or by Claude, is a list of ops applied as one undoable change:
 `add_track`, `remove_track`, `update_track`, `add_clip`, `remove_clip`, `update_clip` (`set`, `null` removes a
-field), `move_clip`, `split_clip`, `set_anchor`, `add_section`, `remove_section`, `update_section`, `set_title`, `set_transcript` (name, file or null),
+field), `move_clip`, `split_clip`, `set_anchor`, `add_section`, `remove_section`, `update_section`, `set_title`, `set_master` (`set: { loudness, limiter }`), `set_transcript` (name, file or null),
 `add_request`, `update_request`, `remove_request`. Editing commands built on them (move, trim, split, ripple,
 cut ranges, link to a word…) are in `commands.ts` and shared by the editor and Claude's `edit` tool.
 A change is all-or-nothing, records its exact inverse, and carries a one-line summary per op

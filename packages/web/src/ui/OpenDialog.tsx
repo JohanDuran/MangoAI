@@ -30,10 +30,10 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           void go(path);
         }}
       >
-        <input value={path} onChange={(e) => setPath(e.target.value)} spellCheck={false} />
-        <button type="submit">Go</button>
+        <input value={path} onChange={(e) => setPath(e.target.value)} spellCheck={false} title="A folder path; press Enter to browse it" />
+        <button type="submit" title="Browse this folder">Go</button>
         {onCancel && (
-          <button type="button" className="ghost" onClick={onCancel}>
+          <button type="button" className="ghost" onClick={onCancel} title="Back to the open project">
             Cancel
           </button>
         )}
@@ -45,7 +45,7 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           <ul className="folders">
             {last.map((d) => (
               <li key={d}>
-                <button className="project" onClick={() => onOpen(d)}>
+                <button className="project" onClick={() => onOpen(d)} title="Open this recent project">
                   ▶ {d}
                 </button>
               </li>
@@ -53,13 +53,14 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           </ul>
         </>
       )}
+      {b && <FromTemplate dir={b.dir} isProject={b.isProject} onOpen={onOpen} />}
       {b && (
         <>
           <h3>{b.dir}</h3>
           <ul className="folders">
             {b.parent && (
               <li>
-                <button onClick={() => void go(b.parent!)}>⬑ ..</button>
+                <button onClick={() => void go(b.parent!)} title="Up one folder">⬑ ..</button>
               </li>
             )}
             {b.folders.map((f) => (
@@ -69,13 +70,54 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
                     ▶ {f.name}
                   </button>
                 ) : (
-                  <button onClick={() => void go(f.path)}>📁 {f.name}</button>
+                  <button onClick={() => void go(f.path)} title="Open this folder">📁 {f.name}</button>
                 )}
               </li>
             ))}
           </ul>
         </>
       )}
+    </div>
+  );
+}
+
+/** Start a new project in this folder (or a new subfolder) from a saved template. */
+function FromTemplate({ dir, isProject, onOpen }: { dir: string; isProject?: boolean | undefined; onOpen: (dir: string) => void }) {
+  const [list, setList] = useState<{ name: string; tracks: number; clips: number; size: string }[]>([]);
+  const [name, setName] = useState('');
+  const [folder, setFolder] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    api.get<{ templates: typeof list }>('/api/templates').then((r) => {
+      setList(r.templates);
+      setName((n) => n || r.templates[0]?.name || '');
+    }, () => setList([]));
+  }, []);
+  if (!list.length) return null;
+  const target = folder.trim() ? `${dir.replace(/[\/]$/, '')}/${folder.trim()}` : dir;
+  const create = async () => {
+    try {
+      await api.post('/api/template/new', { dir: target, name, ...(folder.trim() && { title: folder.trim() }) });
+      onOpen(target);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+  return (
+    <div className="from-template small">
+      <b title="Saved with Save as template in a project's Inspector">New from a template</b>
+      <select value={name} onChange={(e) => setName(e.target.value)} title="Which template">
+        {list.map((t) => (
+          <option key={t.name} value={t.name}>
+            {t.name} ({t.size}, {t.tracks} tracks{t.clips ? `, ${t.clips} clips` : ''})
+          </option>
+        ))}
+      </select>
+      <input placeholder={isProject ? 'new folder name (needed: this folder has a project)' : 'new folder name (optional)'} value={folder} onChange={(e) => setFolder(e.target.value)} title="Make a new folder here for the project; leave empty to use this folder" />
+      <button disabled={!name || (isProject && !folder.trim())} onClick={() => void create()} title={`Write cut.json in ${target} and open it`}>
+        Create
+      </button>
+      {err && <span className="error-text">{err}</span>}
     </div>
   );
 }

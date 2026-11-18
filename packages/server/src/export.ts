@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { Clip, CompClip, MediaClip, Project, Resolved, TitleClip, Track } from '@mangoai/core';
+import { checkProject, duckExpr, gainKeysExpr, speechSpans, type Check, type Clip, type CompClip, type MediaClip, type Project, type Resolved, type TitleClip, type Track } from '@mangoai/core';
 import { compCached, compDir, compHash, renderComp } from './comps.js';
 import { broadcast } from './events.js';
 import { peaks, probe, type MediaInfo } from './media.js';
@@ -317,6 +317,8 @@ export interface PlanOut {
   comps: { clip: string; comp: string; cached: boolean }[];
   output: string;
   estimate: string;
+  /** Probable mistakes to look at before exporting (missing files, black gaps, open requests…). */
+  checks: Check[];
 }
 
 function outputOf(c: Ctx): string {
@@ -345,7 +347,10 @@ export async function plan(dir: string): Promise<PlanOut> {
   const stale = segments.filter((s) => !s.cached).reduce((n, s) => n + (s.t1 - s.t0), 0);
   const compsTodo = comps.filter((x) => !x.cached).length;
   const est = stale * 0.5 + compsTodo * 20 + 3;
+  const missing = new Set<string>();
+  for (const t of c.p.tracks) for (const cl of t.clips) if (cl.type === 'media' && !c.media.get(cl.src)?.exists) missing.add(cl.src);
   return {
+    checks: checkProject(c.p, c.r, { missing }),
     segments,
     comps,
     output: outputOf(c),
@@ -530,10 +535,16 @@ async function mix(c: Ctx, log: (m: string) => void): Promise<{ file: string; ga
       clips.push({ c: cl, t, start: rc.start, end, inPt: rc.in ?? 0, speed: rc.speed ?? 1, db });
     }
   }
-  const key = sha({ v: RENDERER, end: c.end, master: c.p.master, clips: clips.map((x) => ({ ...x, t: x.t.id, file: c.media.get(x.c.src)?.id })) });
+  // ducking: the same voice phrases the preview uses
+  const speech = c.p.tracks.some((t) => t.kind === 'audio' && t.duck) ? speechSpans(c.p, c.r) : [];
+  const key = sha({ v: RENDERER, end: c.end, master: c.p.master, speech, clips: clips.map((x) => ({ ...x, t: x.t.id, duck: x.t.duck, file: c.media.get(x.c.src)?.id })) });
   const file = path.join(c.work, `audio-${key}.flac`);
   const meta = `${file}.json`;
-  if ((await exists(file)) && (await exists(meta))) return { file, gainDb: (JSON.parse(await fs.readFile(meta, 'utf-8')) as { gainDb: number }).gainDb };
+  if ((await exists(file)) && (await exists(meta))) {
+    const m = JSON.parse(await fs.readFile(meta, 'utf-8')) as { gainDb: number; measured: number | null; target: number };
+    log(`sound: reused the mix${m.measured !== null ? ` (measured ${m.measured.toFixed(1)} LUFS, brought to ${m.target} LUFS)` : ''}`);
+    return { file, gainDb: m.gainDb };
+  }
   log(`mixing sound (${clips.length} clips)`);
   const inputs: string[] = ['-f', 'lavfi', '-t', c.end.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo'];
   const graph: string[] = [];
@@ -548,7 +559,10 @@ async function mix(c: Ctx, log: (m: string) => void): Promise<{ file: string; ga
     const fo = x.c.fadeOut ?? (x.c.loop ? 1.3 : 0);
     const fades = (fi > 0 ? `,afade=t=in:st=0:d=${fi.toFixed(3)}` : '') + (fo > 0 ? `,afade=t=out:st=${Math.max(0, len - fo).toFixed(3)}:d=${fo.toFixed(3)}` : '');
     const ms = Math.max(0, Math.round(x.start * 1000));
-    graph.push(`[${n}:a]aresample=48000,aformat=channel_layouts=stereo${tempo},atrim=0:${len.toFixed(4)},asetpts=PTS-STARTPTS${fades},volume=${x.db.toFixed(2)}dB,adelay=${ms}:all=1[a${n}]`);
+    // volume keys run on clip time (before the delay), ducking on timeline time (after it)
+    const keys = x.c.gainKeys?.length ? `,volume='${gainKeysExpr(x.c.gainKeys)}':eval=frame` : '';
+    const duck = x.t.duck && speech.length ? `,volume='${duckExpr(speech, x.t.duck)}':eval=frame` : '';
+    graph.push(`[${n}:a]aresample=48000,aformat=channel_layouts=stereo${tempo},atrim=0:${len.toFixed(4)},asetpts=PTS-STARTPTS${fades},volume=${x.db.toFixed(2)}dB${keys},adelay=${ms}:all=1${duck}[a${n}]`);
     labels.push(`[a${n}]`);
   });
   graph.push(`${labels.join('')}amix=inputs=${labels.length}:normalize=0:duration=first,apad=whole_dur=${c.end.toFixed(3)},atrim=0:${c.end.toFixed(3)}[out]`);
@@ -566,6 +580,7 @@ async function mix(c: Ctx, log: (m: string) => void): Promise<{ file: string; ga
   const measured = await integratedLufs(file);
   const gainDb = measured === null ? 0 : Math.max(-20, Math.min(20, target - measured));
   await fs.writeFile(meta, JSON.stringify({ measured, target, gainDb }), 'utf-8');
+  log(measured === null ? 'sound: could not measure loudness' : `sound: measured ${measured.toFixed(1)} LUFS, brought to ${target} LUFS`);
   return { file, gainDb };
 }
 

@@ -76,6 +76,8 @@ export interface Browse {
   dir: string;
   parent: string | null;
   folders: { name: string; path: string; project: boolean }[];
+  /** The folder itself has a cut.json or short.json. */
+  isProject?: boolean;
 }
 
 async function get<T>(url: string): Promise<T> {

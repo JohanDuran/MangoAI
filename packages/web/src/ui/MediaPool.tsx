@@ -46,7 +46,7 @@ export function MediaPool() {
     <aside className="pool panel">
       <div className="panel-head">
         <span>Media</span>
-        <select value={filter} onChange={(e) => setFilter(e.target.value as 'media' | 'all')}>
+        <select title="Show only media files, or every file in the project" value={filter} onChange={(e) => setFilter(e.target.value as 'media' | 'all')}>
           <option value="media">media</option>
           <option value="all">all files</option>
         </select>

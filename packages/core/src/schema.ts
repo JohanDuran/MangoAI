@@ -52,6 +52,8 @@ export const MediaClip = z
     keys: z.array(ZoomKey).optional(),
     /** dB. */
     gain: z.number().optional(),
+    /** Volume keyframes: [seconds from the clip's start, dB], eased linearly between keys; added to `gain`. */
+    gainKeys: z.array(z.tuple([z.number(), z.number()])).optional(),
     /** Seconds of fade at the clip's head and tail (sound for audio, picture for video). */
     fadeIn: z.number().nonnegative().optional(),
     fadeOut: z.number().nonnegative().optional(),
@@ -124,6 +126,8 @@ export const Track = z
     role: z.enum(['voice', 'sfx', 'music', 'other']).optional(),
     /** dB. */
     gain: z.number().optional(),
+    /** Audio tracks: dB to lower this track by while the voice speaks (e.g. -10 on the music). */
+    duck: z.number().max(0).optional(),
     muted: z.boolean().optional(),
     hidden: z.boolean().optional(),
     locked: z.boolean().optional(),
@@ -178,11 +182,22 @@ export const Request = z
     still: z.string().optional(),
     /** Claude's answer: what was done, or why not. */
     reply: z.string().optional(),
+    /** The conversation on this request after it was made: your follow-ups and Claude's answers, oldest first. */
+    notes: z.array(z.object({ by: z.enum(['you', 'claude']), text: z.string(), at: z.string() }).strict()).optional(),
     created: z.string(),
     extra: Extra.optional(),
   })
   .strict();
 export type Request = z.infer<typeof Request>;
+
+/**
+ * How Claude remembers it has seen a request: its id, plus how many follow-ups you wrote on it, so a new
+ * follow-up counts as unseen again. The hook (packages/mcp/hook.mjs) computes the same key.
+ */
+export function requestSeenKey(r: Pick<Request, 'id' | 'notes'>): string {
+  const n = (r.notes ?? []).filter((x) => x.by === 'you').length;
+  return n ? `${r.id}#${n}` : r.id;
+}
 
 export const Project = z
   .object({

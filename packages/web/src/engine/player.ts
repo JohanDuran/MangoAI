@@ -1,7 +1,7 @@
 // Live playback: an AudioContext is the master clock; video elements and the canvas follow it.
 // Nothing is rendered to a file. Short audio (SFX, music, a Short's narration) is decoded into buffers
 // and scheduled sample-accurately; long audio (a 50-min voice track) streams through a media element.
-import type { Clip, CompClip, MediaClip, Project, Resolved, TitleClip } from '@mangoai/core';
+import { duckAmount, gainKeyAt, speechSpans, type Clip, type CompClip, type MediaClip, type Project, type Resolved, type TitleClip } from '@mangoai/core';
 import type { Opened, MediaInfo } from '../api';
 import { TimelineIndex, type Span } from './index';
 import { captionGroups, cardGeometry, color, drawCaption, drawTitle, findGroup, titleLayer, type CaptionGroup } from './look';
@@ -56,6 +56,20 @@ export function seekComp(el: HTMLIFrameElement, local: number) {
 }
 
 /** Gain envelope for a clip: fade in from its start, fade out to its end, from wherever we are now. */
+/** Steps per second for volume curves (ducking, volume keys): smooth enough, cheap to build. */
+const CURVE_RATE = 30;
+
+/** Drive `p` from context time `from` for `dur` seconds with `f(seconds since from)`, as one value curve. */
+function curve(p: AudioParam, from: number, dur: number, f: (x: number) => number) {
+  if (!(dur > 0.05)) return;
+  const n = Math.max(2, Math.min(200000, Math.ceil(dur * CURVE_RATE)));
+  const v = new Float32Array(n);
+  for (let i = 0; i < n; i++) v[i] = f((i / (n - 1)) * dur);
+  try {
+    p.setValueCurveAtTime(v, from, dur);
+  } catch {}
+}
+
 function envelope(p: AudioParam, level: number, a: number, b: number, fi: number, fo: number, now: number) {
   const val = (x: number) => {
     let v = level;
@@ -84,6 +98,9 @@ export class Player {
   readonly ctx = new AudioContext({ latencyHint: 'interactive' });
   private master: GainNode;
   private limiter: DynamicsCompressorNode;
+  private meter: AnalyserNode;
+  private meterBuf: Float32Array | null = null;
+  private peakHold = { db: -Infinity, at: 0 };
   private playing = false;
   private anchorCtx = 0;
   private anchorT = 0;
@@ -101,6 +118,11 @@ export class Player {
   private dirty = true;
   /** Measured each frame while playing: worst |video time − expected| in seconds. */
   lastDrift = 0;
+  /** Draw at half resolution while playing (smoother on heavy projects); paused frames are always full. */
+  light = false;
+  /** Frames the display missed since playback started (late animation frames). */
+  dropped = 0;
+  private lastFrame = 0;
 
   /** Layers above the top-most comp track (captions, titles over an animation). */
   private topCanvas: HTMLCanvasElement | null = null;
@@ -119,6 +141,9 @@ export class Player {
     this.limiter.release.value = 0.1;
     this.master = this.ctx.createGain();
     this.master.connect(this.limiter).connect(this.ctx.destination);
+    this.meter = this.ctx.createAnalyser();
+    this.meter.fftSize = 16384; // ~0.34 s at 48 kHz: close to a short-term reading
+    this.limiter.connect(this.meter);
     this.rebuild();
     this.preloadAudio();
     this.loop();
@@ -139,6 +164,29 @@ export class Player {
 
   time(): number {
     return this.playing ? this.anchorT + (this.ctx.currentTime - this.anchorCtx) : this.anchorT;
+  }
+
+  /**
+   * What's playing now: RMS level over the last ~0.3 s and the peak (held 1.5 s), in dBFS. RMS of a mix
+   * sits close to its loudness in LUFS, so it's a fair guide to how loud the export will be before levelling.
+   */
+  levels(): { rms: number; peak: number } {
+    if (!this.playing) return { rms: -Infinity, peak: -Infinity };
+    const buf = (this.meterBuf ??= new Float32Array(this.meter.fftSize));
+    this.meter.getFloatTimeDomainData(buf);
+    let sum = 0;
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i]!;
+      sum += v * v;
+      const a = Math.abs(v);
+      if (a > peak) peak = a;
+    }
+    const rms = 10 * Math.log10(sum / buf.length + 1e-12);
+    const pk = 20 * Math.log10(peak + 1e-12);
+    const now = performance.now();
+    if (pk >= this.peakHold.db || now - this.peakHold.at > 1500) this.peakHold = { db: pk, at: now };
+    return { rms, peak: this.peakHold.db };
   }
 
   onChange(fn: () => void): () => void {
@@ -196,6 +244,7 @@ export class Player {
         new Promise((r) => setTimeout(r, 600)),
       ]);
       this.playing = true;
+      this.dropped = 0;
       this.anchorCtx = this.ctx.currentTime + 0.03;
       // the clock starts where the picture already is (it got a head start while starting up)
       const lead = active[0];
@@ -354,8 +403,16 @@ export class Player {
       const tIdx = idx.tracks.get(track.id);
       if (!tIdx) continue;
       const trackGain = this.ctx.createGain();
-      trackGain.gain.value = dbToGain(track.gain ?? 0);
+      const base = dbToGain(track.gain ?? 0);
+      trackGain.gain.value = base;
       trackGain.connect(this.master);
+      if (track.duck && track.duck < 0) {
+        // dip while the voice speaks (same phrases and ramps as the export)
+        const spans = speechSpans(this.project, this.getResolved());
+        const depth = 1 - dbToGain(track.duck);
+        const from = Math.max(when, this.ctx.currentTime);
+        curve(trackGain.gain, from, end - t, (x) => base * (1 - depth * duckAmount(spans, t + (from - when) + x)));
+      }
       const spans = tIdx.query(t, Infinity);
       for (const s of spans) {
         const c = s.clip as MediaClip;
@@ -372,7 +429,16 @@ export class Player {
     const inPt = r?.in ?? 0;
     const speed = r?.speed ?? 1;
     const g = this.ctx.createGain();
-    g.connect(out);
+    if (c.gainKeys?.length) {
+      // volume keys: a second gain after the fades, following the keys in dB
+      const kg = this.ctx.createGain();
+      kg.gain.value = dbToGain(gainKeyAt(c.gainKeys, Math.max(0, t - s.start)));
+      g.connect(kg).connect(out);
+      const from = Math.max(when + Math.max(0, s.start - t), this.ctx.currentTime);
+      const local0 = Math.max(0, t - s.start) + (from - when - Math.max(0, s.start - t));
+      const len = Math.min(s.end, end) - Math.max(s.start, t);
+      curve(kg.gain, from, len, (x) => dbToGain(gainKeyAt(c.gainKeys, local0 + x)));
+    } else g.connect(out);
     const level = dbToGain(db);
     const at = when + Math.max(0, s.start - t); // context time the clip (or its remainder) starts
     const offset = inPt + Math.max(0, t - s.start) * speed;
@@ -535,6 +601,13 @@ export class Player {
   // --- drawing ---------------------------------------------------------------------------------
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
+    const now = performance.now();
+    if (this.playing && this.lastFrame) {
+      const gap = now - this.lastFrame;
+      // a late frame drops a frame or a few; a long pause means the tab was in the background, not slow
+      if (gap > 25 && gap < 250 && document.visibilityState === 'visible') this.dropped += Math.round(gap / 16.7) - 1;
+    }
+    this.lastFrame = this.playing ? now : 0;
     let t = this.time();
     if (this.playing && t >= this.duration) {
       this.pause();
@@ -565,15 +638,18 @@ export class Player {
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     const p = this.project;
-    if (cv.width !== p.width || cv.height !== p.height) {
-      cv.width = p.width;
-      cv.height = p.height;
+    const q = this.light && this.playing ? 0.5 : 1;
+    const W = Math.round(p.width * q);
+    const H = Math.round(p.height * q);
+    if (cv.width !== W || cv.height !== H) {
+      cv.width = W;
+      cv.height = H;
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cv.width, cv.height);
     // the toolbox lays Shorts out on a 1080-wide frame; scale for other formats
-    const k = p.width / 1080;
+    const k = (p.width / 1080) * q;
     ctx.setTransform(k, 0, 0, k, 0, 0);
     // tracks above the last one holding a comp paint on the top canvas, over the comp iframes
     let lastComp = -1;
@@ -583,9 +659,9 @@ export class Player {
     const top = this.topCanvas;
     let tctx: CanvasRenderingContext2D | null = null;
     if (top) {
-      if (top.width !== p.width || top.height !== p.height) {
-        top.width = p.width;
-        top.height = p.height;
+      if (top.width !== W || top.height !== H) {
+        top.width = W;
+        top.height = H;
       }
       tctx = top.getContext('2d');
       if (tctx) {

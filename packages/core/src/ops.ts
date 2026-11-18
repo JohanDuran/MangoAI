@@ -22,6 +22,8 @@ export type Op =
   | { op: 'remove_section'; id: string }
   | { op: 'update_section'; id: string; set: Patch<Omit<Section, 'id'>> }
   | { op: 'set_title'; title: string | null }
+  /** The final mix: target loudness (LUFS, e.g. -14) and the limiter ceiling (dBTP). */
+  | { op: 'set_master'; set: { loudness?: number | null; limiter?: number | null } }
   /** Register (or with `file: null` drop) a transcript: a .words.tsv relative to the project folder. */
   | { op: 'set_transcript'; name: string; file: string | null }
   | { op: 'add_request'; request: Request; index?: number }
@@ -90,6 +92,10 @@ export class Editor {
   }
   get history(): readonly Change[] {
     return this.undoStack;
+  }
+  /** Undone changes that redo would bring back, next one first. */
+  get future(): readonly Change[] {
+    return [...this.redoStack].reverse();
   }
 
   // --- saving -----------------------------------------------------------------------------
@@ -394,6 +400,12 @@ export class Editor {
         else p.title = op.title;
         return { op: 'set_title', title: old };
       }
+      case 'set_master': {
+        const m = (p.master ??= {}) as Record<string, unknown>;
+        const before = patchObject(m, op.set, []);
+        if (Object.keys(m).length === 0) delete p.master;
+        return { op: 'set_master', set: before };
+      }
       case 'set_transcript': {
         if (!/^[A-Za-z0-9_.-]+$/.test(op.name)) throw new OpError(`transcript name ${JSON.stringify(op.name)}: use letters, digits, _ . -`);
         const old = p.transcripts[op.name] ?? null;
@@ -464,13 +476,24 @@ export class Editor {
         return `changed section ${op.id}: ${Object.keys(op.set).join(', ')}`;
       case 'set_title':
         return `set the title to ${JSON.stringify(op.title)}`;
+      case 'set_master':
+        return `mix: ${Object.entries(op.set)
+          .map(([k, v]) => `${k} → ${v === null || v === undefined ? 'default' : v}`)
+          .join(', ')}`;
       case 'set_transcript':
         return op.file === null ? `removed transcript ${op.name}` : `set transcript ${op.name} to ${op.file}`;
       case 'add_request':
         return `added request ${op.request.id}: "${op.request.text}"`;
       case 'update_request':
         return `request ${op.id}: ${Object.entries(op.set)
-          .map(([k, v]) => `${k} → ${v === null ? '(none)' : JSON.stringify(v)}`)
+          .map(([k, v]) => {
+            if (k === 'notes' && Array.isArray(v)) {
+              // just the newest message, not the whole conversation
+              const last = v[v.length - 1] as { by?: string; text?: string } | undefined;
+              return last ? `${last.by === 'claude' ? 'Claude' : 'you'} wrote "${String(last.text).slice(0, 120)}"` : 'notes cleared';
+            }
+            return `${k} → ${v === null ? '(none)' : JSON.stringify(v)}`;
+          })
           .join(', ')}`;
       case 'remove_request':
         return `removed request ${op.id}`;

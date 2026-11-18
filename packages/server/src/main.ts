@@ -18,6 +18,7 @@ import {
   OpError,
   parseWordsTsv,
   pauses,
+  requestSeenKey,
   rippleDelete,
   rippleDeleteClips,
   setFades,
@@ -30,10 +31,13 @@ import {
   type Editor,
   type Op,
   type Project,
+  type Request,
 } from '@mangoai/core';
 import { compPage, compStills, folderOf, freeGraphicsTrack, HF_RUNTIME, renderFolder, scaffoldComp, snapshot, snapshotVersion, switchVersion, tokenOf, versions, watchProject } from './comps.js';
 import { broadcast, connected, sendToNewest, subscribe } from './events.js';
+import { addToBatch, batchState, clearBatch } from './batch.js';
 import { exportOtio, jobOf, plan, startExport, waitFor } from './export.js';
+import { listTemplates, newFromTemplate, saveTemplate } from './templates.js';
 import { kindOf, peaks, probe, proxyState, type MediaInfo } from './media.js';
 import {
   applyClaude,
@@ -136,7 +140,7 @@ async function apiOpen(dir: string) {
   return { dir, name: path.basename(dir), from: st.from, project: st.project, words: st.words, transcripts: st.transcripts, media, draft: await getDraft(dir), comps: {} };
 }
 
-const SKIP = new Set(['.mangoai', 'node_modules', '.git', '.hyperframes']);
+const SKIP = new Set(['.mangoai', 'node_modules', '.git', '.hyperframes', 'templates']);
 
 async function apiPool(dir: string) {
   const out: { path: string; rel: string; kind: string; size: number }[] = [];
@@ -171,7 +175,8 @@ async function apiBrowse(dir: string | null) {
       }),
   );
   const parent = path.dirname(root);
-  return { dir: root, parent: parent !== root && !path.relative(HOME, parent).startsWith('..') ? parent : null, folders: folders.sort((a, b) => a.name.localeCompare(b.name)) };
+  const isProject = (await fs.access(path.join(root, 'cut.json')).then(() => true, () => false)) || (await fs.access(path.join(root, 'short.json')).then(() => true, () => false));
+  return { dir: root, isProject, parent: parent !== root && !path.relative(HOME, parent).startsWith('..') ? parent : null, folders: folders.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
 const TYPES: Record<string, string> = {
@@ -319,7 +324,7 @@ async function requestsFor(dir: string, status?: string) {
       spoken: words,
     };
   });
-  await markSeen(dir, st.from === 'cut.json' ? p.revision : 0, list.map((x) => x.id));
+  await markSeen(dir, st.from === 'cut.json' ? p.revision : 0, list.map(requestSeenKey));
   return { revision: st.from === 'cut.json' ? p.revision : 0, size: [p.width, p.height], requests: out };
 }
 
@@ -549,6 +554,27 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
     }
     case '/api/requests':
       return json(res, 200, await requestsFor(dirQ(), q.get('status') ?? undefined));
+    case '/api/requests/update': {
+      // Claude's status change and answer: the answer also goes on the request's conversation
+      const b = await body<{ dir: string; base?: number; id: string; status: Request['status']; reply?: string }>(req);
+      const dir = safePath(b.dir);
+      const st = await load(dir);
+      const cur = st.project.requests?.find((x) => x.id === b.id);
+      if (!cur) throw new HttpError(404, `no request ${b.id}`);
+      const set: Record<string, unknown> = { status: b.status };
+      if (b.reply !== undefined) {
+        set.reply = b.reply;
+        set.notes = [...(cur.notes ?? []), { by: 'claude', text: b.reply, at: new Date().toISOString() }];
+      }
+      try {
+        const out = await applyClaude(dir, b.base, [{ op: 'update_request', id: b.id, set }], `request ${b.id} ${b.status}`);
+        return json(res, 200, { ...out, open_tabs: connected(dir) });
+      } catch (e) {
+        if (e instanceof Conflict) throw new HttpError(409, `changed since you last looked (now revision ${e.revision}). Read the state again, then retry with base ${e.revision}.`, { revision: e.revision });
+        if (e instanceof OpError) throw new HttpError(422, e.message);
+        throw e;
+      }
+    }
     case '/api/transcript': {
       const dir = dirQ();
       const st = await load(dir);
@@ -683,6 +709,32 @@ async function api(req: http.IncomingMessage, res: http.ServerResponse, url: URL
       const b = await body<{ dir: string; range?: [number, number] }>(req);
       try {
         return json(res, 200, { job: startExport(safePath(b.dir), b.range) });
+      } catch (e) {
+        throw new HttpError(409, (e as Error).message);
+      }
+    }
+    case '/api/export/batch': {
+      if (req.method === 'POST') {
+        const b = await body<{ dirs?: string[]; clear?: 'done' | 'all' }>(req);
+        if (b.clear) return json(res, 200, clearBatch(b.clear === 'all'));
+        return json(res, 200, addToBatch((b.dirs ?? []).map((d) => safePath(d))));
+      }
+      return json(res, 200, batchState());
+    }
+    case '/api/templates':
+      return json(res, 200, { templates: await listTemplates(await studioRoot()) });
+    case '/api/template/save': {
+      const b = await body<{ dir: string; name: string; keepClips?: boolean }>(req);
+      try {
+        return json(res, 200, { path: await saveTemplate(await studioRoot(), safePath(b.dir), b.name, !!b.keepClips) });
+      } catch (e) {
+        throw new HttpError(422, (e as Error).message);
+      }
+    }
+    case '/api/template/new': {
+      const b = await body<{ dir: string; name: string; title?: string }>(req);
+      try {
+        return json(res, 200, { path: await newFromTemplate(await studioRoot(), safePath(b.dir), b.name, b.title) });
       } catch (e) {
         throw new HttpError(409, (e as Error).message);
       }

@@ -198,9 +198,9 @@ server.tool('requests_list', 'The user\'s requests: what they pointed at (clip, 
   }
 });
 
-server.tool('request_update', 'Set a request\'s status (working, done, rejected) and your reply to the user.', { dir: dirArg, base: z.number().int(), id: z.string(), status: z.enum(['open', 'working', 'done', 'rejected']), reply: z.string().optional() }, async ({ dir, base, id, status, reply }) => {
+server.tool('request_update', 'Set a request\'s status (working, done, rejected) and your reply to the user. The reply is also added to the request\'s notes (the conversation the user sees on it; their follow-ups are there too, with by "you").', { dir: dirArg, base: z.number().int(), id: z.string(), status: z.enum(['open', 'working', 'done', 'rejected']), reply: z.string().optional() }, async ({ dir, base, id, status, reply }) => {
   try {
-    return text(await call('POST', '/api/apply', { dir, base, ops: [{ op: 'update_request', id, set: { status, ...(reply !== undefined && { reply }) } }], label: `request ${id} ${status}` }));
+    return text(await call('POST', '/api/requests/update', { dir, base, id, status, ...(reply !== undefined && { reply }) }));
   } catch (e) {
     return fail(e);
   }
@@ -271,7 +271,7 @@ server.tool('export', 'Render the video (or just a range, for an exact check). O
   }
 });
 
-server.tool('export_plan', 'What an export would render now (cached vs stale parts, comps) and an estimate.', { dir: dirArg }, async (a) => {
+server.tool('export_plan', 'What an export would render now (cached vs stale parts, comps), an estimate, and checks: probable mistakes to fix or mention first (missing files, black gaps, captions off, open requests).', { dir: dirArg }, async (a) => {
   try {
     return text(await call('GET', '/api/export/plan', a));
   } catch (e) {

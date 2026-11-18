@@ -103,12 +103,24 @@ export function Transcript({ player }: { player: Player | null }) {
   return (
     <div className="panel side-body">
       <div className="panel-head">
-        <input placeholder="Find words…" value={find} onChange={(e) => setFind(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+        <input placeholder="Find words…" title="Highlight every match in the transcript" value={find} onChange={(e) => setFind(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
         <span className="muted small">{hits.size ? `${hits.size} words` : `${words.length} words`}</span>
       </div>
       <div className="row tools">
         <button disabled={!sel} onClick={cutSel} title="Cut the selected words out of every track and close the gap">
           ✂ Cut words
+        </button>
+        <button
+          disabled={!sel}
+          onClick={() => {
+            if (!sel) return;
+            studio.setPicked(null);
+            studio.setRange([words[sel[0]]!.s, words[sel[1]]!.e]);
+            studio.openTab('requests');
+          }}
+          title="Ask Claude for something over these words (a graphic, a change): opens a request with their time range"
+        >
+          ✎ Request
         </button>
         <button onClick={() => setSuggest({ kind: 'pauses', ranges: pauses(words, 0.8) })} title="Find silences over 0.8 s">
           Pauses
@@ -120,14 +132,14 @@ export function Transcript({ player }: { player: Player | null }) {
       {suggest && (
         <div className="banner small">
           {suggest.ranges.length} {suggest.kind}, {suggest.ranges.reduce((x, [a, b]) => x + b - a, 0).toFixed(1)} s in all.
-          <button disabled={!suggest.ranges.length} onClick={apply}>Cut them</button>
-          <button className="ghost" onClick={() => setSuggest(null)}>Cancel</button>
+          <button disabled={!suggest.ranges.length} onClick={apply} title="Cut all of these from every track and close the gaps">Cut them</button>
+          <button className="ghost" onClick={() => setSuggest(null)} title="Keep everything">Cancel</button>
         </div>
       )}
       <div className="panel-body transcript" ref={box}>
         {lines.map((l) => (
           <p key={l.from}>
-            <button className="ghost tc small" onClick={() => player?.seek(words[l.from]!.s)}>{timecode(words[l.from]!.s, fps).slice(0, 5)}</button>{' '}
+            <button className="ghost tc small" onClick={() => player?.seek(words[l.from]!.s)} title="Go to this line">{timecode(words[l.from]!.s, fps).slice(0, 5)}</button>{' '}
             {words.slice(l.from, l.to).map((w, k) => {
               const i = l.from + k;
               const cls = [
@@ -138,7 +150,7 @@ export function Transcript({ player }: { player: Player | null }) {
                 inSuggest(w) ? 'cut' : '',
               ].join(' ');
               return (
-                <span key={i} data-i={i} className={cls} onClick={(e) => click(i, e)}>
+                <span key={i} data-i={i} className={cls} onClick={(e) => click(i, e)} title={`${timecode(w.s, fps)} · click to jump, Shift-click to select`}>
                   {w.w}{' '}
                 </span>
               );
