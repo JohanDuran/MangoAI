@@ -57,7 +57,7 @@ export function History() {
                 <span className="muted small">{new Date(l.at).toLocaleString()}</span>
                 <span className="spacer" />
                 {l.rev !== rev && (
-                  <button className="link small" onClick={() => void restore(l.rev)}>
+                  <button className="link small" onClick={() => void restore(l.rev)} title="Go back to this revision (saved as a new revision, nothing is lost)">
                     restore
                   </button>
                 )}

@@ -78,7 +78,7 @@ export function ExportPanel({ player }: { player: Player | null }) {
             <ul className="segments small">
               {plan.segments.map((seg) => (
                 <li key={seg.key} className={seg.cached ? 'cached' : 'stale'}>
-                  <button className="ghost tc" onClick={() => player?.seek(seg.t0)}>
+                  <button className="ghost tc" onClick={() => player?.seek(seg.t0)} title="Go to this part">
                     {timecode(seg.t0, fps)}–{timecode(seg.t1, fps)}
                   </button>{' '}
                   {seg.cached ? 'rendered' : 'will render'}
@@ -88,7 +88,7 @@ export function ExportPanel({ player }: { player: Player | null }) {
           </>
         )}
         <div className="actions">
-          <button className="primary" disabled={!!busy} onClick={() => void start()}>
+          <button className="primary" disabled={!!busy} onClick={() => void start()} title="Render the whole video; parts already rendered are reused">
             {busy ? 'Exporting…' : 'Export'}
           </button>
           <button disabled={!!busy || !s.range} onClick={() => s.range && void start(s.range)} title="Render just the I/O range to check it exactly">

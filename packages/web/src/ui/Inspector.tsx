@@ -95,11 +95,11 @@ function TimeRow({ clip, edge, label, player }: { clip: Clip; edge: 'start' | 'e
         {linked ? (
           <div className="small muted">
             🔗 follows <code>{expr}</code>{' '}
-            <button className="link" onClick={() => studio.run((e) => unlinkTime(e, clip.id, edge), `unlinked ${clip.id} ${edge}`)}>unlink</button>
+            <button className="link" onClick={() => studio.run((e) => unlinkTime(e, clip.id, edge), `unlinked ${clip.id} ${edge}`)} title="Keep the current time as a plain number; it stops following">unlink</button>
           </div>
         ) : near && edge === 'start' ? (
           <div className="small muted">
-            <button className="link" onClick={() => studio.run((e) => linkTime(e, clip.id, edge, studio.words!.refOf(near.i)), `linked ${clip.id} to "${near.text}"`)}>
+            <button className="link" onClick={() => studio.run((e) => linkTime(e, clip.id, edge, studio.words!.refOf(near.i)), `linked ${clip.id} to "${near.text}"`)} title="Tie this clip to the word, so it moves with it when the voice is redone">
               link to the word “{near.text}”
             </button>{' '}
             so it follows a re-voice
@@ -169,11 +169,11 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
           <div key={p.path} className="error-text small">⚠ {p.message}</div>
         ))}
         <dl>
-          <dt>Track</dt>
+          <dt title="The track this clip is on">Track</dt>
           <dd>
             {track.id} {track.name ? `· ${track.name}` : ''} {track.locked ? '🔒' : ''}
           </dd>
-          <dt>Label</dt>
+          <dt title="A name for the clip, shown on the timeline">Label</dt>
           <dd>
             <Field value={clip.label} onCommit={(v) => set(id, { label: v === null ? null : String(v) })} placeholder="(none)" />
           </dd>
@@ -181,7 +181,7 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
           <TimeRow clip={clip} edge="end" label="Ends" player={player} />
           {clip.pivot !== undefined && (
             <>
-              <dt>Hit at</dt>
+              <dt title="The moment in the sound that lands exactly on the clip's start">Hit at</dt>
               <dd>
                 <Field value={clip.pivot} onCommit={(v) => set(id, { pivot: v })} title="Seconds into the sound that land exactly on its start (the loudest point)" /> s into the sound
               </dd>
@@ -189,20 +189,20 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
           )}
           {clip.type === 'media' && (
             <>
-              <dt>Source</dt>
+              <dt title="The media file this clip plays">Source</dt>
               <dd className="small" title={clip.src}>{clip.src.split('/').pop()}</dd>
-              <dt>In</dt>
+              <dt title="Where in the source file the clip starts playing">In</dt>
               <dd>
-                <Field value={clip.in} placeholder={rc?.in?.toFixed(3) ?? '0'} onCommit={(v) => set(id, { in: v })} /> s{' '}
+                <Field value={clip.in} placeholder={rc?.in?.toFixed(3) ?? '0'} onCommit={(v) => set(id, { in: v })} title="Seconds into the source file (or an expression)" /> s{' '}
                 {rc?.speed !== undefined && rc.speed !== 1 && <span className="muted">· ×{rc.speed.toFixed(3)}</span>}
               </dd>
-              <dt>Speed</dt>
+              <dt title="Playback speed: 1 is normal, 2 is twice as fast, 0.5 is half">Speed</dt>
               <dd>
-                <Field value={clip.speed} placeholder="1" onCommit={(v) => set(id, { speed: v, speedTo: null })} />
+                <Field value={clip.speed} placeholder="1" onCommit={(v) => set(id, { speed: v, speedTo: null })} title="1 = normal speed" />
               </dd>
               {(track.kind === 'audio' || s.opened?.media[clip.src]?.hasAudio) && (
                 <>
-                  <dt>Gain</dt>
+                  <dt title="Volume change in dB: 0 is unchanged, -6 about half as loud">Gain</dt>
                   <dd className="row">
                     <input
                       type="range"
@@ -210,35 +210,36 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
                       max={12}
                       step={0.5}
                       value={clip.gain ?? defaultGain}
+                      title={`${clip.gain ?? defaultGain} dB`}
                       onChange={(e) => studio.apply(setGain([id], Number(e.target.value)), `gain ${id}`)}
                     />
                     <Field value={clip.gain} placeholder={`${defaultGain}`} onCommit={(v) => studio.apply(setGain([id], v === null ? null : Number(v)), `gain ${id}`)} /> dB
                   </dd>
                 </>
               )}
-              <dt>Fades</dt>
+              <dt title="Seconds of fade at the start (in) and end (out)">Fades</dt>
               <dd className="row">
                 in <Field value={clip.fadeIn} placeholder="0" onCommit={(v) => studio.run((e) => setFades(e, [id], v === null ? null : Number(v)), `fade in ${id}`)} />
                 out <Field value={clip.fadeOut} placeholder="0" onCommit={(v) => studio.run((e) => setFades(e, [id], undefined, v === null ? null : Number(v)), `fade out ${id}`)} /> s
               </dd>
               {track.kind === 'audio' && (
                 <>
-                  <dt>Loop</dt>
+                  <dt title="Repeat the sound until the clip ends">Loop</dt>
                   <dd>
-                    <input type="checkbox" checked={!!clip.loop} onChange={(e) => set(id, { loop: e.target.checked || null })} />
+                    <input type="checkbox" title="Repeat the sound until the clip ends" checked={!!clip.loop} onChange={(e) => set(id, { loop: e.target.checked || null })} />
                   </dd>
                 </>
               )}
               {track.kind === 'video' && (
                 <>
-                  <dt>Card</dt>
+                  <dt title="Where the picture sits in the vertical frame: its width (w) and the height of its centre (y), in pixels of a 1080-wide frame">Card</dt>
                   <dd className="row">
-                    w <Field value={clip.cardW} placeholder="1080" onCommit={(v) => set(id, { cardW: v })} />
-                    y <Field value={clip.cy} placeholder="900" onCommit={(v) => set(id, { cy: v })} />
+                    w <Field value={clip.cardW} placeholder="1080" onCommit={(v) => set(id, { cardW: v })} title="Card width in pixels (1080 = full width)" />
+                    y <Field value={clip.cy} placeholder="900" onCommit={(v) => set(id, { cy: v })} title="Height of the card's centre in pixels from the top" />
                   </dd>
-                  <dt>Dim</dt>
+                  <dt title="Blur and darken the picture, so text on top stands out">Dim</dt>
                   <dd>
-                    <input type="checkbox" checked={!!clip.dim} onChange={(e) => set(id, { dim: e.target.checked || null })} />
+                    <input type="checkbox" title="Blur and darken the picture" checked={!!clip.dim} onChange={(e) => set(id, { dim: e.target.checked || null })} />
                   </dd>
                 </>
               )}
@@ -246,7 +247,7 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
           )}
           {clip.type === 'title' && (
             <>
-              <dt>Text</dt>
+              <dt title="What the title says">Text</dt>
               <dd>
                 <textarea
                   rows={2}
@@ -258,33 +259,33 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
                   onKeyDown={(e) => e.stopPropagation()}
                 />
               </dd>
-              <dt>Style</dt>
+              <dt title="The look of the title (font, size, colours)">Style</dt>
               <dd>
-                <select value={clip.style ?? 'Cap'} onChange={(e) => set(id, { style: e.target.value })}>
+                <select title="Title style" value={clip.style ?? 'Cap'} onChange={(e) => set(id, { style: e.target.value })}>
                   {[...Object.keys(STYLES), 'Shape'].map((k) => (
                     <option key={k}>{k}</option>
                   ))}
                 </select>
               </dd>
-              <dt>Position</dt>
+              <dt title="Centre of the title in pixels (x from the left, y from the top)">Position</dt>
               <dd className="row">
                 x <Field value={clip.pos?.[0]} placeholder="540" onCommit={(v) => set(id, { pos: [Number(v ?? 540), clip.pos?.[1] ?? 960] })} />
                 y <Field value={clip.pos?.[1]} placeholder="960" onCommit={(v) => set(id, { pos: [clip.pos?.[0] ?? 540, Number(v ?? 960)] })} />
               </dd>
-              <dt>Size</dt>
+              <dt title="Font size in pixels; empty uses the style's size">Size</dt>
               <dd>
                 <Field value={clip.fs} placeholder="style default" onCommit={(v) => set(id, { fs: v })} />
               </dd>
-              <dt>Colour</dt>
+              <dt title="Text colour, and an optional box colour behind it (a CSS colour like #ffd400 or white)">Colour</dt>
               <dd className="row">
                 <Field value={clip.color} placeholder="white" onCommit={(v) => set(id, { color: v })} />
                 box <Field value={clip.box} placeholder="—" onCommit={(v) => set(id, { box: v })} />
               </dd>
-              <dt>Pop</dt>
+              <dt title="Pop in with a quick scale-up when it appears">Pop</dt>
               <dd>
-                <input type="checkbox" checked={!!clip.pop} onChange={(e) => set(id, { pop: e.target.checked || null })} />
+                <input type="checkbox" title="Pop in with a quick scale-up" checked={!!clip.pop} onChange={(e) => set(id, { pop: e.target.checked || null })} />
               </dd>
-              <dt>Fades</dt>
+              <dt title="Seconds of fade at the start (in) and end (out)">Fades</dt>
               <dd className="row">
                 in <Field value={clip.fade?.[0]} placeholder="0" onCommit={(v) => studio.run((e) => setFades(e, [id], Number(v ?? 0)))} />
                 out <Field value={clip.fade?.[1]} placeholder="0" onCommit={(v) => studio.run((e) => setFades(e, [id], undefined, Number(v ?? 0)))} /> s
@@ -293,11 +294,11 @@ function ClipInspector({ clip, track, player }: { clip: Clip; track: Track; play
           )}
           {clip.type === 'comp' && <CompFields clip={clip} />}
         </dl>
-        <h4>Fields (JSON)</h4>
+        <h4 title="Every field of the clip as JSON, for anything the form above doesn't show">Fields (JSON)</h4>
         <textarea className="fields" rows={Math.min(16, asJson.split('\n').length + 1)} value={json} onChange={(e) => setJson(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
         <div className="row">
-          <button onClick={applyJson} disabled={json === asJson}>Apply</button>
-          <button className="ghost" onClick={() => setJson(asJson)} disabled={json === asJson}>Reset</button>
+          <button onClick={applyJson} disabled={json === asJson} title="Apply the JSON changes to the clip">Apply</button>
+          <button className="ghost" onClick={() => setJson(asJson)} disabled={json === asJson} title="Undo your JSON changes">Reset</button>
         </div>
       </div>
     </aside>
@@ -320,24 +321,24 @@ function MultiInspector({ ids }: { ids: string[] }) {
     <aside className="inspector panel">
       <div className="panel-head">
         <span>{ids.length} clips</span>
-        <button className="ghost" onClick={() => studio.select(null)}>✕</button>
+        <button className="ghost" onClick={() => studio.select(null)} title="Deselect (Esc)">✕</button>
       </div>
       <div className="panel-body">
         <div className="actions">
-          <button onClick={() => studio.run((e) => deleteClips(e, ids), `deleted ${ids.length} clips`)}>Delete</button>
-          <button onClick={() => studio.run((e) => rippleDeleteClips(e, ids), `ripple-deleted ${ids.length} clips`)}>Ripple delete</button>
-          <button onClick={() => duplicate(ids)}>Duplicate</button>
+          <button onClick={() => studio.run((e) => deleteClips(e, ids), `deleted ${ids.length} clips`)} title="Delete these clips (Del)">Delete</button>
+          <button onClick={() => studio.run((e) => rippleDeleteClips(e, ids), `ripple-deleted ${ids.length} clips`)} title="Delete and close the gaps (Shift+Del)">Ripple delete</button>
+          <button onClick={() => duplicate(ids)} title="Duplicate these clips (Ctrl+D)">Duplicate</button>
         </div>
         <dl>
           <dt>Gain</dt>
           <dd>
             <Field value={undefined} placeholder="dB for all" onCommit={(v) => v !== null && studio.apply(setGain(ids, Number(v)), `gain of ${ids.length} clips`)} />
           </dd>
-          <dt>Fade in</dt>
+          <dt title="Seconds of fade at the start of every selected clip">Fade in</dt>
           <dd>
             <Field value={undefined} placeholder="s" onCommit={(v) => studio.run((e) => setFades(e, ids, v === null ? null : Number(v)), `fade in ${ids.length} clips`)} />
           </dd>
-          <dt>Fade out</dt>
+          <dt title="Seconds of fade at the end of every selected clip">Fade out</dt>
           <dd>
             <Field value={undefined} placeholder="s" onCommit={(v) => studio.run((e) => setFades(e, ids, undefined, v === null ? null : Number(v)), `fade out ${ids.length} clips`)} />
           </dd>
@@ -345,7 +346,7 @@ function MultiInspector({ ids }: { ids: string[] }) {
         <ul className="small">
           {ids.map((id) => (
             <li key={id}>
-              <button className="link" onClick={() => studio.select(id)}>{id}</button>
+              <button className="link" onClick={() => studio.select(id)} title="Select only this clip">{id}</button>
             </li>
           ))}
         </ul>
@@ -422,7 +423,7 @@ function ProjectInspector({ player }: { player: Player | null }) {
           </dd>
           <dt>Length</dt>
           <dd>{timecode(r.end, fps)}</dd>
-          <dt>Revision</dt>
+          <dt title="How many times the project has been saved">Revision</dt>
           <dd>
             {p.revision} {s.dirty && <span className="dirty">· unsaved changes</span>}
           </dd>
@@ -444,12 +445,12 @@ function ProjectInspector({ player }: { player: Player | null }) {
                   <td>
                     {t.kind === 'audio' && (
                       <>
-                        <Field value={t.gain} placeholder="0" onCommit={(v) => studio.apply([{ op: 'update_track', id: t.id, set: { gain: v === null ? null : Number(v) } }], `gain of track ${t.id}`)} /> dB
+                        <Field value={t.gain} placeholder="0" title="Volume of the whole track in dB" onCommit={(v) => studio.apply([{ op: 'update_track', id: t.id, set: { gain: v === null ? null : Number(v) } }], `gain of track ${t.id}`)} /> dB
                       </>
                     )}
                     {t.kind === 'captions' && (
                       <label className="small">
-                        <input type="checkbox" checked={t.enabled !== false} onChange={(e) => studio.apply([{ op: 'update_track', id: t.id, set: { enabled: e.target.checked ? null : false } }], `captions ${e.target.checked ? 'on' : 'off'}`)} /> on
+                        <input type="checkbox" title="Show the captions in the preview and export" checked={t.enabled !== false} onChange={(e) => studio.apply([{ op: 'update_track', id: t.id, set: { enabled: e.target.checked ? null : false } }], `captions ${e.target.checked ? 'on' : 'off'}`)} /> on
                       </label>
                     )}
                   </td>
@@ -461,7 +462,7 @@ function ProjectInspector({ player }: { player: Player | null }) {
         <ul className="sections">
           {r.sections.map((sec) => (
             <li key={sec.id}>
-              <button className="ghost" onClick={() => player?.seek(sec.t0)}>
+              <button className="ghost" onClick={() => player?.seek(sec.t0)} title="Go to this section">
                 <span className="tc small">{timecode(sec.t0, fps)}</span> {sec.id}
               </button>
               <div className="muted small">{p.sections.find((x) => x.id === sec.id)?.note}</div>
@@ -474,10 +475,10 @@ function ProjectInspector({ player }: { player: Player | null }) {
         <ul className="sections">
           {p.anchors.map((a) => (
             <li key={a.name} className="row">
-              <button className="ghost" onClick={() => player?.seek(r.anchors.get(a.name) ?? 0)}>
+              <button className="ghost" onClick={() => player?.seek(r.anchors.get(a.name) ?? 0)} title="Go to this marker">
                 <span className="tc small">{timecode(r.anchors.get(a.name) ?? 0, fps)}</span> {a.name}
               </button>
-              <Field value={a.at} onCommit={(v) => v !== null && studio.apply([{ op: 'set_anchor', name: a.name, at: v }], `moved marker ${a.name}`)} />
+              <Field value={a.at} title="Marker time: seconds or an expression" onCommit={(v) => v !== null && studio.apply([{ op: 'set_anchor', name: a.name, at: v }], `moved marker ${a.name}`)} />
               <button className="ghost" title="Remove" onClick={() => studio.apply([{ op: 'set_anchor', name: a.name, at: null }], `removed marker ${a.name}`)}>✕</button>
             </li>
           ))}

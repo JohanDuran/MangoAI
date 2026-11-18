@@ -127,6 +127,7 @@ function SoundRow({ s, player, isNew }: { s: Sound; player: Player | null; isNew
           const id = await addAudio(s.path, 'sfx', player?.time() ?? 0, (s.prompt ?? s.file).slice(0, 40));
           if (id) void api.post('/api/toolbox/used', { dir: studio.opened!.dir, file: s.file }).catch(() => {});
         }}
+        title="Add the sound to the SFX track at the playhead"
       >
         + at playhead
       </button>
@@ -218,7 +219,7 @@ export function ToolboxPanel({ player }: { player: Player | null }) {
       <div className="panel-body">
         <div className={`tb-status small ${st?.up ? 'ok' : down ? 'down' : ''}`}>
           <span className="dot" /> {st === null ? 'Checking the media toolbox…' : st.up ? 'Media toolbox connected' : 'Media toolbox not running: start Docker Desktop.'}
-          <button className="link" onClick={check}>
+          <button className="link" onClick={check} title="Check again whether the media toolbox is running">
             check again
           </button>
         </div>
@@ -227,16 +228,16 @@ export function ToolboxPanel({ player }: { player: Player | null }) {
 
         <h4>Sounds</h4>
         <div className="row">
-          <input placeholder="Search the library: whoosh, pop, coin…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void search(); }} />
-          <button disabled={!!busy || !!down} onClick={() => void search()}>
+          <input placeholder="Search the library: whoosh, pop, coin…" title="Search the shared sound library (Enter)" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') void search(); }} />
+          <button disabled={!!busy || !!down} onClick={() => void search()} title="Search the shared sound library">
             Search
           </button>
         </div>
         {made.length > 0 && <ul className="sounds">{made.map((x) => <SoundRow key={x.path} s={x} player={player} isNew />)}</ul>}
         {found && (found.length ? <ul className="sounds">{found.map((x) => <SoundRow key={x.path} s={x} player={player} />)}</ul> : <div className="muted small">Nothing in the library for that. Generate one below.</div>)}
         <div className="row">
-          <input placeholder="Or generate: soft UI pop, short, clean, no music" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
-          <input className="secs" title="Seconds" value={secs} onChange={(e) => setSecs(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+          <input placeholder="Or generate: soft UI pop, short, clean, no music" title="Describe a sound to generate with Stable Audio" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
+          <input className="secs" title="Length of the generated sound, in seconds" value={secs} onChange={(e) => setSecs(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
           <button disabled={!!busy || !!down || !prompt.trim()} onClick={() => void generate()} title="3 variations with Stable Audio, saved to the shared sound library">
             Generate
           </button>
@@ -246,6 +247,7 @@ export function ToolboxPanel({ player }: { player: Player | null }) {
         <textarea rows={3} placeholder="Type what to say" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
         <div className="row">
           <select
+            title="Voice: a cloned voice (Chatterbox) or a Kokoro voice"
             value={voice}
             onChange={(e) => {
               setVoice(e.target.value);
@@ -269,7 +271,7 @@ export function ToolboxPanel({ player }: { player: Player | null }) {
               ))}
             </optgroup>
           </select>
-          <button disabled={!!busy || !!down || !text.trim()} onClick={() => void speak()}>
+          <button disabled={!!busy || !!down || !text.trim()} onClick={() => void speak()} title="Make a voice line from the text with the chosen voice">
             Voice it
           </button>
         </div>
@@ -287,7 +289,7 @@ export function ToolboxPanel({ player }: { player: Player | null }) {
               <span className="grow">
                 {line.path.split(/[\\/]/).pop()} <span className="muted small">{line.seconds ? `${line.seconds.toFixed(1)}s` : ''}</span>
               </span>
-              <button className="small" onClick={() => void addAudio(line.path, 'voice', player?.time() ?? 0, text.slice(0, 40))}>
+              <button className="small" onClick={() => void addAudio(line.path, 'voice', player?.time() ?? 0, text.slice(0, 40))} title="Add the line to the voice track at the playhead">
                 + at playhead
               </button>
             </li>

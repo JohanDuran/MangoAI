@@ -66,7 +66,7 @@ export function Requests({ player }: { player: Player | null }) {
       <div className="panel-body">
         <div className={`compose ${s.mode === 'request' ? 'on' : ''}`}>
           <div className="row">
-            <button className={s.mode === 'request' ? 'on' : ''} onClick={() => studio.setMode(s.mode === 'request' ? 'edit' : 'request')}>
+            <button className={s.mode === 'request' ? 'on' : ''} onClick={() => studio.setMode(s.mode === 'request' ? 'edit' : 'request')} title="Click a graphic in the viewer, or drag a box where something new should go (R)">
               {s.mode === 'request' ? 'Pointing… (Esc to stop)' : '✎ Point in the viewer'}
             </button>
           </div>
@@ -107,11 +107,11 @@ export function Requests({ player }: { player: Player | null }) {
           >
             {assets.length ? assets.map((a) => (
               <span key={a} className="chip">
-                {a.split('/').pop()} <button className="link" onClick={() => setAssets((x) => x.filter((y) => y !== a))}>✕</button>
+                {a.split('/').pop()} <button className="link" onClick={() => setAssets((x) => x.filter((y) => y !== a))} title="Remove this file from the request">✕</button>
               </span>
             )) : <span className="muted">Drop files from the media pool here to use them (a logo, a screenshot)</span>}
           </div>
-          <button className="primary" disabled={!text.trim()} onClick={() => void add()}>
+          <button className="primary" disabled={!text.trim()} onClick={() => void add()} title="Add the request (Ctrl+Enter); Save so Claude sees it">
             Add request
           </button>
         </div>
@@ -122,9 +122,9 @@ export function Requests({ player }: { player: Player | null }) {
           {[...list].reverse().map((r) => (
             <li key={r.id} className={`req ${r.status}`}>
               <div className="row">
-                <span className="small">{STATUS[r.status]}</span>
+                <span className="small" title={r.status === 'open' ? 'Waiting for Claude' : r.status === 'working' ? 'Claude is working on it' : r.status === 'done' ? 'Claude finished it' : "Claude didn't do it; see the reply"}>{STATUS[r.status]}</span>
                 <span className="spacer" />
-                <button className="ghost tc small" onClick={() => player?.seek(r.range?.[0] ?? r.t ?? 0)}>
+                <button className="ghost tc small" onClick={() => player?.seek(r.range?.[0] ?? r.t ?? 0)} title="Go to this request">
                   {timecode(r.range?.[0] ?? r.t ?? 0, fps)}
                 </button>
               </div>
@@ -135,9 +135,9 @@ export function Requests({ player }: { player: Player | null }) {
               </div>
               {r.reply && <div className="reply small">Claude: {r.reply}</div>}
               <div className="row small">
-                {r.status !== 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'open' } }], `reopened ${r.id}`)}>reopen</button>}
-                {r.status === 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'done' } }], `closed ${r.id}`)}>mark done</button>}
-                <button className="link" onClick={() => studio.apply([{ op: 'remove_request', id: r.id }], `removed ${r.id}`)}>remove</button>
+                {r.status !== 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'open' } }], `reopened ${r.id}`)} title="Set it back to open so Claude looks at it again">reopen</button>}
+                {r.status === 'open' && <button className="link" onClick={() => studio.apply([{ op: 'update_request', id: r.id, set: { status: 'done' } }], `closed ${r.id}`)} title="Close it yourself">mark done</button>}
+                <button className="link" onClick={() => studio.apply([{ op: 'remove_request', id: r.id }], `removed ${r.id}`)} title="Delete this request">remove</button>
               </div>
             </li>
           ))}
@@ -178,11 +178,11 @@ function CompFieldsWithVersions({ clip }: { clip: CompClip }) {
   const i = cur === null ? list.length : list.findIndex((x) => x.v === cur);
   return (
     <>
-      <dt>Comp</dt>
+      <dt title="The HyperFrames scene folder this clip renders">Comp</dt>
       <dd className="small" title={clip.comp}>{clip.comp}</dd>
-      <dt>Vars</dt>
+      <dt title="Values passed into the scene">Vars</dt>
       <dd className="small">{clip.vars ? <code>{JSON.stringify(clip.vars)}</code> : <span className="muted">none</span>}</dd>
-      <dt>Versions</dt>
+      <dt title="Saved copies of the scene; flip between them">Versions</dt>
       <dd className="row small">
         <button disabled={busy || i <= 0} onClick={() => void go('switch', list[i - 1]!.v)} title="Older version">◀</button>
         <span>{list.length === 0 ? 'only this one' : cur === null ? `current (after v${list[list.length - 1]!.v})` : `v${cur} of ${list.length}`}</span>

@@ -1,6 +1,7 @@
 // The live frame: base canvas, HyperFrames comps (iframes, seeked to the clock), a top canvas for layers
-// painted above the comps, and in request mode an overlay to draw a box or click an element.
-import type { TitleClip } from '@mangoai/core';
+// painted above the comps, and in request mode an overlay to draw a box or click an element. Pending requests
+// (open / Claude working) stay drawn over the frame while their time plays, so you see what's still to come.
+import type { Request, TitleClip } from '@mangoai/core';
 import { useEffect, useRef, useState } from 'react';
 import type { Player } from '../engine/player';
 import { titleBounds } from '../engine/look';
@@ -164,11 +165,89 @@ export function Viewer({ player }: { player: Player }) {
           )}
           {pickedBox && <rect x={pickedBox[0]} y={pickedBox[1]} width={pickedBox[2]} height={pickedBox[3]} className="picked" />}
         </svg>
+        <PendingRequests player={player} />
         {requestMode && (
           <div className="hint">Click a graphic to ask for a change, or drag a box where something new should go</div>
         )}
       </div>
     </div>
+  );
+}
+
+const SHOW_KEY = 'mangoai.showRequests';
+
+/** Where and when a request sits on the frame: the box it points at (frame pixels) and the time it covers. */
+function placeOf(r: Request, W: number, H: number): { box: Box | null; from: number; to: number } | null {
+  const box: Box | null = r.region
+    ? [r.region[0] * W, r.region[1] * H, r.region[2] * W, r.region[3] * H]
+    : r.element?.box
+      ? (r.element.box as Box)
+      : null;
+  if (r.range) return { box, from: r.range[0], to: r.range[1] };
+  const rc = r.clip ? studio.resolved()?.clips.get(r.clip) : undefined;
+  if (rc && rc.end !== null) return { box, from: rc.start, to: rc.end };
+  if (r.t !== undefined) return { box, from: r.t - 1.5, to: r.t + 1.5 };
+  return null;
+}
+
+/** Open and in-progress requests, outlined over the frame while the playhead is inside their time. */
+function PendingRequests({ player }: { player: Player }) {
+  const s = useStudio();
+  const [, tick] = useState(0);
+  const [show, setShow] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => player.onChange(() => tick((n) => n + 1)), [player]);
+  const p = player.project;
+  const pending = (s.editor?.project.requests ?? []).filter((r) => r.status === 'open' || r.status === 'working');
+  if (!pending.length) return null;
+  const t = player.time();
+  const here = show
+    ? pending.flatMap((r) => {
+        const at = placeOf(r, p.width, p.height);
+        return at && t >= at.from && t < at.to ? [{ r, box: at.box }] : [];
+      })
+    : [];
+  const toggle = () => {
+    setShow(!show);
+    try {
+      localStorage.setItem(SHOW_KEY, show ? '0' : '1');
+    } catch {}
+  };
+  const pct = (v: number, of: number) => `${(v / of) * 100}%`;
+  return (
+    <>
+      <div className="req-marks">
+        {here.map(({ r, box }, i) =>
+          box ? (
+            <div
+              key={r.id}
+              className={`req-mark ${r.status} ${box[1] < p.height * 0.04 ? 'inside' : ''}`}
+              style={{ left: pct(box[0], p.width), top: pct(box[1], p.height), width: pct(box[2], p.width), height: pct(box[3], p.height) }}
+            >
+              <span className="req-tag" title={r.text}>{r.id} · {r.text}</span>
+            </div>
+          ) : (
+            // no box (a whole clip, or just a time): a tag in the corner
+            <span key={r.id} className={`req-tag loose ${r.status}`} style={{ top: `${8 + i * 26}px` }} title={r.text}>
+              {r.id} · {r.text}
+            </span>
+          ),
+        )}
+      </div>
+      <button
+        className={`req-toggle small ${show ? 'on' : ''}`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={toggle}
+        title={show ? 'Hide pending requests on the preview' : 'Show pending requests on the preview'}
+      >
+        {show ? '◉' : '○'} {pending.length} pending
+      </button>
+    </>
   );
 }
 

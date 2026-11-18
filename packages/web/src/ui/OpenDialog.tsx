@@ -30,10 +30,10 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           void go(path);
         }}
       >
-        <input value={path} onChange={(e) => setPath(e.target.value)} spellCheck={false} />
-        <button type="submit">Go</button>
+        <input value={path} onChange={(e) => setPath(e.target.value)} spellCheck={false} title="A folder path; press Enter to browse it" />
+        <button type="submit" title="Browse this folder">Go</button>
         {onCancel && (
-          <button type="button" className="ghost" onClick={onCancel}>
+          <button type="button" className="ghost" onClick={onCancel} title="Back to the open project">
             Cancel
           </button>
         )}
@@ -45,7 +45,7 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           <ul className="folders">
             {last.map((d) => (
               <li key={d}>
-                <button className="project" onClick={() => onOpen(d)}>
+                <button className="project" onClick={() => onOpen(d)} title="Open this recent project">
                   ▶ {d}
                 </button>
               </li>
@@ -59,7 +59,7 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
           <ul className="folders">
             {b.parent && (
               <li>
-                <button onClick={() => void go(b.parent!)}>⬑ ..</button>
+                <button onClick={() => void go(b.parent!)} title="Up one folder">⬑ ..</button>
               </li>
             )}
             {b.folders.map((f) => (
@@ -69,7 +69,7 @@ export function OpenDialog({ onOpen, onCancel }: { onOpen: (dir: string) => void
                     ▶ {f.name}
                   </button>
                 ) : (
-                  <button onClick={() => void go(f.path)}>📁 {f.name}</button>
+                  <button onClick={() => void go(f.path)} title="Open this folder">📁 {f.name}</button>
                 )}
               </li>
             ))}

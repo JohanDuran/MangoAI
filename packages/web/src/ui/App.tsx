@@ -177,7 +177,7 @@ export function App() {
           {opened.name}
         </button>
         <span className="muted small">
-          rev {ed?.project.revision ?? 0}
+          <span title="Saved revision of cut.json; each Save (yours or Claude's) adds one">rev {ed?.project.revision ?? 0}</span>
           {opened.from === 'short.json' && ' · imported from short.json (Save writes cut.json next to it)'}
         </span>
         <span className="spacer" />
@@ -200,8 +200,8 @@ export function App() {
       {s.draftOffer > 0 && (
         <div className="banner">
           This project has {s.draftOffer} unsaved edit{s.draftOffer > 1 ? 's' : ''} from a tab that closed.
-          <button onClick={() => studio.restoreDraft()}>Restore</button>
-          <button className="ghost" onClick={() => studio.discardDraft()}>Discard</button>
+          <button onClick={() => studio.restoreDraft()} title="Bring back the edits that weren't saved">Restore</button>
+          <button className="ghost" onClick={() => studio.discardDraft()} title="Throw those edits away and keep the saved version">Discard</button>
         </div>
       )}
       <main className="workspace">
@@ -214,15 +214,15 @@ export function App() {
           <nav className="tabs">
             {(
               [
-                ['inspect', 'Inspector'],
-                ['requests', `Requests${open ? ` (${open})` : ''}`],
-                ['transcript', 'Transcript'],
-                ['history', 'History'],
-                ['toolbox', 'Toolbox'],
-                ['export', 'Export'],
-              ] as [Tab, string][]
-            ).map(([k, label]) => (
-              <button key={k} className={tab === k ? 'on' : 'ghost'} onClick={() => setTab(k)}>
+                ['inspect', 'Inspector', 'The selected clip, or the project when nothing is selected'],
+                ['requests', `Requests${open ? ` (${open})` : ''}`, 'Things you asked Claude to change or make, and their status'],
+                ['transcript', 'Transcript', 'The voice track as words: click to jump, select to cut, find pauses and fillers'],
+                ['history', 'History', 'Every saved revision, by you or Claude; restore any of them'],
+                ['toolbox', 'Toolbox', 'Sounds and voice lines from the media toolbox'],
+                ['export', 'Export', 'Render the video (only the parts that changed)'],
+              ] as [Tab, string, string][]
+            ).map(([k, label, help]) => (
+              <button key={k} className={tab === k ? 'on' : 'ghost'} onClick={() => setTab(k)} title={help}>
                 {label}
               </button>
             ))}
