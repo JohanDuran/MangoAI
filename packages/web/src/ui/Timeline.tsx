@@ -16,6 +16,8 @@ const SECTIONS = 20;
 const CACHE = 4;
 const TOP = RULER + SECTIONS + CACHE;
 const HEIGHTS: Record<Track['kind'], number> = { video: 46, graphics: 40, captions: 32, audio: 58 };
+/** Smallest height of one lane when clips on a track overlap: enough to read a label and click it. */
+const LANE_H = 22;
 const EDGE = 6; // px from a clip edge that grabs a trim instead of a move
 const SNAP_PX = 8;
 
@@ -103,13 +105,46 @@ export function Timeline({ player }: { player: Player }) {
   const rows: Row[] = useMemo(() => {
     let y = 0;
     return displayOrder(project.tracks).map((t) => {
-      const h = HEIGHTS[t.kind];
+      // overlapping clips stack in lanes; the row grows so each lane stays readable and clickable
+      const lanes = t.kind === 'captions' ? 1 : index.tracks.get(t.id)?.lanes ?? 1;
+      const h = lanes > 1 ? Math.max(HEIGHTS[t.kind], 6 + lanes * LANE_H) : HEIGHTS[t.kind];
       const row = { track: t, y, h };
       y += h;
       return row;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, version]);
+  }, [project, version, index]);
+  const totalH = rows.reduce((n, r) => n + r.h, 0);
+  // a real scrollbar for the tracks (the canvas draws them; this keeps its scroll in step with view.y0)
+  const vbar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = vbar.current;
+    if (el && Math.abs(el.scrollTop - view.y0) > 0.5) el.scrollTop = view.y0;
+  });
+  // and one along the bottom when zoomed in past the window: its range is the whole edit (a little past
+  // the end), or further if you've panned beyond it
+  const visT = view.pps > 0 ? (size.w - HEADER) / view.pps : 0;
+  const spanT = Math.max(index.end * 1.05 + 2, view.x0 + visT);
+  const showH = view.pps > 0 && (view.x0 > 0.001 || index.end * 1.05 + 2 > visT);
+  /** Height left for the tracks (the bottom scrollbar takes 14 px when it shows). */
+  const tracksH = size.h - TOP - (showH ? 14 : 0);
+  const showV = totalH > tracksH;
+  const hbar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = hbar.current;
+    const x = view.x0 * view.pps;
+    if (el && Math.abs(el.scrollLeft - x) > 0.5) el.scrollLeft = x;
+  });
+  // open with the panel tall enough for every track (up to 60% of the window), unless you sized it yourself
+  const fitH = totalH + TOP + 34;
+  useEffect(() => {
+    if (!savedTimelineHeight()) setTimelineHeight(Math.min(fitH, window.innerHeight * 0.6), false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.opened?.dir, rows.length]);
+  useEffect(() => {
+    const max = Math.max(0, totalH - tracksH);
+    if (view.y0 > max) setView((v) => ({ ...v, y0: max }));
+  }, [totalH, tracksH, view.y0]);
   const problemIds = useMemo(() => {
     const ids = new Set<string>();
     for (const p of resolved.problems) {
@@ -429,18 +464,12 @@ export function Timeline({ player }: { player: Player }) {
     const track = row.track;
     const h = row.h;
     if (track.kind === 'captions') return drawWords(ctx, y, h, t0, t1);
-    const spans = index.tracks.get(track.id)?.query(t0 - 30, t1) ?? [];
+    const ti = index.tracks.get(track.id);
+    const spans = ti?.query(t0 - 30, t1) ?? [];
     const d = drag.current;
     const sorted = [...spans].sort((a, b) => a.start - b.start);
-    const lanes: number[] = [];
-    const laneOf = new Map<string, number>();
-    for (const sp of sorted) {
-      let lane = lanes.findIndex((end) => end <= sp.start + 1e-6);
-      if (lane < 0) lane = lanes.push(0) - 1;
-      lanes[lane] = sp.end;
-      laneOf.set(sp.id, lane);
-    }
-    const laneH = (h - 6) / Math.max(1, lanes.length);
+    const laneOf = ti?.laneOf ?? new Map<string, number>();
+    const laneH = (h - 6) / (ti?.lanes ?? 1);
     for (const sp of sorted) {
       let start = sp.start;
       let end = sp.end;
@@ -460,7 +489,7 @@ export function Timeline({ player }: { player: Player }) {
       const cx0 = Math.max(HEADER, x0);
       const cx1 = Math.min(size.w, x1);
       if (cx1 < cx0) continue;
-      const top = y + 3 + laneOf.get(sp.id)! * laneH;
+      const top = y + 3 + (laneOf.get(sp.id) ?? 0) * laneH;
       const c = sp.clip;
       const sel = s.selected.includes(c.id);
       ctx.fillStyle = clipColor(c, track);
@@ -668,7 +697,14 @@ export function Timeline({ player }: { player: Player }) {
     if (y < TOP) return { t };
     const row = rowAt(y);
     if (!row || row.track.kind === 'captions') return { t, ...(row && { row }) };
-    const spans = index.tracks.get(row.track.id)?.query(t - EDGE / view.pps, t + EDGE / view.pps) ?? [];
+    const ti = index.tracks.get(row.track.id);
+    let spans = ti?.query(t - EDGE / view.pps, t + EDGE / view.pps) ?? [];
+    if (ti && ti.lanes > 1) {
+      // the clip in the lane under the pointer (overlapping clips are stacked)
+      const lane = Math.floor((y - TOP + view.y0 - row.y - 3) / ((row.h - 6) / ti.lanes));
+      const inLane = spans.filter((sp) => ti.laneOf.get(sp.id) === lane);
+      spans = inLane;
+    }
     if (!spans.length) return { t, row };
     const under = spans.filter((sp) => t >= sp.start && t < sp.end);
     const pool = under.length ? under : spans;
@@ -981,7 +1017,7 @@ export function Timeline({ player }: { player: Player }) {
         setView((v) => ({ ...v, x0: Math.max(0, v.x0 + dx) }));
       } else {
         const total = rows.reduce((n, r2) => n + r2.h, 0);
-        const max = Math.max(0, total - (size.h - TOP));
+        const max = Math.max(0, total - tracksH);
         if (max > 0) setView((v) => ({ ...v, y0: Math.min(max, Math.max(0, v.y0 + e.deltaY)) }));
         else setView((v) => ({ ...v, x0: Math.max(0, v.x0 + e.deltaY / v.pps) }));
       }
@@ -992,6 +1028,21 @@ export function Timeline({ player }: { player: Player }) {
 
   return (
     <section className="timeline">
+      <div
+        className="tl-resize"
+        title="Drag to make the timeline taller or shorter · double-click: fit all tracks"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const move = (ev: MouseEvent) => setTimelineHeight(window.innerHeight - ev.clientY);
+          const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+          };
+          window.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', up);
+        }}
+        onDoubleClick={() => setTimelineHeight(fitH)}
+      />
       <div className="timeline-bar">
         <span title="Scroll to pan, Ctrl + wheel to zoom">Timeline</span>
         <button className="ghost" onClick={fit} title="Fit the whole timeline">Fit</button>
@@ -1010,6 +1061,34 @@ export function Timeline({ player }: { player: Player }) {
         onDrop={(e) => void onDrop(e)}
       >
         <canvas ref={cv} style={{ width: size.w, height: size.h, cursor: hover }} onMouseDown={onDown} onMouseMove={onHover} onMouseLeave={hideTip} onDoubleClick={onDouble} />
+        {showH && (
+          <div
+            className="tl-hscroll"
+            ref={hbar}
+            style={{ left: HEADER, right: showV ? 14 : 0 }}
+            title="Scroll along the timeline (or Shift + wheel)"
+            onScroll={(e) => {
+              const x0 = e.currentTarget.scrollLeft / view.pps;
+              setView((v) => (Math.abs(v.x0 - x0) * v.pps < 0.5 ? v : { ...v, x0 }));
+            }}
+          >
+            <div style={{ width: spanT * view.pps, height: 1 }} />
+          </div>
+        )}
+        {showV && (
+          <div
+            className="tl-vscroll"
+            ref={vbar}
+            style={{ top: TOP, bottom: showH ? 14 : 0 }}
+            title="Scroll the tracks (or use the mouse wheel)"
+            onScroll={(e) => {
+              const y = e.currentTarget.scrollTop;
+              setView((v) => (Math.abs(v.y0 - y) < 0.5 ? v : { ...v, y0: y }));
+            }}
+          >
+            <div style={{ height: totalH, width: 1 }} />
+          </div>
+        )}
         {tip && (
           <div className="canvas-tip" style={{ left: Math.min(tip.x + 12, size.w - 320), top: tip.y + 18 > size.h - 30 ? tip.y - 30 : tip.y + 18 }}>
             {tip.text}
@@ -1019,6 +1098,24 @@ export function Timeline({ player }: { player: Player }) {
     </section>
   );
 }
+
+/** The timeline panel's height (px), dragged by its top edge; remembered in this browser. */
+export function setTimelineHeight(px: number, save = true) {
+  const h = Math.round(Math.min(window.innerHeight - 160, Math.max(120, px)));
+  document.documentElement.style.setProperty('--tl-h', `${h}px`);
+  if (save)
+    try {
+      localStorage.setItem('mangoai.timelineH', String(h));
+    } catch {}
+}
+function savedTimelineHeight(): number {
+  try {
+    return Number(localStorage.getItem('mangoai.timelineH')) || 0;
+  } catch {
+    return 0;
+  }
+}
+if (savedTimelineHeight()) setTimelineHeight(savedTimelineHeight(), false);
 
 function setOnClip(ops: Op[], id: string, field: 'start' | 'end', expr: string) {
   const op = ops.find((o) => o.op === 'update_clip' && o.id === id);

@@ -24,7 +24,7 @@ input, select { font: inherit; color: inherit; background: var(--panel-2); borde
 .tc { font-variant-numeric: tabular-nums; font-family: 'Cascadia Mono', Consolas, monospace; }
 .error-text { color: var(--danger); white-space: pre-wrap; }
 
-.app { display: grid; grid-template-rows: 40px minmax(0, 1fr) 38vh; height: 100%; }
+.app { display: grid; grid-template-rows: 40px minmax(0, 1fr) var(--tl-h, 38vh); height: 100%; }
 .app.empty { display: flex; align-items: flex-start; justify-content: center; overflow: auto; }
 
 .topbar { display: flex; align-items: center; gap: 12px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
@@ -60,7 +60,16 @@ h4 { margin: 14px 0 6px; color: var(--muted); font-weight: 600; font-size: 11px;
 .problems li { color: var(--danger); margin-bottom: 4px; }
 pre.fields { white-space: pre-wrap; word-break: break-word; font-size: 11px; background: var(--panel-2); padding: 8px; border-radius: 6px; }
 
-.timeline { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); }
+.timeline { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); position: relative; }
+.tl-resize { position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: row-resize; z-index: 7; }
+.tl-resize:hover { background: rgba(255, 179, 71, 0.35); }
+.tl-vscroll { position: absolute; right: 0; bottom: 0; width: 14px; overflow-y: scroll; overflow-x: hidden; z-index: 4; }
+.tl-vscroll::-webkit-scrollbar { width: 14px; }
+.tl-hscroll { position: absolute; bottom: 0; height: 14px; overflow-x: scroll; overflow-y: hidden; z-index: 4; }
+.tl-hscroll::-webkit-scrollbar { height: 14px; }
+.tl-vscroll::-webkit-scrollbar-track, .tl-hscroll::-webkit-scrollbar-track { background: #22252d; border-left: 1px solid var(--line); }
+.tl-vscroll::-webkit-scrollbar-thumb, .tl-hscroll::-webkit-scrollbar-thumb { background: #9aa1b2; border-radius: 7px; border: 2px solid #22252d; min-height: 30px; }
+.tl-vscroll::-webkit-scrollbar-thumb:hover, .tl-hscroll::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 .timeline-bar { display: flex; align-items: center; gap: 6px; padding: 3px 10px; background: var(--panel); border-bottom: 1px solid var(--line); font-weight: 600; }
 .timeline-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .timeline-canvas canvas { position: absolute; inset: 0; display: block; }
@@ -86,7 +95,7 @@ button.link { background: none; border: none; padding: 0; color: #7fb4ff; text-d
 .topbar .save.dirty { background: var(--accent); color: #1a1205; border-color: var(--accent); font-weight: 600; }
 .dirty { color: var(--accent); }
 .banner { display: flex; align-items: center; gap: 10px; padding: 6px 12px; background: #2a2210; border-bottom: 1px solid #5a4410; }
-.app { grid-template-rows: 40px auto minmax(0, 1fr) 38vh; }
+.app { grid-template-rows: 40px auto minmax(0, 1fr) var(--tl-h, 38vh); }
 .app > .workspace { grid-row: 3; }
 .app > .timeline { grid-row: 4; }
 .app > .banner { grid-row: 2; }
