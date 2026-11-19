@@ -4,4 +4,4 @@
  * The video-studio plugin pins this version in its .mcp.json, so bumping it is a release step across repos:
  * see docs/ECOSYSTEM.md.
  */
-export const VERSION = '0.3.1';
+export const VERSION = '0.3.2';
