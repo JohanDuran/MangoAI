@@ -90,7 +90,9 @@ export function Timeline({ player }: { player: Player }) {
   const wrap = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState({ pps: 0, x0: 0, y0: 0 }); // pixels per second, left time, vertical scroll
-  const [size, setSize] = useState({ w: 800, h: 300 });
+  // 0 until measured: fitting to the width waits for the real size (a placeholder width fitted the edit
+  // into the first 800 px of a wide window)
+  const [size, setSize] = useState({ w: 0, h: 0 });
   const drag = useRef<Drag | null>(null);
   const [hover, setHover] = useState<string>('default');
   // hover help for what's drawn on the canvas: shown after a short pause on the same thing
@@ -125,7 +127,7 @@ export function Timeline({ player }: { player: Player }) {
   // the end), or further if you've panned beyond it
   const visT = view.pps > 0 ? (size.w - HEADER) / view.pps : 0;
   const spanT = Math.max(index.end * 1.05 + 2, view.x0 + visT);
-  const showH = view.pps > 0 && (view.x0 > 0.001 || index.end * 1.05 + 2 > visT);
+  const showH = view.pps > 0 && (view.x0 > 0.001 || index.end > visT + 0.01);
   /** Height left for the tracks (the bottom scrollbar takes 14 px when it shows). */
   const tracksH = size.h - TOP - (showH ? 14 : 0);
   const showV = totalH > tracksH;
@@ -135,12 +137,14 @@ export function Timeline({ player }: { player: Player }) {
     const x = view.x0 * view.pps;
     if (el && Math.abs(el.scrollLeft - x) > 0.5) el.scrollLeft = x;
   });
-  // open with the panel tall enough for every track (up to 60% of the window), unless you sized it yourself
+  // every project opens fitted: the panel tall enough for every track (up to 60% of the window) and the
+  // whole edit across the width. Dragging the edge or zooming changes it until the next project opens.
   const fitH = totalH + TOP + 34;
   useEffect(() => {
-    if (!savedTimelineHeight()) setTimelineHeight(Math.min(fitH, window.innerHeight * 0.6), false);
+    setTimelineHeight(Math.min(fitH, window.innerHeight * 0.6));
+    setView((v) => (v.pps === 0 ? v : { pps: 0, x0: 0, y0: 0 })); // pps 0 → fit to the width below
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.opened?.dir, rows.length]);
+  }, [s.opened?.dir]);
   useEffect(() => {
     const max = Math.max(0, totalH - tracksH);
     if (view.y0 > max) setView((v) => ({ ...v, y0: max }));
@@ -170,7 +174,7 @@ export function Timeline({ player }: { player: Player }) {
   useEffect(() => {
     if (view.pps === 0 && size.w > HEADER) fit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, index.end]);
+  }, [size.w, index.end, view.pps]);
 
   // redraw on every player frame (playhead) and after every render (view, edits). One pending draw at a
   // time and never cancelled: the player emits from its own animation frame, and the timeline may re-render
@@ -1099,23 +1103,14 @@ export function Timeline({ player }: { player: Player }) {
   );
 }
 
-/** The timeline panel's height (px), dragged by its top edge; remembered in this browser. */
-export function setTimelineHeight(px: number, save = true) {
+/** The timeline panel's height (px), set by dragging its top edge; each project opens fitted again. */
+export function setTimelineHeight(px: number) {
   const h = Math.round(Math.min(window.innerHeight - 160, Math.max(120, px)));
   document.documentElement.style.setProperty('--tl-h', `${h}px`);
-  if (save)
-    try {
-      localStorage.setItem('mangoai.timelineH', String(h));
-    } catch {}
 }
-function savedTimelineHeight(): number {
-  try {
-    return Number(localStorage.getItem('mangoai.timelineH')) || 0;
-  } catch {
-    return 0;
-  }
-}
-if (savedTimelineHeight()) setTimelineHeight(savedTimelineHeight(), false);
+try {
+  localStorage.removeItem('mangoai.timelineH'); // 0.3.1 remembered a height; it now fits on every open
+} catch {}
 
 function setOnClip(ops: Op[], id: string, field: 'start' | 'end', expr: string) {
   const op = ops.find((o) => o.op === 'update_clip' && o.id === id);
