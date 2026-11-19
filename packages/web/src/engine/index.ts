@@ -13,6 +13,9 @@ export interface Span {
 
 export class TrackIndex {
   readonly spans: Span[];
+  /** Overlapping clips are drawn in lanes, one below the other: each clip's lane, and how many there are. */
+  readonly laneOf = new Map<string, number>();
+  readonly lanes: number;
   private maxEnd: number[];
 
   constructor(track: Track, r: Resolved, fallbackEnd: number) {
@@ -27,6 +30,14 @@ export class TrackIndex {
     this.maxEnd = [];
     let m = -Infinity;
     for (const s of this.spans) this.maxEnd.push((m = Math.max(m, s.end)));
+    const ends: number[] = [];
+    for (const s of this.spans) {
+      let lane = ends.findIndex((e) => e <= s.start + 1e-6);
+      if (lane < 0) lane = ends.push(0) - 1;
+      ends[lane] = s.end;
+      this.laneOf.set(s.id, lane);
+    }
+    this.lanes = Math.max(1, ends.length);
   }
 
   /** Spans overlapping [a, b), in draw order. */

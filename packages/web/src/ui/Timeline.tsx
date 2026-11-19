@@ -16,6 +16,8 @@ const SECTIONS = 20;
 const CACHE = 4;
 const TOP = RULER + SECTIONS + CACHE;
 const HEIGHTS: Record<Track['kind'], number> = { video: 46, graphics: 40, captions: 32, audio: 58 };
+/** Smallest height of one lane when clips on a track overlap: enough to read a label and click it. */
+const LANE_H = 22;
 const EDGE = 6; // px from a clip edge that grabs a trim instead of a move
 const SNAP_PX = 8;
 
@@ -103,13 +105,15 @@ export function Timeline({ player }: { player: Player }) {
   const rows: Row[] = useMemo(() => {
     let y = 0;
     return displayOrder(project.tracks).map((t) => {
-      const h = HEIGHTS[t.kind];
+      // overlapping clips stack in lanes; the row grows so each lane stays readable and clickable
+      const lanes = t.kind === 'captions' ? 1 : index.tracks.get(t.id)?.lanes ?? 1;
+      const h = lanes > 1 ? Math.max(HEIGHTS[t.kind], 6 + lanes * LANE_H) : HEIGHTS[t.kind];
       const row = { track: t, y, h };
       y += h;
       return row;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, version]);
+  }, [project, version, index]);
   const problemIds = useMemo(() => {
     const ids = new Set<string>();
     for (const p of resolved.problems) {
@@ -429,18 +433,12 @@ export function Timeline({ player }: { player: Player }) {
     const track = row.track;
     const h = row.h;
     if (track.kind === 'captions') return drawWords(ctx, y, h, t0, t1);
-    const spans = index.tracks.get(track.id)?.query(t0 - 30, t1) ?? [];
+    const ti = index.tracks.get(track.id);
+    const spans = ti?.query(t0 - 30, t1) ?? [];
     const d = drag.current;
     const sorted = [...spans].sort((a, b) => a.start - b.start);
-    const lanes: number[] = [];
-    const laneOf = new Map<string, number>();
-    for (const sp of sorted) {
-      let lane = lanes.findIndex((end) => end <= sp.start + 1e-6);
-      if (lane < 0) lane = lanes.push(0) - 1;
-      lanes[lane] = sp.end;
-      laneOf.set(sp.id, lane);
-    }
-    const laneH = (h - 6) / Math.max(1, lanes.length);
+    const laneOf = ti?.laneOf ?? new Map<string, number>();
+    const laneH = (h - 6) / (ti?.lanes ?? 1);
     for (const sp of sorted) {
       let start = sp.start;
       let end = sp.end;
@@ -460,7 +458,7 @@ export function Timeline({ player }: { player: Player }) {
       const cx0 = Math.max(HEADER, x0);
       const cx1 = Math.min(size.w, x1);
       if (cx1 < cx0) continue;
-      const top = y + 3 + laneOf.get(sp.id)! * laneH;
+      const top = y + 3 + (laneOf.get(sp.id) ?? 0) * laneH;
       const c = sp.clip;
       const sel = s.selected.includes(c.id);
       ctx.fillStyle = clipColor(c, track);
@@ -668,7 +666,14 @@ export function Timeline({ player }: { player: Player }) {
     if (y < TOP) return { t };
     const row = rowAt(y);
     if (!row || row.track.kind === 'captions') return { t, ...(row && { row }) };
-    const spans = index.tracks.get(row.track.id)?.query(t - EDGE / view.pps, t + EDGE / view.pps) ?? [];
+    const ti = index.tracks.get(row.track.id);
+    let spans = ti?.query(t - EDGE / view.pps, t + EDGE / view.pps) ?? [];
+    if (ti && ti.lanes > 1) {
+      // the clip in the lane under the pointer (overlapping clips are stacked)
+      const lane = Math.floor((y - TOP + view.y0 - row.y - 3) / ((row.h - 6) / ti.lanes));
+      const inLane = spans.filter((sp) => ti.laneOf.get(sp.id) === lane);
+      spans = inLane;
+    }
     if (!spans.length) return { t, row };
     const under = spans.filter((sp) => t >= sp.start && t < sp.end);
     const pool = under.length ? under : spans;
