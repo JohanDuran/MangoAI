@@ -1,6 +1,6 @@
 {
   "name": "mangoai",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "MangoAI: a local video editor that Claude drives and you can touch. Editor server, MCP server for Claude and the save-report hook, in one package.",
   "type": "module",
   "license": "MIT",
