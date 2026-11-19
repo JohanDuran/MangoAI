@@ -121,10 +121,30 @@ export function Timeline({ player }: { player: Player }) {
     const el = vbar.current;
     if (el && Math.abs(el.scrollTop - view.y0) > 0.5) el.scrollTop = view.y0;
   });
+  // and one along the bottom when zoomed in past the window: its range is the whole edit (a little past
+  // the end), or further if you've panned beyond it
+  const visT = view.pps > 0 ? (size.w - HEADER) / view.pps : 0;
+  const spanT = Math.max(index.end * 1.05 + 2, view.x0 + visT);
+  const showH = view.pps > 0 && (view.x0 > 0.001 || index.end * 1.05 + 2 > visT);
+  /** Height left for the tracks (the bottom scrollbar takes 14 px when it shows). */
+  const tracksH = size.h - TOP - (showH ? 14 : 0);
+  const showV = totalH > tracksH;
+  const hbar = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const max = Math.max(0, totalH - (size.h - TOP));
+    const el = hbar.current;
+    const x = view.x0 * view.pps;
+    if (el && Math.abs(el.scrollLeft - x) > 0.5) el.scrollLeft = x;
+  });
+  // open with the panel tall enough for every track (up to 60% of the window), unless you sized it yourself
+  const fitH = totalH + TOP + 34;
+  useEffect(() => {
+    if (!savedTimelineHeight()) setTimelineHeight(Math.min(fitH, window.innerHeight * 0.6), false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.opened?.dir, rows.length]);
+  useEffect(() => {
+    const max = Math.max(0, totalH - tracksH);
     if (view.y0 > max) setView((v) => ({ ...v, y0: max }));
-  }, [totalH, size.h, view.y0]);
+  }, [totalH, tracksH, view.y0]);
   const problemIds = useMemo(() => {
     const ids = new Set<string>();
     for (const p of resolved.problems) {
@@ -997,7 +1017,7 @@ export function Timeline({ player }: { player: Player }) {
         setView((v) => ({ ...v, x0: Math.max(0, v.x0 + dx) }));
       } else {
         const total = rows.reduce((n, r2) => n + r2.h, 0);
-        const max = Math.max(0, total - (size.h - TOP));
+        const max = Math.max(0, total - tracksH);
         if (max > 0) setView((v) => ({ ...v, y0: Math.min(max, Math.max(0, v.y0 + e.deltaY)) }));
         else setView((v) => ({ ...v, x0: Math.max(0, v.x0 + e.deltaY / v.pps) }));
       }
@@ -1021,7 +1041,7 @@ export function Timeline({ player }: { player: Player }) {
           window.addEventListener('mousemove', move);
           window.addEventListener('mouseup', up);
         }}
-        onDoubleClick={() => setTimelineHeight(totalH + TOP + 34)}
+        onDoubleClick={() => setTimelineHeight(fitH)}
       />
       <div className="timeline-bar">
         <span title="Scroll to pan, Ctrl + wheel to zoom">Timeline</span>
@@ -1041,11 +1061,25 @@ export function Timeline({ player }: { player: Player }) {
         onDrop={(e) => void onDrop(e)}
       >
         <canvas ref={cv} style={{ width: size.w, height: size.h, cursor: hover }} onMouseDown={onDown} onMouseMove={onHover} onMouseLeave={hideTip} onDoubleClick={onDouble} />
-        {totalH > size.h - TOP && (
+        {showH && (
+          <div
+            className="tl-hscroll"
+            ref={hbar}
+            style={{ left: HEADER, right: showV ? 14 : 0 }}
+            title="Scroll along the timeline (or Shift + wheel)"
+            onScroll={(e) => {
+              const x0 = e.currentTarget.scrollLeft / view.pps;
+              setView((v) => (Math.abs(v.x0 - x0) * v.pps < 0.5 ? v : { ...v, x0 }));
+            }}
+          >
+            <div style={{ width: spanT * view.pps, height: 1 }} />
+          </div>
+        )}
+        {showV && (
           <div
             className="tl-vscroll"
             ref={vbar}
-            style={{ top: TOP }}
+            style={{ top: TOP, bottom: showH ? 14 : 0 }}
             title="Scroll the tracks (or use the mouse wheel)"
             onScroll={(e) => {
               const y = e.currentTarget.scrollTop;
@@ -1074,10 +1108,14 @@ export function setTimelineHeight(px: number, save = true) {
       localStorage.setItem('mangoai.timelineH', String(h));
     } catch {}
 }
-try {
-  const h = Number(localStorage.getItem('mangoai.timelineH'));
-  if (h > 0) setTimelineHeight(h, false);
-} catch {}
+function savedTimelineHeight(): number {
+  try {
+    return Number(localStorage.getItem('mangoai.timelineH')) || 0;
+  } catch {
+    return 0;
+  }
+}
+if (savedTimelineHeight()) setTimelineHeight(savedTimelineHeight(), false);
 
 function setOnClip(ops: Op[], id: string, field: 'start' | 'end', expr: string) {
   const op = ops.find((o) => o.op === 'update_clip' && o.id === id);

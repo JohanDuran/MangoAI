@@ -65,9 +65,11 @@ pre.fields { white-space: pre-wrap; word-break: break-word; font-size: 11px; bac
 .tl-resize:hover { background: rgba(255, 179, 71, 0.35); }
 .tl-vscroll { position: absolute; right: 0; bottom: 0; width: 14px; overflow-y: scroll; overflow-x: hidden; z-index: 4; }
 .tl-vscroll::-webkit-scrollbar { width: 14px; }
-.tl-vscroll::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.25); }
-.tl-vscroll::-webkit-scrollbar-thumb { background: #4a5060; border-radius: 7px; border: 3px solid transparent; background-clip: content-box; }
-.tl-vscroll::-webkit-scrollbar-thumb:hover { background: #6a7184; background-clip: content-box; }
+.tl-hscroll { position: absolute; bottom: 0; height: 14px; overflow-x: scroll; overflow-y: hidden; z-index: 4; }
+.tl-hscroll::-webkit-scrollbar { height: 14px; }
+.tl-vscroll::-webkit-scrollbar-track, .tl-hscroll::-webkit-scrollbar-track { background: #22252d; border-left: 1px solid var(--line); }
+.tl-vscroll::-webkit-scrollbar-thumb, .tl-hscroll::-webkit-scrollbar-thumb { background: #9aa1b2; border-radius: 7px; border: 2px solid #22252d; min-height: 30px; }
+.tl-vscroll::-webkit-scrollbar-thumb:hover, .tl-hscroll::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 .timeline-bar { display: flex; align-items: center; gap: 6px; padding: 3px 10px; background: var(--panel); border-bottom: 1px solid var(--line); font-weight: 600; }
 .timeline-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .timeline-canvas canvas { position: absolute; inset: 0; display: block; }
