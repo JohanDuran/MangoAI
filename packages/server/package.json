@@ -6,11 +6,15 @@
   "description": "MangoAI local server: opens project folders, streams media, computes waveforms and proxies.",
   "scripts": {
     "start": "tsx src/main.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@mangoai/core": "0.0.1",
     "hyperframes": "0.9.52",
     "vite": "5.4.11"
+  },
+  "devDependencies": {
+    "vitest": "2.1.8"
   }
 }
