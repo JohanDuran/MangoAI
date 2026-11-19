@@ -114,6 +114,17 @@ export function Timeline({ player }: { player: Player }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, version, index]);
+  const totalH = rows.reduce((n, r) => n + r.h, 0);
+  // a real scrollbar for the tracks (the canvas draws them; this keeps its scroll in step with view.y0)
+  const vbar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = vbar.current;
+    if (el && Math.abs(el.scrollTop - view.y0) > 0.5) el.scrollTop = view.y0;
+  });
+  useEffect(() => {
+    const max = Math.max(0, totalH - (size.h - TOP));
+    if (view.y0 > max) setView((v) => ({ ...v, y0: max }));
+  }, [totalH, size.h, view.y0]);
   const problemIds = useMemo(() => {
     const ids = new Set<string>();
     for (const p of resolved.problems) {
@@ -997,6 +1008,21 @@ export function Timeline({ player }: { player: Player }) {
 
   return (
     <section className="timeline">
+      <div
+        className="tl-resize"
+        title="Drag to make the timeline taller or shorter · double-click: fit all tracks"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const move = (ev: MouseEvent) => setTimelineHeight(window.innerHeight - ev.clientY);
+          const up = () => {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+          };
+          window.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', up);
+        }}
+        onDoubleClick={() => setTimelineHeight(totalH + TOP + 34)}
+      />
       <div className="timeline-bar">
         <span title="Scroll to pan, Ctrl + wheel to zoom">Timeline</span>
         <button className="ghost" onClick={fit} title="Fit the whole timeline">Fit</button>
@@ -1015,6 +1041,20 @@ export function Timeline({ player }: { player: Player }) {
         onDrop={(e) => void onDrop(e)}
       >
         <canvas ref={cv} style={{ width: size.w, height: size.h, cursor: hover }} onMouseDown={onDown} onMouseMove={onHover} onMouseLeave={hideTip} onDoubleClick={onDouble} />
+        {totalH > size.h - TOP && (
+          <div
+            className="tl-vscroll"
+            ref={vbar}
+            style={{ top: TOP }}
+            title="Scroll the tracks (or use the mouse wheel)"
+            onScroll={(e) => {
+              const y = e.currentTarget.scrollTop;
+              setView((v) => (Math.abs(v.y0 - y) < 0.5 ? v : { ...v, y0: y }));
+            }}
+          >
+            <div style={{ height: totalH, width: 1 }} />
+          </div>
+        )}
         {tip && (
           <div className="canvas-tip" style={{ left: Math.min(tip.x + 12, size.w - 320), top: tip.y + 18 > size.h - 30 ? tip.y - 30 : tip.y + 18 }}>
             {tip.text}
@@ -1024,6 +1064,20 @@ export function Timeline({ player }: { player: Player }) {
     </section>
   );
 }
+
+/** The timeline panel's height (px), dragged by its top edge; remembered in this browser. */
+export function setTimelineHeight(px: number, save = true) {
+  const h = Math.round(Math.min(window.innerHeight - 160, Math.max(120, px)));
+  document.documentElement.style.setProperty('--tl-h', `${h}px`);
+  if (save)
+    try {
+      localStorage.setItem('mangoai.timelineH', String(h));
+    } catch {}
+}
+try {
+  const h = Number(localStorage.getItem('mangoai.timelineH'));
+  if (h > 0) setTimelineHeight(h, false);
+} catch {}
 
 function setOnClip(ops: Op[], id: string, field: 'start' | 'end', expr: string) {
   const op = ops.find((o) => o.op === 'update_clip' && o.id === id);
